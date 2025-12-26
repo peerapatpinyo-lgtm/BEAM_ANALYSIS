@@ -2,134 +2,159 @@ import numpy as np
 import pandas as pd
 
 class BeamFiniteElement:
-    """ 
-    Simple 1D Beam Finite Element Analysis (Matrix Stiffness Method)
-    รองรับ Point Load และ Uniform Load
-    """
     def __init__(self, spans, supports, loads):
         self.spans = spans
         self.supports = supports
         self.loads = loads
-        self.E = 2e10  # Modulus of Elasticity (Est. Concrete)
-        self.I = 0.005 # Moment of Inertia (Est.)
-
+        self.E = 200e9  # Young's Modulus (Dummy for rigid support analysis)
+        self.I = 0.0001 # Moment of Inertia
+        self.nodes = [0] + list(np.cumsum(spans))
+        self.n_nodes = len(self.nodes)
+        self.n_elements = len(spans)
+        
     def solve(self):
-        # 1. Mesh Generation (Nodes & Elements)
-        nodes = [0] + list(np.cumsum(self.spans))
-        n_nodes = len(nodes)
-        total_dof = n_nodes * 2 # 2 DOF per node (Vertical, Rotation)
+        try:
+            # 1. Mesh Generation (Simple 1 element per span)
+            # To get better diagrams, we calculate internal forces at multiple points later
+            # This FEM solves for Node Displacements first
+            
+            K_global = np.zeros((2 * self.n_nodes, 2 * self.n_nodes))
+            F_global = np.zeros(2 * self.n_nodes)
+            
+            # 2. Build Stiffness Matrix
+            for i in range(self.n_elements):
+                L = self.spans[i]
+                k = (self.E * self.I / L**3) * np.array([
+                    [12, 6*L, -12, 6*L],
+                    [6*L, 4*L**2, -6*L, 2*L**2],
+                    [-12, -6*L, 12, -6*L],
+                    [6*L, 2*L**2, -6*L, 4*L**2]
+                ])
+                
+                # DOF mapping
+                idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
+                for r in range(4):
+                    for c in range(4):
+                        K_global[idx[r], idx[c]] += k[r, c]
+                        
+            # 3. Apply Loads (Fixed End Forces)
+            for load in self.loads:
+                span_idx = load['span_idx']
+                w = load['w'] # Load magnitude
+                L = self.spans[span_idx]
+                
+                # FEM Fixed End Actions for Uniform Load
+                # Node i
+                fem_v1 = w * L / 2
+                fem_m1 = w * L**2 / 12
+                # Node j
+                fem_v2 = w * L / 2
+                fem_m2 = -w * L**2 / 12
+                
+                # Add to global force vector (Substract FEM from external force)
+                # DOFs
+                idx = [2*span_idx, 2*span_idx+1, 2*span_idx+2, 2*span_idx+3]
+                
+                F_global[idx[0]] -= fem_v1 # Fy
+                F_global[idx[1]] -= fem_m1 # Mz
+                F_global[idx[2]] -= fem_v2
+                F_global[idx[3]] -= fem_m2
+
+            # 4. Apply Boundary Conditions
+            freedofs = np.ones(2 * self.n_nodes, dtype=bool)
+            
+            for i, sup in enumerate(self.supports):
+                dof_y = 2*i
+                dof_m = 2*i + 1
+                
+                if sup == "Pin":
+                    freedofs[dof_y] = False # Fix Y
+                elif sup == "Roller":
+                    freedofs[dof_y] = False # Fix Y
+                elif sup == "Fixed":
+                    freedofs[dof_y] = False # Fix Y
+                    freedofs[dof_m] = False # Fix Rotation
+            
+            # 5. Solve
+            K_reduced = K_global[freedofs, :][:, freedofs]
+            F_reduced = F_global[freedofs]
+            
+            d_reduced = np.linalg.solve(K_reduced, F_reduced)
+            
+            displacements = np.zeros(2 * self.n_nodes)
+            displacements[freedofs] = d_reduced
+            
+            self.displacements = displacements
+            return True, "Analysis Complete"
+            
+        except Exception as e:
+            return False, str(e)
+
+    def get_internal_forces(self, num_points=50):
+        # Calculate Shear and Moment diagrams using the solved displacements
+        results = []
         
-        # 2. Global Stiffness Matrix (K) & Force Vector (F)
-        K = np.zeros((total_dof, total_dof))
-        F = np.zeros(total_dof)
-        
-        for i, L in enumerate(self.spans):
-            # Element Stiffness Matrix
+        for i in range(self.n_elements):
+            L = self.spans[i]
+            x_local = np.linspace(0, L, num_points)
+            
+            # Nodal Displacements for this element
+            idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
+            u = self.displacements[idx] # [v1, theta1, v2, theta2]
+            
+            # Element Stiffness
             k = (self.E * self.I / L**3) * np.array([
                 [12, 6*L, -12, 6*L],
                 [6*L, 4*L**2, -6*L, 2*L**2],
                 [-12, -6*L, 12, -6*L],
                 [6*L, 2*L**2, -6*L, 4*L**2]
             ])
-            # Assemble to Global K
-            idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
-            for r in range(4):
-                for c in range(4):
-                    K[idx[r], idx[c]] += k[r, c]
             
-            # Equivalent Nodal Forces from Loads (Fixed End Moments)
-            # เฉพาะ Uniform Load ใน Span นี้
-            span_loads = [l for l in self.loads if l['span_idx'] == i and l['type'] == 'Uniform']
-            for load in span_loads:
-                w = -load['total_w'] # ทิศลงเป็นลบ
-                fem = np.array([w*L/2, w*L**2/12, w*L/2, -w*L**2/12])
-                F[idx] += fem
-
-        # 3. Apply Point Loads directly to Nodes (Simplified)
-        # (Note: In strict FEM, point loads within spans need node splitting or equivalent forces. 
-        # Here we approximate by adding equivalent FEM for point loads is too complex for this snippet.
-        # So we use a hybrid approach: Solve reactions for supports, then standard statics for internal forces.)
-        
-        # --- Boundary Conditions ---
-        fixed_dofs = []
-        for i, sup in enumerate(self.supports):
-            dof_y = 2*i
-            dof_m = 2*i + 1
-            if sup in ["Pin", "Roller", "Fix"]:
-                fixed_dofs.append(dof_y) # Fix vertical
-            if sup == "Fix":
-                fixed_dofs.append(dof_m) # Fix rotation
-
-        # Reduce Matrix
-        free_dofs = [i for i in range(total_dof) if i not in fixed_dofs]
-        if not free_dofs: return False, "Over-constrained"
-        
-        K_red = K[np.ix_(free_dofs, free_dofs)]
-        F_red = F[free_dofs]
-        
-        # Solve Displacements (u = K^-1 * F)
-        try:
-            u_red = np.linalg.solve(K_red, F_red)
-        except np.linalg.LinAlgError:
-            return False, "Unstable Structure"
-
-        u_full = np.zeros(total_dof)
-        u_full[free_dofs] = u_red
-        
-        # Reaction Forces (R = K*u - F_applied)
-        self.R = K @ u_full - F # Total nodal forces (Reactions)
-        self.displacements = u_full
-        return True, None
-
-    def get_internal_forces(self, n_points=200):
-        """ ใช้วิธี Statics ไล่ตัด Section จากซ้ายไปขวา โดยใช้ Reaction ที่คำนวณได้ """
-        total_len = sum(self.spans)
-        cum_spans = [0] + list(np.cumsum(self.spans))
-        x_eval = np.linspace(0, total_len, n_points)
-        
-        shears = []
-        moments = []
-        
-        for x in x_eval:
-            V = 0
-            M = 0
+            # Nodal Forces (f = k * u)
+            f_local = k @ u
             
-            # 1. ผลจาก Reactions (ด้านซ้ายของ x)
-            for i, r_val in enumerate(self.R[::2]): # เอาเฉพาะแรงแนวดิ่ง (indices 0, 2, 4...)
-                pos = cum_spans[i]
-                if pos <= x + 1e-5: # อยู่ซ้ายมือ
-                    V += r_val
-                    M += r_val * (x - pos)
-            
-            # 2. ผลจาก Loads (ด้านซ้ายของ x)
+            # Superimpose with External Loads
+            # Find load on this span
+            w = 0
             for load in self.loads:
-                # แปลงตำแหน่ง Load ให้อยู่ใน Global Global Coordinate
-                start_x = cum_spans[load['span_idx']]
+                if load['span_idx'] == i:
+                    w = load['w']
+            
+            shear = []
+            moment = []
+            
+            # Reaction at left node from stiffness
+            Ry_start = f_local[0]
+            M_start = f_local[1]
+            
+            # Calculate V(x) and M(x) along span
+            # V(x) = Ry_start - w*x
+            # M(x) = -M_start + Ry_start*x - w*x^2/2 (Sign convention: Tension bottom positive)
+            
+            # Adjusting sign convention for engineering plots
+            # Standard: Shear Up +, Moment Sagging +
+            
+            for x in x_local:
+                # Forces from Boundary Displacements
+                # Using Shape Functions derivatives would be cleaner, but simple equilibrium works for uniform loads
                 
-                if load['type'] == 'Uniform':
-                    w = load['total_w'] # Positive value entered
-                    end_x = start_x + self.spans[load['span_idx']]
-                    
-                    # ช่วงที่ Load กระทำที่อยู่ซ้ายมือของ x
-                    lx_start = start_x
-                    lx_end = min(x, end_x)
-                    
-                    if lx_end > lx_start:
-                        load_len = lx_end - lx_start
-                        force = w * load_len
-                        V -= force # Load ลง ทิศลบ
-                        # Centroid ของ Load ก้อนนี้ถึง x
-                        dist = x - (lx_start + load_len/2)
-                        M -= force * dist
-                        
-                elif load['type'] == 'Point':
-                    px = start_x + load['pos']
-                    P = load['total_w']
-                    if px <= x + 1e-5:
-                        V -= P
-                        M -= P * (x - px)
+                # Initial forces from nodes (End forces)
+                # Correct approach: Calculate sections
+                
+                vx = Ry_start - w * x
+                mx = -M_start + Ry_start * x - (w * x**2) / 2
+                
+                shear.append(vx)
+                moment.append(mx)
+                
+            # Global X coordinates
+            x_global = x_local + self.nodes[i]
             
-            shears.append(V)
-            moments.append(M)
+            df_span = pd.DataFrame({
+                'x': x_global,
+                'shear': shear,
+                'moment': moment
+            })
+            results.append(df_span)
             
-        return pd.DataFrame({'x': x_eval, 'shear': shears, 'moment': moments})
+        return pd.concat(results, ignore_index=True)
