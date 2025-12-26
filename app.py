@@ -5,17 +5,17 @@ from plotly.subplots import make_subplots
 
 # --- IMPORT MODULES ---
 try:
-    from beam_analysis import SimpleBeamSolver
+    from beam_analysis import BeamFiniteElement
     from rc_design import calculate_rc_design
     import input_handler as ui
 except ImportError:
-    st.error("⚠️ Missing required files (beam_analysis.py, rc_design.py, input_handler.py)")
+    st.error("⚠️ Missing required files. Please ensure beam_analysis.py, rc_design.py, and input_handler.py are in the folder.")
     st.stop()
 
 # ==========================================
 # 0. SETUP & GRAPHICS FUNCTIONS
 # ==========================================
-st.set_page_config(page_title="RC Beam Pro V.Modular", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="RC Beam Pro V.Real", layout="wide", page_icon="🏗️")
 
 if 'analyzed' not in st.session_state: st.session_state['analyzed'] = False
 if 'res_df' not in st.session_state: st.session_state['res_df'] = None
@@ -26,10 +26,11 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');
     html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
-    .main-header { background: linear-gradient(90deg, #43A047 0%, #1B5E20 100%); color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
-    .section-header { font-size: 1.3rem; font-weight: bold; color: #2E7D32; border-bottom: 2px solid #2E7D32; padding-bottom: 5px; margin-top: 30px; margin-bottom: 15px; }
-    .input-card { background-color: #f1f8e9; padding: 20px; border-radius: 8px; border: 1px solid #c5e1a5; }
-    .design-box { background-color: #e8f5e9; border: 2px solid #a5d6a7; padding: 20px; border-radius: 10px; }
+    .main-header { background: linear-gradient(90deg, #1565C0 0%, #0D47A1 100%); color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; }
+    .section-header { font-size: 1.3rem; font-weight: bold; color: #1565C0; border-bottom: 2px solid #1565C0; padding-bottom: 5px; margin-top: 30px; margin-bottom: 15px; }
+    .input-card { background-color: #f8f9fa; padding: 20px; border-radius: 8px; border: 1px solid #e9ecef; }
+    .design-box { background-color: #e3f2fd; border: 2px solid #90caf9; padding: 20px; border-radius: 10px; }
+    .calc-log { font-family: 'Courier New', monospace; font-size: 0.9rem; background-color: #f1f1f1; padding: 10px; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -70,9 +71,9 @@ def draw_section(b, h, cov, nb, bd, sd, name):
 # ==========================================
 # 1. MAIN APPLICATION
 # ==========================================
-st.markdown('<div class="main-header"><h2>🏗️ RC Beam Pro (4-File Modular)</h2></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h2>🏗️ RC Beam Pro V.Real Analysis</h2></div>', unsafe_allow_html=True)
 
-# 1.1 Input Handling (เรียกใช้ input_handler.py)
+# 1.1 Input Handling
 design_code, method, fact_dl, fact_ll, unit_sys = ui.render_sidebar()
 
 st.markdown('<div class="section-header">1️⃣ Structure & Loads</div>', unsafe_allow_html=True)
@@ -82,43 +83,49 @@ with c_geo:
 with c_load:
     loads_input = ui.render_loads_input(n_span, spans, fact_dl, fact_ll, unit_sys)
 
-# 1.2 Analysis (เรียกใช้ beam_analysis.py)
-st.markdown('<div class="section-header">2️⃣ Analysis</div>', unsafe_allow_html=True)
-if st.button("🚀 Calculate", type="primary"):
-    solver = SimpleBeamSolver(spans, supports, loads_input)
-    status, _ = solver.solve()
-    st.session_state['res_df'] = solver.get_internal_forces()
-    st.session_state['vis_data'] = (spans, supports, loads_input)
-    st.session_state['analyzed'] = True
-    st.rerun()
+# 1.2 Analysis
+st.markdown('<div class="section-header">2️⃣ Analysis (Finite Element)</div>', unsafe_allow_html=True)
+if st.button("🚀 Calculate Analysis", type="primary"):
+    # ใช้ BeamFiniteElement ตัวใหม่
+    solver = BeamFiniteElement(spans, supports, loads_input)
+    success, msg = solver.solve()
+    
+    if success:
+        st.session_state['res_df'] = solver.get_internal_forces()
+        st.session_state['vis_data'] = (spans, supports, loads_input)
+        st.session_state['analyzed'] = True
+        st.rerun()
+    else:
+        st.error(f"Analysis Failed: {msg}")
 
 # 1.3 Result & Design
 if st.session_state['analyzed']:
     vis_data = st.session_state['vis_data']
     df = st.session_state['res_df'].copy()
     
-    # Unit Conversion for Display
-    to_user = 0.001 if "kN" in unit_sys else 1/9.80665
+    # Check Units for Display (Engine is unitless/consistent, we map to UI unit)
+    # Note: Engine คำนวณตาม Unit ที่ใส่เข้าไป (ถ้าใส่ kN, m ผลลัพธ์คือ kN, kN-m)
+    # แต่ต้องระวังเรื่อง MKS (ใส่ kg, m ผลลัพธ์คือ kg, kg-m)
+    
     u_f, u_m = ("kN", "kN-m") if "kN" in unit_sys else ("kg", "kg-m")
     
     st.plotly_chart(draw_beam_diagram(*vis_data), use_container_width=True)
     
     c1, c2 = st.columns(2)
-    max_M = df['moment'].abs().max() * to_user
-    max_V = df['shear'].abs().max() * to_user
+    max_M = df['moment'].abs().max()
+    max_V = df['shear'].abs().max()
     c1.metric(f"Max Mu ({u_m})", f"{max_M:.2f}")
     c2.metric(f"Max Vu ({u_f})", f"{max_V:.2f}")
     
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, subplot_titles=(f"Shear ({u_f})", f"Moment ({u_m})"))
-    fig.add_trace(go.Scatter(x=df['x'], y=df['shear']*to_user, fill='tozeroy', line=dict(color='red'), name="V"), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df['x'], y=df['moment']*to_user, fill='tozeroy', line=dict(color='blue'), name="M"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='red'), name="V"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='blue'), name="M"), row=2, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
-    # 1.4 Design Section (เรียกใช้ rc_design.py)
-    st.markdown('<div class="section-header">3️⃣ RC Design</div>', unsafe_allow_html=True)
+    # 1.4 Design Section
+    st.markdown('<div class="section-header">3️⃣ RC Design & Calculation</div>', unsafe_allow_html=True)
     fc, fy, b, h, cov, m_bar, s_bar = ui.render_design_input(unit_sys)
     
-    # Bar Database
     bar_areas = {'DB12':1.13, 'DB16':2.01, 'DB20':3.14, 'DB25':4.91, 'DB28':6.16}
     bar_dias = {k: int(k[2:]) for k in bar_areas}
     stir_areas = {'RB6':0.28, 'RB9':0.64, 'DB10':0.78}
@@ -137,6 +144,11 @@ if st.session_state['analyzed']:
             st.divider()
             st.write(f"**Stirrup:** {s_bar} {res['stirrup_text']}")
             st.caption(res['msg_shear'])
+            
+            # Show Detailed Calculations
+            with st.expander("📝 View Detailed Calculation"):
+                st.markdown("```text\n" + "\n".join(res['logs']) + "\n```")
+                
     with c_draw:
         st.plotly_chart(draw_section(b, h, cov, res['nb'], bar_dias[m_bar], stir_dias[s_bar], m_bar), use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
