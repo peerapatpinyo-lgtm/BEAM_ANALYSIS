@@ -78,26 +78,33 @@ def analyze_structure(spans_data, supports_data, loads_data):
 
 def get_detailed_results(ss):
     """
-    ดึงค่า Shear/Moment จากทุก Element มาต่อกันเป็นกราฟยาวเส้นเดียว
-    เพื่อให้ Plotly วาดกราฟต่อเนื่องได้ละเอียด
+    ดึงค่า Shear/Moment โดยใช้ Node ID Lookup (เสถียรที่สุด)
     """
     x_vals = []
     shear_vals = []
     moment_vals = []
     
-    # --- แก้ไขจุดที่ Error (AttributeError) ---
-    # เปลี่ยนจาก .loc[0] เป็น .coords[0] เพื่อดึงค่า X จาก Vertex Object
-    sorted_elements = sorted(ss.element_map.values(), key=lambda e: e.vertex_1.coords[0])
+    # เรียง Element โดยดูจากพิกัด X ของ Node 1 (Start Node)
+    # ใช้ ss.node_map[...] เพื่อหลีกเลี่ยง error เรื่อง Vertex attribute
+    sorted_elements = sorted(
+        ss.element_map.values(), 
+        key=lambda e: ss.node_map[e.node_id1].loc[0]
+    )
     
     for el in sorted_elements:
-        x0 = el.vertex_1.coords[0] # <--- แก้ตรงนี้
-        x1 = el.vertex_2.coords[0] # <--- แก้ตรงนี้
+        # ดึง Node Object จาก ID
+        node1 = ss.node_map[el.node_id1]
+        node2 = ss.node_map[el.node_id2]
+        
+        # ดึงพิกัด X (loc = [x, y])
+        x0 = node1.loc[0]
+        x1 = node2.loc[0]
         
         # ดึงค่า Force Array
         s_arr = np.array(el.shear).flatten()
         m_arr = np.array(el.moment).flatten()
         
-        # สร้าง x array สำหรับ element นี้
+        # สร้าง array ของระยะ x ให้ตรงกับจำนวนจุดที่คำนวณ
         x_arr = np.linspace(x0, x1, len(s_arr))
         
         x_vals.extend(x_arr)
@@ -240,30 +247,34 @@ with tab2:
         st.header("📊 Interactive Results")
         
         # Extract Data
-        df_res = get_detailed_results(ss)
-        max_m = df_res['moment'].abs().max()
-        max_v = df_res['shear'].abs().max()
-        
-        c1, c2 = st.columns(2)
-        c1.metric("Max Moment (|Mu|)", f"{max_m:.2f} kN-m")
-        c2.metric("Max Shear (|Vu|)", f"{max_v:.2f} kN")
-        
-        # Plot Shear
-        st.subheader("Shear Force Diagram (SFD)")
-        fig_v = plot_interactive(df_res, 'shear', "Shear Force (kN)", "#FF4B4B", "Shear (kN)")
-        st.plotly_chart(fig_v, use_container_width=True)
-        
-        # Plot Moment
-        st.subheader("Bending Moment Diagram (BMD)")
-        # Note: anastruct convention (Sagging +, Hogging -)
-        fig_m = plot_interactive(df_res, 'moment', "Bending Moment (kN-m)", "#1f77b4", "Moment (kN-m)")
-        st.plotly_chart(fig_m, use_container_width=True)
-        
-        with st.expander("Show Raw Data Table"):
-            st.dataframe(df_res)
-        
-        st.session_state['max_moment'] = max_m
-        st.session_state['max_shear'] = max_v
+        try:
+            df_res = get_detailed_results(ss)
+            max_m = df_res['moment'].abs().max()
+            max_v = df_res['shear'].abs().max()
+            
+            c1, c2 = st.columns(2)
+            c1.metric("Max Moment (|Mu|)", f"{max_m:.2f} kN-m")
+            c2.metric("Max Shear (|Vu|)", f"{max_v:.2f} kN")
+            
+            # Plot Shear
+            st.subheader("Shear Force Diagram (SFD)")
+            fig_v = plot_interactive(df_res, 'shear', "Shear Force (kN)", "#FF4B4B", "Shear (kN)")
+            st.plotly_chart(fig_v, use_container_width=True)
+            
+            # Plot Moment
+            st.subheader("Bending Moment Diagram (BMD)")
+            # Note: anastruct convention (Sagging +, Hogging -)
+            fig_m = plot_interactive(df_res, 'moment', "Bending Moment (kN-m)", "#1f77b4", "Moment (kN-m)")
+            st.plotly_chart(fig_m, use_container_width=True)
+            
+            with st.expander("Show Raw Data Table"):
+                st.dataframe(df_res)
+            
+            st.session_state['max_moment'] = max_m
+            st.session_state['max_shear'] = max_v
+            
+        except Exception as e:
+            st.error(f"Error extracting results: {e}")
         
     else:
         st.info("Please click 'Run Analysis' first.")
