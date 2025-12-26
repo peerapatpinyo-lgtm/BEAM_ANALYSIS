@@ -7,10 +7,9 @@ from plotly.subplots import make_subplots
 # ==========================================
 # 0. ENGINE & SETUP
 # ==========================================
-st.set_page_config(page_title="RC Beam Pro V.19", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="RC Beam Pro V.19.1", layout="wide", page_icon="🏗️")
 
 # --- 🛡️ CRASH PROOF: INITIALIZE STATE FIRST ---
-# ประกาศตัวแปร State ไว้บนสุด กัน Error 100%
 if 'analyzed' not in st.session_state:
     st.session_state['analyzed'] = False
 if 'res_df_raw' not in st.session_state:
@@ -18,7 +17,7 @@ if 'res_df_raw' not in st.session_state:
 if 'vis_data' not in st.session_state:
     st.session_state['vis_data'] = None
 
-# Mock Engine (ถ้าไม่มีไฟล์)
+# Mock Engine (กรณีไม่มีไฟล์ beam_engine.py)
 try:
     from beam_engine import SimpleBeamSolver
 except ImportError:
@@ -58,8 +57,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 1. VISUALIZATION FUNCTIONS (ปรับปรุงใหม่)
+# 1. HELPER FUNCTIONS & VISUALIZATION
 # ==========================================
+
+# --- 🛠️ FIX: นำฟังก์ชันนี้กลับมาครับ ---
+def get_default_factors(code_name):
+    if "WSD" in code_name: return 1.0, 1.0, "WSD"
+    elif "ACI" in code_name: return 1.2, 1.6, "SDM"
+    else: return 1.4, 1.7, "SDM" # EIT SDM
 
 def draw_beam_diagram(spans, supports, loads, unit_load, unit_force):
     """ วาดรูปคาน โดยแยกสัญลักษณ์ Pin/Roller ให้ชัดเจน """
@@ -84,7 +89,7 @@ def draw_beam_diagram(spans, supports, loads, unit_load, unit_force):
             color = "#2E7D32" # เขียว
             offset_y = -0.02
         else: # Roller
-            symbol = "circle" # เปลี่ยนเป็นวงกลมให้ต่างชัดเจน
+            symbol = "circle" # เปลี่ยนเป็นวงกลม
             color = "#F57C00" # ส้ม
             offset_y = -0.02
 
@@ -94,7 +99,7 @@ def draw_beam_diagram(spans, supports, loads, unit_load, unit_force):
             text=[s_type], textposition="bottom center", hoverinfo='none', showlegend=False
         ))
         
-        # ถ้าเป็น Roller วาดเส้นพื้นด้านล่างเพิ่มเพื่อให้เหมือนล้อ
+        # ถ้าเป็น Roller วาดเส้นพื้นด้านล่างเพิ่ม
         if s_type == "Roller":
              fig.add_shape(type="line", x0=sx-0.2, y0=-0.06, x1=sx+0.2, y1=-0.06, line=dict(color="black", width=2))
 
@@ -157,13 +162,12 @@ def draw_section_view(b, h, cover, n_bars, bar_dia_mm, stirrup_dia_mm, bar_name)
     # 4. Dimension Annotations (บอกขนาด)
     # Width (b)
     fig.add_annotation(x=b/2, y=-5, text=f"b = {b} cm", showarrow=False, font=dict(size=14))
-    fig.add_shape(type="line", x0=0, y0=-2, x1=b, y1=-2, line=dict(color="black")) # Dim line
+    fig.add_shape(type="line", x0=0, y0=-2, x1=b, y1=-2, line=dict(color="black")) 
     
     # Depth (h)
     fig.add_annotation(x=-5, y=h/2, text=f"h = {h} cm", showarrow=False, textangle=-90, font=dict(size=14))
-    fig.add_shape(type="line", x0=-2, y0=0, x1=-2, y1=h, line=dict(color="black")) # Dim line
+    fig.add_shape(type="line", x0=-2, y0=0, x1=-2, y1=h, line=dict(color="black"))
 
-    max_dim = max(b, h)
     fig.update_layout(
         width=300, height=300,
         xaxis=dict(visible=False, range=[-10, b+10]),
@@ -178,12 +182,14 @@ def draw_section_view(b, h, cover, n_bars, bar_dia_mm, stirrup_dia_mm, bar_name)
 # 2. MAIN APP
 # ==========================================
 
-st.markdown('<div class="main-header"><h2>🏗️ RC Beam Pro V.19 (Fixed & Visualize)</h2></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h2>🏗️ RC Beam Pro V.19.1 (Fixed)</h2></div>', unsafe_allow_html=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Settings")
     design_code = st.selectbox("Design Standard", ["EIT 1007 (WSD)", "EIT 1008 (SDM)", "ACI 318 (SDM)"], index=1)
+    
+    # เรียกใช้ฟังก์ชันที่แก้แล้วตรงนี้
     def_dl, def_ll, method = get_default_factors(design_code)
     
     st.divider()
@@ -212,13 +218,13 @@ with col_geo:
     spans, supports = [], []
     c_s1, c_s2 = st.columns(2)
     sup_L = c_s1.selectbox("Left Sup", ["Pin", "Roller", "Fix"], key="SL")
-    sup_R = c_s2.selectbox("Right Sup", ["Pin", "Roller", "Fix"], index=1, key="SR") # Index 1 = Roller default
+    sup_R = c_s2.selectbox("Right Sup", ["Pin", "Roller", "Fix"], index=1, key="SR")
     
     supports.append(sup_L)
     for i in range(n_span):
         l = st.number_input(f"Span {i+1} (m)", 0.5, 20.0, 4.0, key=f"L{i}")
         spans.append(l)
-        if i < n_span-1: supports.append("Roller") # Internal supports default to Roller
+        if i < n_span-1: supports.append("Roller")
     supports.append(sup_R)
 
 with col_load:
@@ -260,10 +266,9 @@ if st.button("🚀 Calculate Analysis", type="primary"):
         st.session_state['analyzed'] = True
         st.rerun()
 
-# --- DISPLAY RESULT (SAFE MODE) ---
+# --- DISPLAY RESULT ---
 if st.session_state.get('analyzed', False):
     
-    # Safe Retrieve
     df_raw = st.session_state.get('res_df_raw')
     vis_data = st.session_state.get('vis_data')
     
