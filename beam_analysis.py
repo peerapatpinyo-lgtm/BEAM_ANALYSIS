@@ -3,54 +3,53 @@ import pandas as pd
 
 def run_beam_analysis(spans, supports, loads):
     """
-    Direct Stiffness Method with COMPREHENSIVE DATA NORMALIZATION.
-    Fixes 'string indices must be integers' by converting all DataFrames to Dicts first.
+    Direct Stiffness Method (Robust Version).
+    Fixes: 'string indices must be integers' definitively by forcing data conversion first.
     """
+
+    # ==============================================================================
+    # 1. THE FIREWALL: SANITIZE ALL INPUTS (Absolute Safety Layer)
+    # ==============================================================================
     
-    # ==========================================
-    # 1. DATA NORMALIZATION (THE FIX)
-    # ==========================================
-    
-    # --- Clean LOADS ---
-    # แปลง loads ให้เป็น List of Dicts เสมอ ไม่ว่าจะมาเป็น DataFrame หรือ List
-    clean_loads = []
+    # --- 1.1 Convert LOADS to List of Dictionaries ---
+    # ไม่ว่าจะมาเป็น DataFrame, List หรือ None แปลงเป็น List of Dicts ทั้งหมด
+    safe_loads = []
     if isinstance(loads, pd.DataFrame):
-        clean_loads = loads.to_dict('records')
+        # .to_dict('records') คือคำสั่งศักดิ์สิทธิ์ที่แปลงตารางเป็น List of Dicts
+        safe_loads = loads.to_dict('records') 
     elif isinstance(loads, list):
-        clean_loads = loads
+        safe_loads = loads
     
-    # --- Clean SUPPORTS ---
-    # แปลง supports ให้เป็น List of Dicts ที่มี key 'type'
-    clean_supports = []
+    # --- 1.2 Convert SUPPORTS to List of Strings ---
+    safe_supports = []
     n_nodes = len(spans) + 1
     
     for i in range(n_nodes):
-        # ดึงค่าดิบ
-        raw = None
+        raw_val = None
+        # ดึงค่าแบบปลอดภัยตาม Data Type
         if isinstance(supports, list):
-            raw = supports[i] if i < len(supports) else None
+            raw_val = supports[i] if i < len(supports) else None
         elif isinstance(supports, (pd.DataFrame, pd.Series)):
-             # ถ้าเป็น DF ให้ใช้ iloc
-            try:
-                raw = supports.iloc[i]
-            except:
-                raw = None
+            try: raw_val = supports.iloc[i]
+            except: raw_val = None
         
-        # แปลงเป็น String identifier
-        sup_type = "None"
-        if isinstance(raw, str):
-            sup_type = raw
-        elif isinstance(raw, dict):
-            sup_type = raw.get('type', 'None')
-        elif hasattr(raw, 'get'): # Series/Object
-            sup_type = raw.get('type', 'None')
-        
-        # เก็บใน format มาตรฐาน
-        clean_supports.append({'type': sup_type})
+        # แกะค่า String ออกมา
+        sup_str = "None"
+        if isinstance(raw_val, str):
+            sup_str = raw_val
+        elif isinstance(raw_val, dict):
+            sup_str = raw_val.get('type', 'None')
+        elif hasattr(raw_val, 'get'): # Pandas Series/Object
+            sup_str = raw_val.get('type', 'None')
+        elif hasattr(raw_val, 'type'):
+            sup_str = raw_val.type
+            
+        safe_supports.append(sup_str)
 
-    # ==========================================
-    # 2. SYSTEM SETUP
-    # ==========================================
+    # ==============================================================================
+    # 2. CALCULATION CORE (Uses ONLY safe_loads and safe_supports)
+    # ==============================================================================
+    
     n_spans = len(spans)
     dof_per_node = 2
     total_dof = n_nodes * dof_per_node
@@ -60,14 +59,11 @@ def run_beam_analysis(spans, supports, loads):
     E = 2e6  
     I = 0.001 
 
-    # ==========================================
-    # 3. MATRIX ASSEMBLY & FEM
-    # ==========================================
     for i in range(n_spans):
         L = spans[i]
-        L2 = L * L; L3 = L2 * L
+        L2 = L*L; L3 = L2*L
         
-        # Element Stiffness
+        # Local Stiffness
         k_local = (E * I / L3) * np.array([
             [12,      6*L,    -12,     6*L],
             [6*L,     4*L2,   -6*L,    2*L2],
@@ -80,57 +76,53 @@ def run_beam_analysis(spans, supports, loads):
             for c in range(4):
                 K_global[idx[r], idx[c]] += k_local[r, c]
 
-        # FEM Calculation (Using clean_loads)
-        fem_vec = np.zeros(4) 
+        # FEM Calculation
+        fem_vec = np.zeros(4)
         
-        # Filter loads for this span
-        # ต้องใช้ .get() เผื่อ user ไม่กรอกบางช่อง และแปลงเป็น float เพื่อความชัวร์
-        current_span_loads = [
-            l for l in clean_loads 
-            if int(l.get('span_idx', -1)) == i
-        ]
-        
-        for load in current_span_loads:
+        # Filter loads for this span from safe_loads
+        for load in safe_loads:
+            # ใช้ .get() และ float() ดักทุกจุด เพื่อป้องกันข้อมูลขยะ
+            try:
+                s_idx = int(load.get('span_idx', -999))
+            except:
+                continue
+
+            if s_idx != i:
+                continue
+
             l_type = load.get('type', 'None')
-            
-            # Safe parsing of numbers
             try: w = -float(load.get('w', 0.0))
             except: w = 0.0
-            
             try: P = -float(load.get('P', 0.0))
             except: P = 0.0
-            
             try: x_loc = float(load.get('x', 0.0))
             except: x_loc = 0.0
 
-            if l_type == 'U' and abs(w) > 0:
-                fem_vec[0] += w * L / 2       
-                fem_vec[1] += w * L2 / 12     
-                fem_vec[2] += w * L / 2       
-                fem_vec[3] += -w * L2 / 12    
-
-            elif l_type == 'P' and abs(P) > 0:
+            if l_type == 'U':
+                fem_vec[0] += w * L / 2
+                fem_vec[1] += w * L2 / 12
+                fem_vec[2] += w * L / 2
+                fem_vec[3] += -w * L2 / 12
+            elif l_type == 'P':
                 a = x_loc
                 b = L - a
-                if 0 <= a <= L: # Allow load at ends
-                    fem_vec[0] += P * (b**2 * (3*a + b)) / L3  
-                    fem_vec[1] += P * a * (b**2) / L2          
-                    fem_vec[2] += P * (a**2 * (a + 3*b)) / L3  
-                    fem_vec[3] += -P * (a**2) * b / L2         
+                if 0 <= a <= L:
+                    fem_vec[0] += P * (b**2 * (3*a + b)) / L3
+                    fem_vec[1] += P * a * (b**2) / L2
+                    fem_vec[2] += P * (a**2 * (a + 3*b)) / L3
+                    fem_vec[3] += -P * (a**2) * b / L2
 
         for r in range(4):
             F_global[idx[r]] -= fem_vec[r]
 
-    # ==========================================
-    # 4. BOUNDARY CONDITIONS
-    # ==========================================
+    # --- Boundary Conditions ---
     free_dof = np.ones(total_dof, dtype=bool)
-    vis_supports_data = [] 
+    vis_supports_data = []
 
     for i in range(n_nodes):
-        stype = clean_supports[i]['type'] # Safe now
+        stype = safe_supports[i] # ใช้ตัวที่ Clean แล้วเท่านั้น
         vis_supports_data.append({'x': sum(spans[:i]), 'type': stype})
-
+        
         dof_y = 2*i
         dof_m = 2*i + 1
         
@@ -142,23 +134,19 @@ def run_beam_analysis(spans, supports, loads):
             free_dof[dof_y] = False 
             free_dof[dof_m] = False 
 
-    # ==========================================
-    # 5. SOLVER
-    # ==========================================
+    # --- Solver ---
     K_reduced = K_global[np.ix_(free_dof, free_dof)]
     F_reduced = F_global[free_dof]
     
     try:
         D_reduced = np.linalg.solve(K_reduced, F_reduced)
     except np.linalg.LinAlgError:
-        D_reduced = np.zeros_like(F_reduced) 
+        D_reduced = np.zeros_like(F_reduced)
 
     D_full = np.zeros(total_dof)
     D_full[free_dof] = D_reduced
 
-    # ==========================================
-    # 6. POST-PROCESS (Internal Forces)
-    # ==========================================
+    # --- Post-Processing ---
     x_coords = []
     shear_vals = []
     moment_vals = []
@@ -168,9 +156,8 @@ def run_beam_analysis(spans, supports, loads):
     for i in range(n_spans):
         L = spans[i]
         idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
-        u = D_full[idx] 
+        u = D_full[idx]
         
-        # Recalculate FEM for plotting logic
         L2 = L*L; L3 = L2*L
         k_local = (E * I / L3) * np.array([
             [12,      6*L,    -12,     6*L],
@@ -179,11 +166,19 @@ def run_beam_analysis(spans, supports, loads):
             [6*L,     2*L2,   -6*L,    4*L2]
         ])
         
+        # FEM Recalc for internal forces
         fem_vec = np.zeros(4)
-        current_span_loads = [l for l in clean_loads if int(l.get('span_idx', -1)) == i]
+        current_loads = []
         
-        for load in current_span_loads:
-            l_type = load.get('type', 'None')
+        # Filter again from safe_loads
+        for load in safe_loads:
+            try: s_idx = int(load.get('span_idx', -999))
+            except: continue
+            if s_idx == i:
+                current_loads.append(load)
+                
+        for load in current_loads:
+            l_type = load.get('type')
             try: w = -float(load.get('w', 0.0))
             except: w = 0.0
             try: P = -float(load.get('P', 0.0))
@@ -208,13 +203,12 @@ def run_beam_analysis(spans, supports, loads):
         V_start = f_end[0]
         M_start = f_end[1] 
         
-        # Plotting Points
-        num_pts = 50
-        x_span = np.linspace(0, L, num_pts)
-        for load in current_span_loads:
+        # Generate Plot Points
+        x_span = np.linspace(0, L, 100)
+        for load in current_loads:
             if load.get('type') == 'P':
-                lx = float(load.get('x', 0.0))
-                # Add points around load for sharp jump
+                try: lx = float(load.get('x', 0.0))
+                except: lx = 0.0
                 x_span = np.append(x_span, [lx - 1e-5, lx + 1e-5])
         
         x_span = np.sort(np.unique(x_span))
@@ -224,7 +218,7 @@ def run_beam_analysis(spans, supports, loads):
             V_x = V_start
             M_x = M_start + V_start * x
             
-            for load in current_span_loads:
+            for load in current_loads:
                 l_type = load.get('type')
                 try: w_mag = float(load.get('w', 0.0))
                 except: w_mag = 0.0
