@@ -95,13 +95,12 @@ spans = []
 supports = []
 
 # --- Dynamic Input Rows ---
-# ใช้ Container เพื่อจัดกลุ่ม Input ให้ดูเต็มตา ไม่เบียด
 for i in range(n_span):
     with st.container():
         st.markdown(f"##### 📌 Span {i+1}")
         c1, c2, c3 = st.columns([1.5, 1.5, 1.5])
         
-        # Support Left (Only for first span, others share)
+        # Support Left
         if i == 0:
             with c1:
                 s_type = st.selectbox(f"Support {i+1} Type", ['Pin', 'Roller', 'Fix'], key=f"sup_{i}")
@@ -116,14 +115,13 @@ for i in range(n_span):
             l_val = st.number_input(f"Span {i+1} Length (m)", min_value=0.5, max_value=20.0, value=4.0, key=f"len_{i}")
             spans.append(l_val)
             
-        # Support Right (Current Span's End)
+        # Support Right
         with c3:
-            # Note: This will be the start of next span, or the end of beam
             s_next_label = f"Support {i+2} Type"
             s_next = st.selectbox(s_next_label, ['Pin', 'Roller', 'Fix'], index=1, key=f"sup_{i+1}")
             supports.append(s_next)
     
-    st.divider() # เส้นคั่นแต่ละ Span
+    st.divider()
 
 # ------------------------------------------------
 # SECTION 2: LOADS
@@ -133,7 +131,7 @@ st.header("2. Loads Input (น้ำหนักบรรทุก)")
 # Factors
 if is_sdm:
     st.write("🔧 **Load Factors for SDM**")
-    cf1, cf2, cf3 = st.columns(4)
+    cf1, cf2 = st.columns(2) # <--- แก้ไขจุด Error ตรงนี้ครับ (เหลือ 2 คอลัมน์)
     f_dl = cf1.number_input("Dead Load Factor", 1.0, 2.0, 1.4, step=0.1)
     f_ll = cf2.number_input("Live Load Factor", 1.0, 2.0, 1.7, step=0.1)
     st.caption(f"Total Load = {f_dl:.1f}DL + {f_ll:.1f}LL")
