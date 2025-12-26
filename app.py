@@ -23,26 +23,30 @@ def explain_calc(text):
 # ==========================================
 def analyze_structure(spans_data, supports_data, loads_data):
     """
-    วิเคราะห์คานโดยใช้ anaStruct (2D FEM)
+    วิเคราะห์คานโดยใช้ anaStruct (2D FEM) - พร้อมระบบป้องกัน Stability Error
     """
     # สร้าง System Model
-    # EA, EI เป็นค่าสมมติสำหรับ Analysis (ถ้าคานวัสดุเดียวกันตลอด ช่วงและแรงเท่าเดิม Moment จะไม่เปลี่ยนตาม EI)
     ss = SystemElements(EA=15000, EI=5000) 
     
     # 1. สร้าง Elements (คานแต่ละช่วง)
-    # anaStruct จะสร้าง Node เริ่มต้นที่ id=1, 2, 3... โดยอัตโนมัติ
     start_x = 0
     for length in spans_data:
         end_x = start_x + length
-        # สร้าง element จากซ้ายไปขวา
         ss.add_element(location=[[start_x, 0], [end_x, 0]])
         start_x = end_x
     
     # 2. ใส่ Supports (จุดรองรับ)
-    # ** สำคัญ: Node ของ anastruct เริ่มนับที่ 1 **
     for i, supp_type in enumerate(supports_data):
-        node_id = i + 1  # <--- แก้ไขจุดที่เคย Error (เดิมเป็น i เฉยๆ)
+        node_id = i + 1
         
+        # --- Stability Guard ---
+        # ถ้าเป็น Node แรกสุด (Node 1) และผู้ใช้เลือก Roller
+        # เราจะบังคับให้เป็น Pin (Hinged) เพื่อล็อคแกน X ไม่ให้คานไหล (Unstable)
+        # ซึ่งไม่มีผลต่อ Moment ในคานรับแรงดิ่ง แต่ทำให้ Math คำนวณผ่าน
+        if i == 0 and supp_type == 'Roller':
+            supp_type = 'Pin' 
+        # -----------------------
+
         if supp_type == 'Fix':
             ss.add_support_fixed(node_id=node_id)
         elif supp_type == 'Pin':
@@ -51,30 +55,27 @@ def analyze_structure(spans_data, supports_data, loads_data):
             # Roller direction=1 คือกลิ้งแกน x (รับแรงแกน y)
             ss.add_support_roll(node_id=node_id, direction=1) 
 
-    # 3. ใส่ Loads (Apply Load Combination)
+    # 3. ใส่ Loads
     for load in loads_data:
-        # Load Combination: 1.4(DL+SDL) + 1.7(LL)
         mag_dead = load['dl'] + load['sdl']
         mag_live = load['ll']
         wu_total = (FACTOR_DL * mag_dead) + (FACTOR_LL * mag_live)
         
         span_idx = load['span_idx']
-        element_id = span_idx + 1 # Element ID ก็เริ่มที่ 1 เช่นกัน
+        element_id = span_idx + 1
         
         if load['type'] == 'Uniform Load':
-            # q_load: ใส่ค่าบวก = แรงลง (Gravity) ตาม Convention ของ anastruct (บาง version)
-            # แต่ถ้าผลออกมากลับทิศ ให้ใส่ติดลบ
+            # ใส่ load ที่ element
             ss.q_load(q=wu_total, element_id=element_id)
             
         elif load['type'] == 'Point Load':
-            # point_load: Fy ติดลบ = ทิศลง
+            # Fy ติดลบ = ทิศลง
             ss.point_load(node_id=None, element_id=element_id, position=load['pos'], Fy=-wu_total)
     
     # 4. Analyze
     ss.solve()
     
     return ss
-
 # ==========================================
 # PART 3: RC DESIGN ENGINE (USD METHOD)
 # ==========================================
@@ -315,3 +316,4 @@ with tab3:
         
     else:
         st.warning("รอผลการวิเคราะห์จาก Tab 2 ก่อนครับ")
+
