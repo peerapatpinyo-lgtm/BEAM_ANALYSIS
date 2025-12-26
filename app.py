@@ -31,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT (Includes Point Load)
+# CUSTOM LOAD INPUT (Robust Point Load)
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys):
     st.markdown("### 3️⃣ Applied Loads")
@@ -65,18 +65,18 @@ def render_custom_load_input(n_span, spans, unit_sys):
     return loads
 
 # ==========================================
-# ENGINEERING PLOTTING (The "Beautiful" One)
+# ENGINEERING PLOTTING (FIXED SCALING)
 # ==========================================
 
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
-    """Draws STANDARD Engineering Supports (The ones you liked)"""
+    """Draws STANDARD Engineering Supports"""
     s = size * 0.8
     line_col, fill_col = "#37474F", "#CFD8DC"
     
     if sup_type == "Pin":
         fig.add_shape(type="path", path=f"M {x},{y} L {x-s/2},{y-s} L {x+s/2},{y-s} Z", fillcolor=fill_col, line_color=line_col, line_width=2, row=1, col=1)
         fig.add_shape(type="line", x0=x-s, y0=y-s, x1=x+s, y1=y-s, line=dict(color=line_col, width=3), row=1, col=1)
-        for hx in np.linspace(x-s, x+s, 5): # Hatch
+        for hx in np.linspace(x-s, x+s, 5): 
             fig.add_shape(type="line", x0=hx, y0=y-s, x1=hx-s/4, y1=y-s*1.3, line=dict(color=line_col, width=1), row=1, col=1)
 
     elif sup_type == "Roller":
@@ -95,25 +95,24 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1), row=1, col=1)
 
 def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
-    """
-    Combines: 
-    1. Beautiful 'Comb' UDL style
-    2. Sharp Point Load Arrows
-    3. Standard Support Symbols
-    """
     cum_len = [0] + list(np.cumsum(vis_spans))
     total_len = cum_len[-1]
     
     force_unit = "kg" if "Metric" in unit_sys else "kN"
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     
-    # Scaling
-    max_load_val = 1.0
-    for load in loads:
-        val = max(abs(load.get('w', 0)), abs(load.get('P', 0)))
-        if val > max_load_val: max_load_val = val
+    # --- INTELLIGENT SCALING LOGIC ---
+    # 1. Separate Point and Uniform loads to avoid "vanishing" issues
+    w_vals = [abs(l['w']) for l in loads if l.get('type') == 'U' and l['w'] != 0]
+    p_vals = [abs(l['P']) for l in loads if l.get('type') == 'P' and l['P'] != 0]
     
-    load_plot_height = max_load_val * 1.8 
+    max_w = max(w_vals) if w_vals else 1.0
+    max_p = max(p_vals) if p_vals else 1.0
+    
+    # Define a consistent visual height for the diagrams (Plotly Units)
+    target_h = 1.0 
+    
+    # ---------------------------------
 
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
@@ -124,41 +123,43 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     # --- ROW 1: LOADING DIAGRAM ---
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
-    # 1. Supports (Standard)
-    sup_size = load_plot_height * 0.15 
+    # 1. Supports
+    sup_size = target_h * 0.25
     for i, x in enumerate(cum_len):
         if i < len(vis_supports):
             stype = vis_supports.iloc[i]['type']
             if stype != "None":
-                draw_support_shape(fig, x, 0, stype, size=max(sup_size, max_load_val*0.2))
+                draw_support_shape(fig, x, 0, stype, size=sup_size)
 
-    # 2. Loads (The Beautiful Style)
+    # 2. Loads
     for load in loads:
         span_idx = load.get('span_idx', 0)
         x_start = cum_len[span_idx]
         x_end = cum_len[span_idx+1]
         
-        # --- UDL (Comb Style Restoration) ---
+        # --- UDL ---
         if load.get('type') == 'U' and load['w'] != 0:
             w = load['w']
-            h = (w / max_load_val) * (load_plot_height * 0.6)
+            # Scale Relative to Max UDL only
+            ratio = abs(w) / max_w
+            h = (0.3 + 0.7 * ratio) * target_h # Min height 30% so small loads are visible
             
-            # A. The Fill Area
+            # Fill
             fig.add_trace(go.Scatter(
                 x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], 
                 fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', 
-                line=dict(width=0), showlegend=False, hoverinfo='skip'
+                line=dict(width=0), showlegend=False, hoverinfo='text', text=f"UDL: {w}"
             ), row=1, col=1)
             
-            # B. The "Back" of the Comb (Top Line)
+            # Comb Line
             fig.add_trace(go.Scatter(
                 x=[x_start, x_end], y=[h, h],
                 mode='lines', line=dict(color='#EF6C00', width=2),
-                showlegend=False, hoverinfo='text', text=f"UDL: {w}"
+                showlegend=False, hoverinfo='skip'
             ), row=1, col=1)
             
-            # C. The "Teeth" of the Comb (Multiple Arrows) - THE PART YOU MISSED!
-            n_arrows = max(5, int((x_end - x_start) * 4)) # Density of arrows
+            # Arrows (Comb Teeth)
+            n_arrows = max(5, int((x_end - x_start) * 4)) 
             for ax in np.linspace(x_start, x_end, n_arrows):
                 fig.add_annotation(
                     x=ax, y=0, ax=ax, ay=h,
@@ -166,15 +167,16 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="#EF6C00",
                     row=1, col=1
                 )
-            
-            # Label
             fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"<b>w={w:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#EF6C00", size=11), row=1, col=1)
 
         # --- POINT LOAD ---
         elif load.get('type') == 'P' and load['P'] != 0:
             P = load['P']
             load_x = load['x'] + x_start
-            h = (P / max_load_val) * (load_plot_height * 0.7)
+            
+            # Scale Relative to Max Point Load only
+            ratio = abs(P) / max_p
+            h = (0.3 + 0.7 * ratio) * target_h
             
             # Thick Red Arrow
             fig.add_annotation(
@@ -185,7 +187,8 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
             )
             fig.add_annotation(x=load_x, y=h, text=f"<b>P={P:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#D32F2F", size=12, weight="bold"), row=1, col=1)
 
-    fig.update_yaxes(range=[-load_plot_height*0.3, load_plot_height*1.5], visible=False, row=1, col=1)
+    # Force Y-Axis to accommodate heights
+    fig.update_yaxes(range=[-target_h*0.4, target_h*1.5], visible=False, row=1, col=1)
 
     # --- ROW 2 & 3: SFD / BMD ---
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], mode='lines', line=dict(color='#D32F2F', width=2), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="%{y:.2f}"), row=2, col=1)
