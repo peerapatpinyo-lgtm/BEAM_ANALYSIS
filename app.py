@@ -235,7 +235,9 @@ if st.session_state['analyzed']:
             with col1:
                 st.markdown(f"#### Cross Section: Span {res['id']}")
                 fig_sec = draw_section_beautiful(b, h, cov, res['nb'], bar_dias[m_bar], stir_dias[s_bar], m_bar, s_bar, res['s_value'], "")
-                st.plotly_chart(fig_sec, use_container_width=True)
+                
+                # --- FIX: ADDED UNIQUE KEY ---
+                st.plotly_chart(fig_sec, use_container_width=True, key=f"sec_plot_{i}") 
                 
                 st.info(f"**Result Summary:**\n\n- Main: **{res['nb']}-{m_bar}**\n- Stirrup: **{s_bar} @ {res['s_value']} cm**")
             
