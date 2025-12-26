@@ -13,11 +13,6 @@ st.set_page_config(page_title="Continuous Beam Design (Pro)", layout="wide")
 FACTOR_DL = 1.4
 FACTOR_LL = 1.7
 
-def explain_calc(text):
-    """Helper to display calculation logic explanation"""
-    with st.expander("📝 ดูหลักการคำนวณ (Calculation Logic)"):
-        st.markdown(text)
-
 # ==========================================
 # PART 2: ANALYSIS ENGINE (anaStruct)
 # ==========================================
@@ -38,7 +33,7 @@ def analyze_structure(spans_data, supports_data, loads_data):
     
     # 2. ใส่ Supports (จุดรองรับ)
     for i, supp_type in enumerate(supports_data):
-        node_id = i + 1  # <--- Fix: Node เริ่มที่ 1
+        node_id = i + 1  # Node เริ่มที่ 1
         
         # --- Stability Guard ---
         # ถ้า Node แรกเป็น Roller ระบบจะคำนวณไม่ได้ (Unstable mechanism)
@@ -64,7 +59,6 @@ def analyze_structure(spans_data, supports_data, loads_data):
         element_id = span_idx + 1 # Element ID เริ่มที่ 1
         
         if load['type'] == 'Uniform Load':
-            # q_load: anastruct convention
             ss.q_load(q=wu_total, element_id=element_id)
             
         elif load['type'] == 'Point Load':
@@ -78,33 +72,33 @@ def analyze_structure(spans_data, supports_data, loads_data):
 
 def get_detailed_results(ss):
     """
-    ดึงค่า Shear/Moment โดยใช้ Node ID Lookup (เสถียรที่สุด)
+    ดึงค่า Shear/Moment โดยใช้ Node ID Lookup (แก้ไข .coordinates)
     """
     x_vals = []
     shear_vals = []
     moment_vals = []
     
-    # เรียง Element โดยดูจากพิกัด X ของ Node 1 (Start Node)
-    # ใช้ ss.node_map[...] เพื่อหลีกเลี่ยง error เรื่อง Vertex attribute
+    # เรียง Element ตามพิกัด X ของ Node เริ่มต้น
+    # แก้: ใช้ .coordinates[0]
     sorted_elements = sorted(
         ss.element_map.values(), 
-        key=lambda e: ss.node_map[e.node_id1].loc[0]
+        key=lambda e: ss.node_map[e.node_id1].coordinates[0]
     )
     
     for el in sorted_elements:
-        # ดึง Node Object จาก ID
+        # ดึง Node Object
         node1 = ss.node_map[el.node_id1]
         node2 = ss.node_map[el.node_id2]
         
-        # ดึงพิกัด X (loc = [x, y])
-        x0 = node1.loc[0]
-        x1 = node2.loc[0]
+        # แก้: ดึงพิกัด X จาก .coordinates
+        x0 = node1.coordinates[0]
+        x1 = node2.coordinates[0]
         
         # ดึงค่า Force Array
         s_arr = np.array(el.shear).flatten()
         m_arr = np.array(el.moment).flatten()
         
-        # สร้าง array ของระยะ x ให้ตรงกับจำนวนจุดที่คำนวณ
+        # สร้าง array ของระยะ x
         x_arr = np.linspace(x0, x1, len(s_arr))
         
         x_vals.extend(x_arr)
@@ -263,7 +257,6 @@ with tab2:
             
             # Plot Moment
             st.subheader("Bending Moment Diagram (BMD)")
-            # Note: anastruct convention (Sagging +, Hogging -)
             fig_m = plot_interactive(df_res, 'moment', "Bending Moment (kN-m)", "#1f77b4", "Moment (kN-m)")
             st.plotly_chart(fig_m, use_container_width=True)
             
