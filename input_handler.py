@@ -19,31 +19,40 @@ def render_sidebar():
     return code, method, fdl, fll, unit
 
 def render_geometry_input():
-    st.info("📍 Geometry")
-    n = st.number_input("Number of Spans", 1, 5, 1)
-    spans, supports = [], []
-    c1, c2 = st.columns(2)
-    sl = c1.selectbox("Left Sup", ["Pin", "Roller", "Fix"], key="SL")
-    sr = c2.selectbox("Right Sup", ["Pin", "Roller", "Fix"], index=1, key="SR")
+    st.info("📍 Geometry & Supports")
     
-    supports.append(sl)
-    for i in range(n):
-        l = st.number_input(f"Span {i+1} (m)", 0.5, 20.0, 5.0, key=f"L{i}")
+    # 1. จำนวนช่วงคาน
+    n = st.number_input("Number of Spans", 1, 10, 2)
+    
+    spans = []
+    # 2. รับความยาวแต่ละช่วง
+    cols_len = st.columns(n)
+    for i, col in enumerate(cols_len):
+        l = col.number_input(f"L{i+1} (m)", 0.5, 20.0, 5.0, key=f"span_len_{i}")
         spans.append(l)
-        if i < n-1: supports.append("Roller")
-    supports.append(sr)
+
+    st.markdown("---")
+    st.caption("Select Support Types (Left to Right)")
+    
+    # 3. รับชนิดจุดรองรับ (มี n+1 จุด)
+    supports = []
+    # จัด Layout ให้เรียงกันสวยๆ
+    cols_sup = st.columns(n + 1)
+    support_options = ["Pin", "Roller", "Fix", "None"] # None = Cantilever end (Free)
+    
+    for i, col in enumerate(cols_sup):
+        # Default logic: ตัวแรก Pin, ตัวสุดท้าย Roller, ตรงกลาง Roller
+        def_idx = 0 if i==0 else 1 
+        
+        s = col.selectbox(f"Sup {i}", support_options, index=def_idx, key=f"sup_type_{i}")
+        supports.append(s)
+        
     return n, spans, supports
 
 def render_loads_input(n_span, spans, fdl, fll, unit_sys):
     st.info(f"⬇️ Loads ({unit_sys.split(' ')[0]})")
     loads = []
     tabs = st.tabs([f"Span {i+1}" for i in range(n_span)])
-    
-    # Unit Helper: Input is user unit -> Convert to Newtons/kg for calculation if needed
-    # But our engine assumes standard consistent units. 
-    # Let's keep input as is, and label them as "User Unit"
-    
-    to_cal = 1000.0 if "kN" in unit_sys else 1.0 # Convert kN to N/kg base for display logic? No, keep simple.
     
     for i, tab in enumerate(tabs):
         with tab:
@@ -52,7 +61,6 @@ def render_loads_input(n_span, spans, fdl, fll, unit_sys):
             ull = c2.number_input(f"Uniform LL", 0.0, key=f"ull{i}")
             w = udl*fdl + ull*fll
             if w > 0: 
-                # Store total factored load
                 loads.append({'span_idx': i, 'type': 'Uniform', 'total_w': w, 'display_val': udl+ull})
             
             st.markdown("---")
@@ -60,7 +68,7 @@ def render_loads_input(n_span, spans, fdl, fll, unit_sys):
                 c3, c4, c5 = st.columns(3)
                 pdl = c3.number_input("P DL", 0.0, key=f"pdl{i}")
                 pll = c4.number_input("P LL", 0.0, key=f"pll{i}")
-                px = c5.number_input("Dist x", 0.0, spans[i], spans[i]/2, key=f"px{i}")
+                px = c5.number_input("Dist x (from left)", 0.0, spans[i], spans[i]/2, key=f"px{i}")
                 p = pdl*fdl + pll*fll
                 if p > 0: 
                     loads.append({'span_idx': i, 'type': 'Point', 'total_w': p, 'pos': px, 'display_val': pdl+pll})
