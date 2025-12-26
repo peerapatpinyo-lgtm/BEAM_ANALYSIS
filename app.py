@@ -15,7 +15,7 @@ except ImportError:
 # ==========================================
 # 0. SETUP & GRAPHICS FUNCTIONS
 # ==========================================
-st.set_page_config(page_title="RC Beam Pro V.2024", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="RC Beam Pro V.Final", layout="wide", page_icon="🏗️")
 
 if 'analyzed' not in st.session_state: st.session_state['analyzed'] = False
 if 'res_df' not in st.session_state: st.session_state['res_df'] = None
@@ -37,32 +37,38 @@ def draw_beam_diagram(spans, supports, loads):
     cum_len = [0] + list(np.cumsum(spans))
     fig = go.Figure()
     
-    # 1. Main Beam Line
-    fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], mode='lines', 
-                             line=dict(color='black', width=6), hoverinfo='skip'))
+    # 1. Main Beam Line (แก้ชื่อ Trace เป็น Beam และปรับเส้น)
+    fig.add_trace(go.Scatter(
+        x=[0, total_len], y=[0, 0], 
+        mode='lines', 
+        name='Beam',  # เปลี่ยนชื่อจาก Trace เป็น Beam
+        line=dict(color='black', width=6), 
+        hoverinfo='name+x'
+    ))
 
     # 2. Supports
     for i, s in enumerate(supports):
         sx = cum_len[i]
         if s == "None": continue
         
-        # Determine symbol
         if s == "Fix": sym, col, off, txt = "square", "#D32F2F", 0, "Fix"
         elif s == "Pin": sym, col, off, txt = "triangle-up", "#2E7D32", -0.02, "Pin"
-        else: sym, col, off, txt = "circle", "#F57C00", -0.02, "Roller" # Roller
+        else: sym, col, off, txt = "circle", "#F57C00", -0.02, "Roller"
 
         fig.add_trace(go.Scatter(
             x=[sx], y=[off], mode='markers',
+            name=txt,
             marker=dict(symbol=sym, size=16, color=col, line=dict(width=2,color='black')),
             hovertext=f"{txt} @ {sx}m", hoverinfo="text", showlegend=False
         ))
-        # Add ground line for roller/pin
+        
+        # Ground lines
         if s in ["Roller", "Pin"]:
              fig.add_shape(type="line", x0=sx-0.2, y0=off-0.04, x1=sx+0.2, y1=off-0.04, line=dict(color="black", width=2))
              for dash in range(3):
                  fig.add_shape(type="line", x0=sx-0.15 + dash*0.1, y0=off-0.04, x1=sx-0.2 + dash*0.1, y1=off-0.07, line=dict(color="black", width=1))
 
-    # 3. Loads (Annotations)
+    # 3. Loads
     max_h = 0.3
     for load in loads:
         start_x = cum_len[load['span_idx']]
@@ -70,12 +76,11 @@ def draw_beam_diagram(spans, supports, loads):
         
         if load['type'] == 'Uniform':
             end_x = start_x + spans[load['span_idx']]
-            # Draw Load Block
             fig.add_shape(type="rect", x0=start_x, y0=0, x1=end_x, y1=max_h, 
                           line=dict(width=0), fillcolor="rgba(255, 87, 34, 0.2)")
             fig.add_trace(go.Scatter(x=[start_x, end_x], y=[max_h, max_h], mode='lines', 
-                                     line=dict(color='#E64A19', width=2), showlegend=False))
-            # Text
+                                     name="Load", line=dict(color='#E64A19', width=2), showlegend=False))
+            
             mid = (start_x + end_x)/2
             fig.add_annotation(x=mid, y=max_h, text=f"w={val:.2f}", showarrow=True, arrowhead=0, ax=0, ay=-20, font=dict(color="#bf360c"))
             
@@ -90,46 +95,36 @@ def draw_beam_diagram(spans, supports, loads):
     for i, sp in enumerate(spans):
         mid = cum_len[i] + sp/2
         fig.add_annotation(x=mid, y=-0.15, text=f"<b>L={sp}m</b>", showarrow=False, font=dict(color="#1565C0", size=14))
-        # Dimension lines
         fig.add_shape(type="line", x0=cum_len[i], y0=-0.1, x1=cum_len[i], y1=-0.2, line=dict(color="gray", dash="dot"))
         fig.add_shape(type="line", x0=cum_len[i+1], y0=-0.1, x1=cum_len[i+1], y1=-0.2, line=dict(color="gray", dash="dot"))
 
+    # Layout Adjustment (เพิ่ม Padding แกน X ไม่ให้เส้นหาย)
     fig.update_layout(height=280, title_text="Structure Model",
-                      margin=dict(l=20,r=20,t=40,b=20), 
+                      margin=dict(l=30,r=30,t=40,b=20), 
                       yaxis=dict(visible=False, range=[-0.3, 0.5]), 
-                      xaxis=dict(title="Distance (m)", range=[-0.5, total_len+0.5]),
+                      xaxis=dict(title="Distance (m)", range=[-0.5, total_len + 0.5]), # เผื่อขอบซ้ายขวา
                       plot_bgcolor='white')
     return fig
 
 def draw_section_beautiful(b, h, cov, nb, bd_mm, sd_mm, main_name, stir_name):
-    """ วาดหน้าตัดคานแบบ Engineering Drawing """
     fig = go.Figure()
+    bd = bd_mm / 10 
+    sd = sd_mm / 10 
     
-    bd = bd_mm / 10 # cm
-    sd = sd_mm / 10 # cm
+    # Concrete
+    fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=3), fillcolor="#EEEEEE")
     
-    # 1. Concrete Face
-    fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, 
-                  line=dict(color="black", width=3), fillcolor="#EEEEEE")
-    
-    # 2. Stirrup (Rounded corners simulation)
+    # Stirrup
     inset = cov
-    stir_w = b - 2*inset
-    stir_h = h - 2*inset
-    
-    # วาดเป็นเส้นต่อเนื่อง (Path) แทน rect เพื่อความสวยงาม
     path_x = [inset, b-inset, b-inset, inset, inset]
     path_y = [inset, inset, h-inset, h-inset, inset]
     fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines', 
                              line=dict(color="#C62828", width=3), name="Stirrup", hoverinfo='skip'))
     
-    # 3. Main Rebars
+    # Main Bars
     if nb > 0:
-        # Calculate spacing
         eff_w = b - 2*cov - 2*sd - bd
         gap = eff_w / (nb - 1) if nb > 1 else 0
-        
-        # Bottom Layer
         y_pos = cov + sd + bd/2
         x_positions = [cov + sd + bd/2 + i*gap for i in range(nb)]
         
@@ -138,29 +133,18 @@ def draw_section_beautiful(b, h, cov, nb, bd_mm, sd_mm, main_name, stir_name):
             marker=dict(size=bd_mm*1.8, color='#1565C0', line=dict(width=2, color='black')),
             name="Main Bar"
         ))
-        
-        # Top Hanger Bars (Mockup - ใส่เหล็กยึดปลอกด้านบน 2 เส้นให้ดูสมจริง)
+        # Hanger Bars
         y_top = h - (cov + sd + bd/2)
         fig.add_trace(go.Scatter(
             x=[cov + sd + bd/2, b - (cov + sd + bd/2)], y=[y_top, y_top], mode='markers',
             marker=dict(size=bd_mm*1.0, color='#90A4AE', line=dict(width=1, color='black')),
-            showlegend=False, hoverinfo='text', hovertext="Hanger Bars"
+            showlegend=False, hoverinfo='skip'
         ))
 
-    # 4. Dimensions & Annotations
-    # b dimension
+    # Dimensions
     fig.add_annotation(x=b/2, y=-4, text=f"b = {b} cm", showarrow=False, font=dict(size=14))
-    fig.add_shape(type="line", x0=0, y0=-2, x1=b, y1=-2, line=dict(color="black", width=1))
-    fig.add_shape(type="line", x0=0, y0=0, x1=0, y1=-3, line=dict(color="black", width=1))
-    fig.add_shape(type="line", x0=b, y0=0, x1=b, y1=-3, line=dict(color="black", width=1))
-    
-    # h dimension
     fig.add_annotation(x=-4, y=h/2, text=f"h = {h} cm", textangle=-90, showarrow=False, font=dict(size=14))
-    fig.add_shape(type="line", x0=-2, y0=0, x1=-2, y1=h, line=dict(color="black", width=1))
-    fig.add_shape(type="line", x0=0, y0=0, x1=-3, y1=0, line=dict(color="black", width=1))
-    fig.add_shape(type="line", x0=0, y0=h, x1=-3, y1=h, line=dict(color="black", width=1))
     
-    # Label Bars
     fig.add_annotation(x=b/2, y=y_pos, ax=50, ay=40, text=f"<b>{nb}-{main_name}</b>", 
                        arrowcolor="#1565C0", arrowhead=2, font=dict(color="#1565C0", size=14))
     fig.add_annotation(x=b, y=h/2, ax=40, ay=0, text=f"Stirrup <b>{stir_name}</b>", 
@@ -218,40 +202,42 @@ if st.session_state['analyzed']:
     # 1. Draw Beam Diagram
     st.plotly_chart(draw_beam_diagram(*vis_data), use_container_width=True)
     
-    # 2. Draw Graphs (Synchronized X-axis)
-    # Find Max/Min points for annotation
+    # 2. Draw Graphs (Synchronized X-axis & Better Labels)
     v_max_idx, v_min_idx = df['shear'].idxmax(), df['shear'].idxmin()
     m_max_idx, m_min_idx = df['moment'].idxmax(), df['moment'].idxmin()
     
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
                         subplot_titles=(f"Shear Force Diagram ({u_f})", f"Bending Moment Diagram ({u_m})"))
     
-    # Shear Trace
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#E53935'), name="Shear"), row=1, col=1)
-    # Moment Trace
     fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1E88E5'), name="Moment"), row=2, col=1)
     
-    # Add Markers & Annotations for Max/Min
-    for col, data, idx_list, color in [(1, df['shear'], [v_max_idx, v_min_idx], '#E53935'), 
-                                       (2, df['moment'], [m_max_idx, m_min_idx], '#1E88E5')]:
+    # Add Markers & Smart Annotations (ป้องกันเลขตกขอบ)
+    for col, data, idx_list in [(1, df['shear'], [v_max_idx, v_min_idx]), (2, df['moment'], [m_max_idx, m_min_idx])]:
         for idx in idx_list:
             x_val = df.iloc[idx]['x']
             y_val = df.iloc[idx]['shear'] if col==1 else df.iloc[idx]['moment']
             
+            # Smart Text Position
+            if x_val < total_len * 0.1: text_pos = "top right"
+            elif x_val > total_len * 0.9: text_pos = "top left"
+            else: text_pos = "top center"
+
             fig.add_trace(go.Scatter(x=[x_val], y=[y_val], mode='markers+text',
                                      marker=dict(color='black', size=8),
-                                     text=[f"{y_val:.2f}"], textposition="top center",
-                                     showlegend=False), row=col, col=1)
+                                     text=[f"{y_val:.2f}"], textposition=text_pos,
+                                     name="Max/Min", showlegend=False), row=col, col=1)
 
-    # Force X-axis range to match beam diagram exactly
-    fig.update_xaxes(range=[-0.5, total_len+0.5], showgrid=True)
-    fig.update_layout(height=500, margin=dict(l=20,r=20,t=40,b=20), hovermode="x unified")
+    # Force X-axis range (เพิ่มระยะขอบซ้ายขวาเล็กน้อย -0.5 ถึง L+0.5)
+    fig.update_xaxes(range=[-0.5, total_len + 0.5], showgrid=True)
+    
+    # ปรับ Margin กราฟให้กว้างขึ้น เพื่อให้ Text ไม่โดนตัด
+    fig.update_layout(height=500, margin=dict(l=50, r=50, t=40, b=40), hovermode="x unified")
     st.plotly_chart(fig, use_container_width=True)
 
     # 1.4 Design Section
     st.markdown('<div class="section-header">3️⃣ RC Design & Detailing</div>', unsafe_allow_html=True)
     
-    # Get Max Absolute values for design
     max_M = df['moment'].abs().max()
     max_V = df['shear'].abs().max()
 
@@ -278,7 +264,6 @@ if st.session_state['analyzed']:
             * Area Required: {res['As_req']:.2f} cm²
             * Area Provided: {res['nb']*bar_areas[m_bar]:.2f} cm²
             """)
-            
             st.divider()
             shear_color = "orange" if "Shear Reinf" in res['msg_shear'] else "green"
             st.markdown(f":{shear_color}[**Shear:** {res['msg_shear']}]")
@@ -288,7 +273,6 @@ if st.session_state['analyzed']:
                  st.code("\n".join(res['logs']))
 
     with c_draw:
-        # ใช้ฟังก์ชันวาดใหม่ที่สวยกว่าเดิม
         fig_sec = draw_section_beautiful(b, h, cov, res['nb'], bar_dias[m_bar], stir_dias[s_bar], m_bar, s_bar)
         st.plotly_chart(fig_sec, use_container_width=True)
         
