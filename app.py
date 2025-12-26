@@ -23,8 +23,7 @@ def explain_calc(text):
 # ==========================================
 def analyze_structure(spans_data, supports_data, loads_data):
     """
-    วิเคราะห์คานโดยใช้ anaStruct (2D FEM)
-    พร้อมระบบป้องกัน Stability Error และ Node Indexing Fix
+    วิเคราะห์คานโดยใช้ anaStruct (2D FEM) - พร้อมระบบป้องกัน Stability Error
     """
     # สร้าง System Model
     ss = SystemElements(EA=15000, EI=5000) 
@@ -38,11 +37,12 @@ def analyze_structure(spans_data, supports_data, loads_data):
     
     # 2. ใส่ Supports (จุดรองรับ)
     for i, supp_type in enumerate(supports_data):
-        node_id = i + 1  # <--- Fix: Node เริ่มที่ 1
+        node_id = i + 1
         
         # --- Stability Guard ---
-        # ถ้า Node แรกเป็น Roller ระบบจะคำนวณไม่ได้ (Unstable mechanism)
-        # ต้องบังคับให้เป็น Pin เพื่อล็อคแกน X (ไม่มีผลต่อ Moment)
+        # ถ้าเป็น Node แรกสุด (Node 1) และผู้ใช้เลือก Roller
+        # เราจะบังคับให้เป็น Pin (Hinged) เพื่อล็อคแกน X ไม่ให้คานไหล (Unstable)
+        # ซึ่งไม่มีผลต่อ Moment ในคานรับแรงดิ่ง แต่ทำให้ Math คำนวณผ่าน
         if i == 0 and supp_type == 'Roller':
             supp_type = 'Pin' 
         # -----------------------
@@ -52,19 +52,20 @@ def analyze_structure(spans_data, supports_data, loads_data):
         elif supp_type == 'Pin':
             ss.add_support_hinged(node_id=node_id)
         elif supp_type == 'Roller':
+            # Roller direction=1 คือกลิ้งแกน x (รับแรงแกน y)
             ss.add_support_roll(node_id=node_id, direction=1) 
 
-    # 3. ใส่ Loads (Apply Load Combination)
+    # 3. ใส่ Loads
     for load in loads_data:
         mag_dead = load['dl'] + load['sdl']
         mag_live = load['ll']
         wu_total = (FACTOR_DL * mag_dead) + (FACTOR_LL * mag_live)
         
         span_idx = load['span_idx']
-        element_id = span_idx + 1 # Element ID เริ่มที่ 1
+        element_id = span_idx + 1
         
         if load['type'] == 'Uniform Load':
-            # q_load: anastruct convention
+            # ใส่ load ที่ element
             ss.q_load(q=wu_total, element_id=element_id)
             
         elif load['type'] == 'Point Load':
@@ -298,3 +299,4 @@ with tab3:
             st.success(res['Shear_Msg'])
     else:
         st.warning("No analysis data found.")
+
