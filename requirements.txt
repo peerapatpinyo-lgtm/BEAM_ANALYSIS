@@ -1,6 +1,5 @@
 streamlit
-indeterminbeam
-sympy
+anastruct
+matplotlib
+numpy
 pandas
-numpy<1.24.0
-matplotlib<3.8.0
