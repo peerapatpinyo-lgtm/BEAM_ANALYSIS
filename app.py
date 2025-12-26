@@ -31,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT (Robust Point Load)
+# CUSTOM LOAD INPUT
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys):
     st.markdown("### 3️⃣ Applied Loads")
@@ -65,7 +65,7 @@ def render_custom_load_input(n_span, spans, unit_sys):
     return loads
 
 # ==========================================
-# ENGINEERING PLOTTING (FIXED SCALING)
+# ENGINEERING PLOTTING (PRESERVED BEAUTY)
 # ==========================================
 
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
@@ -95,6 +95,8 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1), row=1, col=1)
 
 def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
+    if not vis_spans: return go.Figure() # Safety for empty data
+
     cum_len = [0] + list(np.cumsum(vis_spans))
     total_len = cum_len[-1]
     
@@ -102,18 +104,13 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     
     # --- INTELLIGENT SCALING LOGIC ---
-    # 1. Separate Point and Uniform loads to avoid "vanishing" issues
     w_vals = [abs(l['w']) for l in loads if l.get('type') == 'U' and l['w'] != 0]
     p_vals = [abs(l['P']) for l in loads if l.get('type') == 'P' and l['P'] != 0]
     
     max_w = max(w_vals) if w_vals else 1.0
     max_p = max(p_vals) if p_vals else 1.0
-    
-    # Define a consistent visual height for the diagrams (Plotly Units)
     target_h = 1.0 
     
-    # ---------------------------------
-
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
         subplot_titles=("<b>Loading Diagram</b>", "<b>Shear Force Diagram (SFD)</b>", "<b>Bending Moment Diagram (BMD)</b>"),
@@ -134,15 +131,20 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     # 2. Loads
     for load in loads:
         span_idx = load.get('span_idx', 0)
+        
+        # *** FIX START: SAFETY GUARD ***
+        if span_idx >= len(vis_spans): 
+            continue # Skip invalid loads to prevent crash
+        # *** FIX END ***
+
         x_start = cum_len[span_idx]
         x_end = cum_len[span_idx+1]
         
         # --- UDL ---
         if load.get('type') == 'U' and load['w'] != 0:
             w = load['w']
-            # Scale Relative to Max UDL only
             ratio = abs(w) / max_w
-            h = (0.3 + 0.7 * ratio) * target_h # Min height 30% so small loads are visible
+            h = (0.3 + 0.7 * ratio) * target_h 
             
             # Fill
             fig.add_trace(go.Scatter(
@@ -158,7 +160,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
                 showlegend=False, hoverinfo='skip'
             ), row=1, col=1)
             
-            # Arrows (Comb Teeth)
+            # Arrows
             n_arrows = max(5, int((x_end - x_start) * 4)) 
             for ax in np.linspace(x_start, x_end, n_arrows):
                 fig.add_annotation(
@@ -174,11 +176,9 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
             P = load['P']
             load_x = load['x'] + x_start
             
-            # Scale Relative to Max Point Load only
             ratio = abs(P) / max_p
             h = (0.3 + 0.7 * ratio) * target_h
             
-            # Thick Red Arrow
             fig.add_annotation(
                 x=load_x, y=0, ax=load_x, ay=h,
                 xref="x1", yref="y1", axref="x1", ayref="y1",
@@ -187,7 +187,6 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
             )
             fig.add_annotation(x=load_x, y=h, text=f"<b>P={P:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#D32F2F", size=12, weight="bold"), row=1, col=1)
 
-    # Force Y-Axis to accommodate heights
     fig.update_yaxes(range=[-target_h*0.4, target_h*1.5], visible=False, row=1, col=1)
 
     # --- ROW 2 & 3: SFD / BMD ---
