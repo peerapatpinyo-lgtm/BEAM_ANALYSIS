@@ -4,7 +4,7 @@ import pandas as pd
 def run_beam_analysis(spans, supports, loads):
     """
     Direct Stiffness Method for Continuous Beam Analysis (1D).
-    Supports: Point Loads (P) and Uniform Loads (UDL).
+    Robust handling for List/DataFrame supports and Point/UDL loads.
     """
     n_spans = len(spans)
     n_nodes = n_spans + 1
@@ -15,7 +15,6 @@ def run_beam_analysis(spans, supports, loads):
     K_global = np.zeros((total_dof, total_dof))
     F_global = np.zeros(total_dof)
 
-    # Elastic Modulus (E) and Inertia (I) - Dummy constant values for proportion
     E = 2e6  
     I = 0.001 
 
@@ -73,18 +72,28 @@ def run_beam_analysis(spans, supports, loads):
     vis_supports = [] 
 
     for i in range(n_nodes):
-        # *** FIX START: Handle both List and DataFrame inputs ***
+        # *** FIX START: SUPER ROBUST DATA EXTRACTION ***
         sup_type = "None"
+        
         if i < len(supports):
+            # Step 1: Get the raw item (handle List vs DataFrame)
             if isinstance(supports, list):
-                sup_type = supports[i]['type']
+                raw_item = supports[i]
             elif isinstance(supports, pd.DataFrame):
-                sup_type = supports.iloc[i]['type']
+                raw_item = supports.iloc[i]
+            elif isinstance(supports, pd.Series):
+                 # Case where a single Series is passed
+                 raw_item = supports.iloc[i] if i < len(supports) else "None"
             else:
-                try:
-                    sup_type = supports[i]['type'] # Fallback
-                except:
-                    pass
+                raw_item = "None"
+
+            # Step 2: Extract string type (handle String vs Dict/Series)
+            if isinstance(raw_item, str):
+                sup_type = raw_item
+            elif hasattr(raw_item, 'get'): # Dict or Series
+                sup_type = raw_item.get('type', 'None')
+            elif hasattr(raw_item, 'type'): # Object attribute
+                sup_type = raw_item.type
         # *** FIX END ***
         
         vis_supports.append({'x': sum(spans[:i]), 'type': sup_type})
@@ -133,7 +142,6 @@ def run_beam_analysis(spans, supports, loads):
             [6*L,     2*L2,   -6*L,    4*L2]
         ])
         
-        # Re-calculate FEM
         fem_vec = np.zeros(4)
         span_loads = [l for l in loads if l.get('span_idx') == i]
         
