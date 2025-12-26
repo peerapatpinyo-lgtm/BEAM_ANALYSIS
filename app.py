@@ -11,43 +11,32 @@ except ImportError:
     st.stop()
 
 # ==========================================
-# ⚙️ GLOBAL CONFIG
+# ⚙️ GLOBAL CONFIG & STYLES
 # ==========================================
-st.set_page_config(page_title="Beam Design Pro", layout="wide")
+st.set_page_config(page_title="Beam Design Pro (ACI 318-19/22)", layout="wide")
 
-# --- SIDEBAR: SETTINGS ---
-st.sidebar.header("⚙️ Project Settings (ตั้งค่าโครงการ)")
-
-# 1. Code Selection
-design_code = st.sidebar.selectbox(
-    "1. Design Code (มาตรฐานการออกแบบ)",
-    ["EIT 1007 (WSD - วิธีหน่วยแรงใช้งาน)", "ACI 318 / EIT (SDM - วิธีกำลัง)"]
-)
-is_sdm = "SDM" in design_code
-
-# 2. Unit Selection
-unit_opt = st.sidebar.radio("2. Unit System (ระบบหน่วย)", ["SI Units (kN, m)", "MKS Units (kg, m)"])
-
-# Define Unit Variables
-if "kN" in unit_opt:
-    UNIT_F = "kN"; UNIT_L = "kN/m"; UNIT_M = "kN-m"; UNIT_S = "MPa"
-    TO_N = 1000.0; FROM_N = 1/1000.0; TO_MPA = 1.0
-else:
-    UNIT_F = "kg"; UNIT_L = "kg/m"; UNIT_M = "kg-m"; UNIT_S = "ksc"
-    TO_N = 9.80665; FROM_N = 1/9.80665; TO_MPA = 0.0980665
+# Custom CSS for better spacing
+st.markdown("""
+    <style>
+    .block-container {padding-top: 2rem; padding-bottom: 5rem;}
+    </style>
+""", unsafe_allow_html=True)
 
 # ==========================================
-# 🎨 HELPER FUNCTIONS
+# 🎨 DRAWING FUNCTIONS
 # ==========================================
-def draw_beam(spans, supports, loads):
+
+def draw_beam_schema(spans, supports, loads):
+    """Draw the longitudinal beam model"""
     fig = go.Figure()
-    # Beam Line
-    fig.add_trace(go.Scatter(x=[0, sum(spans)], y=[0, 0], mode='lines', line=dict(color='black', width=5), name='Beam'))
+    # Main Beam
+    fig.add_trace(go.Scatter(x=[0, sum(spans)], y=[0, 0], mode='lines', 
+                             line=dict(color='black', width=6), name='Beam', hoverinfo='none'))
     
-    cx = 0; sx = 0
+    cx, sx = 0, 0
     # Dimensions
     for L in spans:
-        fig.add_annotation(x=cx+L/2, y=-0.6, text=f"{L} m", showarrow=False, font=dict(color="blue"))
+        fig.add_annotation(x=cx+L/2, y=-0.5, text=f"<b>{L} m</b>", showarrow=False, font=dict(color="blue", size=14))
         fig.add_shape(type="line", x0=cx+L, y0=-0.3, x1=cx+L, y1=0.3, line=dict(color="gray", dash="dot"))
         cx += L
         
@@ -55,293 +44,376 @@ def draw_beam(spans, supports, loads):
     for i, s in enumerate(supports):
         sym = "triangle-up" if s != "Fix" else "square"
         col = "green" if s != "Fix" else "red"
-        fig.add_trace(go.Scatter(x=[sx], y=[-0.2], mode='markers', marker=dict(symbol=sym, size=14, color=col), showlegend=False, hovertext=f"Support {i+1}: {s}"))
+        fig.add_trace(go.Scatter(x=[sx], y=[-0.15], mode='markers', 
+                                 marker=dict(symbol=sym, size=16, color=col), 
+                                 showlegend=False, hovertemplate=f"Support {i+1}: {s}"))
         if i < len(spans): sx += spans[i]
 
     # Loads
     for ld in loads:
         start_x = sum(spans[:ld['span_idx']])
-        val_disp = ld['display_val']
+        val = ld['display_val']
         if ld['type'] == 'Point':
-            fig.add_annotation(x=start_x+ld['pos'], y=0.1, ax=0, ay=-40, text=f"{val_disp:.1f}", showarrow=True, arrowhead=2, arrowcolor="red")
+            fig.add_annotation(x=start_x+ld['pos'], y=0.1, ax=0, ay=-40, 
+                               text=f"<b>{val:.1f}</b>", showarrow=True, arrowhead=2, arrowcolor="#D32F2F")
         elif ld['type'] == 'Uniform':
             end_x = start_x + spans[ld['span_idx']]
-            fig.add_shape(type="rect", x0=start_x, y0=0, x1=end_x, y1=0.25, fillcolor="rgba(255,0,0,0.1)", line_width=0)
-            fig.add_annotation(x=(start_x+end_x)/2, y=0.3, text=f"{val_disp:.1f}", showarrow=False, font=dict(color="red"))
+            fig.add_shape(type="rect", x0=start_x, y0=0, x1=end_x, y1=0.2, 
+                          fillcolor="rgba(255,0,0,0.1)", line_width=0)
+            fig.add_annotation(x=(start_x+end_x)/2, y=0.25, text=f"<b>w={val:.1f}</b>", showarrow=False, font=dict(color="#D32F2F"))
 
-    fig.update_layout(height=250, xaxis=dict(showgrid=False, visible=True, title="Distance (m)"), yaxis=dict(visible=False, range=[-1, 1.5]), margin=dict(t=30, b=20), plot_bgcolor="white")
+    fig.update_layout(height=250, xaxis=dict(showgrid=False, visible=False), 
+                      yaxis=dict(visible=False, range=[-0.8, 1.0]), 
+                      margin=dict(t=10, b=10, l=10, r=10), plot_bgcolor="white")
+    return fig
+
+def draw_section_detail(b, h, cover, n_bars, bar_name, stirrup_name):
+    """Draw Cross Section of the Beam"""
+    fig = go.Figure()
+    
+    # 1. Concrete Face
+    fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, 
+                  line=dict(color="black", width=3), fillcolor="#F5F5F5")
+    
+    # 2. Stirrup (Rectangular Loop)
+    c = cover
+    fig.add_shape(type="rect", x0=c, y0=c, x1=b-c, y1=h-c,
+                  line=dict(color="#D32F2F", width=2), fillcolor="rgba(0,0,0,0)")
+    
+    # 3. Main Bars (Bottom)
+    bar_dia_approx = 2.0 # visual size
+    # Calculate positions
+    if n_bars > 0:
+        if n_bars == 1:
+             x_pos = [b/2]
+        else:
+             # Distribute evenly between stirrups
+             start_x = c + bar_dia_approx/2
+             end_x = b - c - bar_dia_approx/2
+             x_pos = np.linspace(start_x, end_x, n_bars)
+             
+        for bx in x_pos:
+            by = c + bar_dia_approx/2
+            fig.add_shape(type="circle", 
+                          x0=bx-bar_dia_approx/2, y0=by-bar_dia_approx/2, 
+                          x1=bx+bar_dia_approx/2, y1=by+bar_dia_approx/2,
+                          fillcolor="#1565C0", line_color="black")
+
+    # 4. Hanger Bars (Top - Dummy 2 bars)
+    for i in [0, 1]:
+        bx = c + bar_dia_approx/2 if i==0 else b - c - bar_dia_approx/2
+        by = h - c - bar_dia_approx/2
+        fig.add_shape(type="circle", 
+                      x0=bx-bar_dia_approx/2, y0=by-bar_dia_approx/2, 
+                      x1=bx+bar_dia_approx/2, y1=by+bar_dia_approx/2,
+                      fillcolor="#90CAF9", line_color="black")
+
+    # Annotations
+    fig.add_annotation(x=b/2, y=h/2, text=f"<b>{b:.0f} x {h:.0f} cm</b>", showarrow=False, font=dict(size=16))
+    fig.add_annotation(x=b/2, y=c, text=f"{n_bars}-{bar_name}", yshift=-25, showarrow=False, font=dict(color="#1565C0", size=14, weight="bold"))
+    fig.add_annotation(x=b+2, y=h/2, text=f"Stirrup: {stirrup_name}", textangle=-90, showarrow=False, font=dict(color="#D32F2F"))
+
+    fig.update_layout(
+        width=300, height=350,
+        xaxis=dict(visible=False, range=[-5, b+10]),
+        yaxis=dict(visible=False, range=[-5, h+5], scaleanchor="x", scaleratio=1),
+        margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor="white"
+    )
     return fig
 
 # ==========================================
 # 🖥️ MAIN UI
 # ==========================================
-st.title(f"🏗️ RC Beam Design")
-st.markdown(f"**Code:** {design_code} | **Unit:** {unit_opt}")
-st.markdown("---")
+st.title(f"🏗️ RC Beam Design Pro")
 
-# ------------------------------------------------
-# SECTION 1: GEOMETRY SETUP
-# ------------------------------------------------
-st.header("1. Geometry Configuration (กำหนดขนาดและจุดรองรับ)")
+# --- SIDEBAR ---
+st.sidebar.header("⚙️ Design Standards")
 
-# Number of Spans
-c_nspan, c_dummy = st.columns([1, 3])
-with c_nspan:
-    n_span = st.number_input("Number of Spans (จำนวนช่วงคาน)", min_value=1, max_value=6, value=2)
+# 1. Code Selection (Updated)
+code_options = [
+    "EIT 1007 (WSD - Thai)",
+    "ACI 318-14 / EIT (SDM)",
+    "ACI 318-19 (SDM)",
+    "ACI 318-22 (SDM)"
+]
+design_code = st.sidebar.selectbox("Select Design Code", code_options, index=2)
+is_sdm = "SDM" in design_code
 
-st.info("กรุณาระบุความยาวและประเภทจุดรองรับสำหรับแต่ละช่วง")
-
-spans = []
-supports = []
-
-# --- Dynamic Input Rows ---
-for i in range(n_span):
-    with st.container():
-        st.markdown(f"##### 📌 Span {i+1}")
-        c1, c2, c3 = st.columns([1.5, 1.5, 1.5])
-        
-        # Support Left
-        if i == 0:
-            with c1:
-                s_type = st.selectbox(f"Support {i+1} Type", ['Pin', 'Roller', 'Fix'], key=f"sup_{i}")
-                supports.append(s_type)
-        else:
-            with c1:
-                st.markdown(f"**Support {i+1}**")
-                st.caption(f"(Connected to Span {i})")
-
-        # Span Length
-        with c2:
-            l_val = st.number_input(f"Span {i+1} Length (m)", min_value=0.5, max_value=20.0, value=4.0, key=f"len_{i}")
-            spans.append(l_val)
-            
-        # Support Right
-        with c3:
-            s_next_label = f"Support {i+2} Type"
-            s_next = st.selectbox(s_next_label, ['Pin', 'Roller', 'Fix'], index=1, key=f"sup_{i+1}")
-            supports.append(s_next)
-    
-    st.divider()
-
-# ------------------------------------------------
-# SECTION 2: LOADS
-# ------------------------------------------------
-st.header("2. Loads Input (น้ำหนักบรรทุก)")
-
-# Factors
-if is_sdm:
-    st.write("🔧 **Load Factors for SDM**")
-    cf1, cf2 = st.columns(2) # <--- แก้ไขจุด Error ตรงนี้ครับ (เหลือ 2 คอลัมน์)
-    f_dl = cf1.number_input("Dead Load Factor", 1.0, 2.0, 1.4, step=0.1)
-    f_ll = cf2.number_input("Live Load Factor", 1.0, 2.0, 1.7, step=0.1)
-    st.caption(f"Total Load = {f_dl:.1f}DL + {f_ll:.1f}LL")
+# 2. Unit Selection
+unit_opt = st.sidebar.radio("Units", ["SI (kN, m)", "MKS (kg, m)"])
+if "kN" in unit_opt:
+    UNIT_F, UNIT_L, UNIT_M = "kN", "kN/m", "kN-m"
+    TO_N, FROM_N = 1000.0, 0.001
 else:
-    st.info("💡 **WSD Mode:** Using Service Loads (Factor = 1.0)")
-    f_dl = 1.0; f_ll = 1.0
+    UNIT_F, UNIT_L, UNIT_M = "kg", "kg/m", "kg-m"
+    TO_N, FROM_N = 9.80665, 1/9.80665
 
-# Loads Per Span
-loads_input = []
+st.sidebar.markdown("---")
+st.sidebar.info(f"Using: **{design_code}**\n\nMethod: **{'Strength Design' if is_sdm else 'Working Stress'}**")
 
-for i in range(n_span):
-    with st.expander(f"📍 Loads on Span {i+1} (น้ำหนักบนช่วงที่ {i+1})", expanded=True):
-        c_uni, c_pt = st.columns([1, 1.5])
-        
-        # Uniform Load
-        with c_uni:
-            st.markdown("**Uniform Distributed Load**")
-            udl = st.number_input(f"Dead Load (DL) [{UNIT_L}]", 0.0, key=f"u_dl_{i}")
-            ull = st.number_input(f"Live Load (LL) [{UNIT_L}]", 0.0, key=f"u_ll_{i}")
+# ==========================================
+# 1. INPUT SECTION
+# ==========================================
+c_geo, c_load = st.columns([1, 1.2])
+
+with c_geo:
+    st.subheader("1. Geometry")
+    n_span = st.number_input("Spans", 1, 5, 2)
+    
+    spans = []
+    supports = []
+    
+    # Compact Geometry Input
+    for i in range(n_span):
+        c1, c2, c3 = st.columns([1, 1.2, 1])
+        if i == 0:
+            supports.append(c1.selectbox(f"Sup 1", ['Pin', 'Roller', 'Fix'], key='s0'))
+        else:
+            c1.write(f"Sup {i+1} (Mid)")
             
-            total_u = (f_dl * udl + f_ll * ull)
-            if total_u > 0:
-                loads_input.append({
-                    'span_idx': i, 'type': 'Uniform',
-                    'total_w': total_u * TO_N,
-                    'display_val': total_u
-                })
+        spans.append(c2.number_input(f"L{i+1} (m)", 0.5, 20.0, 4.0, key=f'l{i}'))
         
-        # Point Loads
-        with c_pt:
-            st.markdown("**Point Loads (Concentrated)**")
-            n_pt = st.number_input(f"Number of Point Loads", 0, 5, 0, key=f"n_pt_{i}")
-            
-            for j in range(n_pt):
-                cc1, cc2, cc3 = st.columns(3)
-                pd = cc1.number_input(f"P{j+1} DL [{UNIT_F}]", 0.0, key=f"pd_{i}_{j}")
-                pl = cc2.number_input(f"P{j+1} LL [{UNIT_F}]", 0.0, key=f"pl_{i}_{j}")
-                pp = cc3.number_input(f"Distance from Left (m)", 0.0, spans[i], spans[i]/2, key=f"pp_{i}_{j}")
-                
-                total_p = (f_dl * pd + f_ll * pl)
-                if total_p > 0:
-                    loads_input.append({
-                        'span_idx': i, 'type': 'Point',
-                        'total_w': total_p * TO_N,
-                        'pos': pp,
-                        'display_val': total_p
-                    })
+        # Last support logic
+        supports.append(c3.selectbox(f"Sup {i+2}", ['Pin', 'Roller', 'Fix'], index=1, key=f's{i+1}'))
 
-# ------------------------------------------------
-# ACTION BUTTON
-# ------------------------------------------------
-st.markdown("---")
-if st.button("🚀 Run Analysis & Design", type="primary", use_container_width=True):
+with c_load:
+    st.subheader("2. Loads & Factors")
+    
+    # Auto-set Factors based on Code
+    if is_sdm:
+        # ACI 318-19/22 uses 1.2D + 1.6L, Older uses 1.4D + 1.7L
+        if "19" in design_code or "22" in design_code:
+            def_dl, def_ll = 1.2, 1.6
+        else:
+            def_dl, def_ll = 1.4, 1.7
+        
+        # ✅ FIXED: Unpacking 2 variables from 2 columns (Previously caused error)
+        cf1, cf2 = st.columns(2) 
+        f_dl = cf1.number_input("Factor DL", 1.0, 2.0, def_dl, step=0.1)
+        f_ll = cf2.number_input("Factor LL", 1.0, 2.0, def_ll, step=0.1)
+    else:
+        st.info("WSD: Factors fixed at 1.0")
+        f_dl, f_ll = 1.0, 1.0
+
+    # Load Inputs (Simplified)
+    loads_input = []
+    with st.expander("📝 Edit Loads (Click to Open)", expanded=True):
+        for i in range(n_span):
+            st.markdown(f"**Span {i+1}**")
+            cl1, cl2 = st.columns(2)
+            udl = cl1.number_input(f"DL (Uniform) {i+1}", 0.0, key=f"udl{i}")
+            ull = cl2.number_input(f"LL (Uniform) {i+1}", 0.0, key=f"ull{i}")
+            
+            w_total = f_dl*udl + f_ll*ull
+            if w_total > 0:
+                loads_input.append({'span_idx': i, 'type': 'Uniform', 'total_w': w_total*TO_N, 'display_val': w_total})
+
+# ==========================================
+# 2. ANALYSIS
+# ==========================================
+if st.button("🚀 Analyze & Design", type="primary", use_container_width=True):
     solver = SimpleBeamSolver(spans, supports, loads_input)
     u, err = solver.solve()
     
     if err:
-        st.error(f"Analysis Error: {err}")
+        st.error(err)
     else:
-        # Process Results
         df = solver.get_internal_forces(100)
-        df['shear_d'] = df['shear'] * FROM_N
-        df['moment_d'] = df['moment'] * FROM_N
+        df['V'] = df['shear'] * FROM_N
+        df['M'] = df['moment'] * FROM_N
         
         st.session_state['res'] = df
-        st.session_state['viz'] = draw_beam(spans, supports, loads_input)
-        st.session_state['done'] = True
+        st.session_state['input_data'] = (spans, supports, loads_input)
+        st.session_state['run'] = True
 
 # ==========================================
-# 📊 RESULTS
+# 3. RESULTS & VISUALIZATION
 # ==========================================
-if st.session_state.get('done', False):
+if st.session_state.get('run', False):
     df = st.session_state['res']
+    spans, supports, loads_input = st.session_state['input_data']
     
-    st.header("3. Analysis Results (ผลการวิเคราะห์)")
-    st.plotly_chart(st.session_state['viz'], use_container_width=True)
+    st.markdown("---")
+    # Draw Physical Beam
+    st.plotly_chart(draw_beam_schema(spans, supports, loads_input), use_container_width=True)
     
-    # Diagrams
-    c1, c2 = st.columns(2)
+    # Graphs
+    c_graph1, c_graph2 = st.columns(2)
     
-    # Shear Diagram
-    fig_v = go.Figure(go.Scatter(x=df['x'], y=df['shear_d'], fill='tozeroy', line=dict(color='#D32F2F')))
-    fig_v.update_layout(title=f"Shear Force Diagram (SFD) [{UNIT_F}]", hovermode="x")
-    c1.plotly_chart(fig_v, use_container_width=True)
+    # SFD with Labels
+    fig_v = go.Figure()
+    fig_v.add_trace(go.Scatter(x=df['x'], y=df['V'], fill='tozeroy', line=dict(color='#D32F2F', width=2), name="Shear"))
+    # Add labels at max/min
+    v_max, v_min = df['V'].max(), df['V'].min()
+    fig_v.add_annotation(x=df.loc[df['V'].idxmax(), 'x'], y=v_max, text=f"<b>{v_max:.2f}</b>", showarrow=False, yshift=15, font=dict(color="#D32F2F"))
+    fig_v.add_annotation(x=df.loc[df['V'].idxmin(), 'x'], y=v_min, text=f"<b>{v_min:.2f}</b>", showarrow=False, yshift=-15, font=dict(color="#D32F2F"))
+    fig_v.update_layout(title=f"Shear Force (SFD) [{UNIT_F}]", hovermode="x unified")
+    c_graph1.plotly_chart(fig_v, use_container_width=True)
     
-    # Moment Diagram
-    fig_m = go.Figure(go.Scatter(x=df['x'], y=df['moment_d'], fill='tozeroy', line=dict(color='#1976D2')))
-    fig_m.update_layout(title=f"Bending Moment Diagram (BMD) [{UNIT_M}]", yaxis=dict(autorange="reversed"))
-    c2.plotly_chart(fig_m, use_container_width=True)
-    
-    # Values
-    v_max = df['shear_d'].abs().max()
-    m_max = max(abs(df['moment_d'].max()), abs(df['moment_d'].min()))
-    
-    st.info(f"**Max Shear (Vu):** {v_max:.2f} {UNIT_F} | **Max Moment (Mu):** {m_max:.2f} {UNIT_M}")
+    # BMD with Labels
+    fig_m = go.Figure()
+    fig_m.add_trace(go.Scatter(x=df['x'], y=df['M'], fill='tozeroy', line=dict(color='#1976D2', width=2), name="Moment"))
+    m_max, m_min = df['M'].max(), df['M'].min()
+    # Find local peaks/valleys could be done better, but max/min is sufficient for design
+    fig_m.add_annotation(x=df.loc[df['M'].idxmax(), 'x'], y=m_max, text=f"<b>{m_max:.2f}</b>", showarrow=False, yshift=15, font=dict(color="#1976D2"))
+    fig_m.add_annotation(x=df.loc[df['M'].idxmin(), 'x'], y=m_min, text=f"<b>{m_min:.2f}</b>", showarrow=False, yshift=-15, font=dict(color="#1976D2"))
+    fig_m.update_layout(title=f"Bending Moment (BMD) [{UNIT_M}]", yaxis=dict(autorange="reversed"), hovermode="x unified")
+    c_graph2.plotly_chart(fig_m, use_container_width=True)
 
     # ==========================================
-    # 📝 DESIGN SECTION
+    # 4. DESIGN SECTION (INTERACTIVE)
     # ==========================================
     st.markdown("---")
-    st.header(f"4. Design Calculation ({'SDM/ACI' if is_sdm else 'WSD/EIT'})")
+    st.header(f"🛠️ Section Design ({design_code})")
     
-    with st.form("design_panel"):
-        st.subheader("🛠️ Design Parameters")
-        col_mat, col_sect, col_bar = st.columns(3)
+    # Layout: Control Panel | Section Drawing | Calculation Text
+    col_input, col_draw, col_calc = st.columns([1, 1, 1.2])
+    
+    with col_input:
+        st.markdown("##### 🧱 Material & Section")
+        fc = st.number_input("Concrete f'c (ksc)", value=240.0)
+        fy = st.number_input("Main Steel fy (ksc)", value=4000.0)
+        fys = st.number_input("Stirrup fys (ksc)", value=2400.0)
         
-        with col_mat:
-            st.markdown("**Material**")
-            fc = st.number_input("Concrete f'c (ksc)", value=240.0)
-            fy = st.number_input("Steel fy (ksc)", value=4000.0)
-            
-        with col_sect:
-            st.markdown("**Section Size**")
-            b_val = st.number_input("Width b (cm)", 15.0, 100.0, 25.0)
-            h_val = st.number_input("Depth h (cm)", 20.0, 200.0, 50.0)
-            cover = st.number_input("Covering (cm)", 2.0, 5.0, 3.0)
-            
-        with col_bar:
-            st.markdown("**Reinforcement**")
-            bar_map = {'DB12':1.13, 'DB16':2.01, 'DB20':3.14, 'DB25':4.91, 'DB28':6.16}
-            main_bar = st.selectbox("Main Bar Size", list(bar_map.keys()), index=1)
-            
-        st.form_submit_button("🔄 Recalculate Design")
+        b = st.number_input("Width b (cm)", value=25.0)
+        h = st.number_input("Height h (cm)", value=50.0)
+        cover = st.number_input("Cover (cm)", value=3.0)
+        
+        st.markdown("##### ⛓️ Reinforcement")
+        bar_opts = {'DB12':1.13, 'DB16':2.01, 'DB20':3.14, 'DB25':4.91, 'DB28':6.16}
+        main_bar = st.selectbox("Main Bar Size", list(bar_opts.keys()), index=1)
+        
+        # New: Stirrup Selector
+        stirrup_type = st.radio("Stirrup Type", ["RB9 (Round)", "DB12 (Deformed)"], horizontal=True)
+        if "RB9" in stirrup_type:
+            Av_stirrup = 2 * 0.636 # 2 legs of 9mm
+            stirrup_name = "RB9"
+        else:
+            Av_stirrup = 2 * 1.131 # 2 legs of 12mm
+            stirrup_name = "DB12"
 
     # --- CALCULATION LOGIC ---
-    # Prepare Data
-    fc_mpa = fc * 0.0980665
-    fy_mpa = fy * 0.0980665
-    b_mm, d_mm = b_val*10, (h_val-cover)*10
+    # Convert Units to N, mm, MPa
+    fc_mpa, fy_mpa, fys_mpa = fc*0.0981, fy*0.0981, fys*0.0981
+    b_mm, d_mm = b*10, (h-cover)*10
     
-    # Convert Forces to Design Units (N, mm)
-    if "kN" in unit_opt:
-        M_des_Nmm = m_max * 1e6
-        V_des_N = v_max * 1000
-    else:
-        M_des_Nmm = m_max * 9.80665 * 1000
-        V_des_N = v_max * 9.80665
+    # Design Values
+    Mu = max(abs(m_max), abs(m_min)) * (1e6 if "kN" in unit_opt else 9.81*1000) # N-mm
+    Vu = abs(df['V']).max() * (1000 if "kN" in unit_opt else 9.81) # N
+    
+    # Design Result Placeholders
+    design_status = "OK"
+    req_As = 0
+    n_bars = 0
+    spacing_req = 0
 
-    c_res, c_sheet = st.columns([1, 1.2])
-
-    # --- SDM ---
+    # ------------------
+    # DESIGN PROCESS
+    # ------------------
     if is_sdm:
-        with c_res:
-            st.markdown("### ✅ Design Results (SDM)")
-            phi = 0.9
-            Rn = (M_des_Nmm / phi) / (b_mm * d_mm**2)
-            m_rat = fy_mpa / (0.85 * fc_mpa)
-            term = 1 - (2*m_rat*Rn)/fy_mpa
+        # Strength Design (ACI/SDM)
+        phi_b = 0.9
+        Rn = Mu / (phi_b * b_mm * d_mm**2)
+        m = fy_mpa / (0.85 * fc_mpa)
+        
+        # Check rho
+        term = 1 - (2 * m * Rn) / fy_mpa
+        if term < 0:
+            design_status = "FAIL"
+            rho_des = 0
+        else:
+            rho_req = (1/m)*(1 - np.sqrt(term))
+            rho_min = max(np.sqrt(fc_mpa)/(4*fy_mpa), 1.4/fy_mpa)
+            rho_des = max(rho_req, rho_min)
             
-            if term < 0:
-                st.error("❌ Section Failed (Too small)")
-            else:
-                rho_req = (1/m_rat)*(1 - np.sqrt(term))
-                rho_min = max(np.sqrt(fc_mpa)/(4*fy_mpa), 1.4/fy_mpa)
-                rho_use = max(rho_req, rho_min)
-                As_req = rho_use * b_mm * d_mm / 100 # cm2
-                
-                nb = max(2, int(np.ceil(As_req / bar_map[main_bar])))
-                st.success(f"**Flexure:** Use {nb} - {main_bar}")
-                st.metric("As Required", f"{As_req:.2f} cm²")
-                
-                # Shear
-                Vc_N = 0.17 * np.sqrt(fc_mpa) * b_mm * d_mm
-                phiVc = 0.85 * Vc_N * FROM_N
-                st.markdown("---")
-                if V_des_N <= 0.85 * Vc_N:
-                    st.info(f"**Shear:** Min Stirrups (Vu < phiVc)")
-                else:
-                    st.warning(f"**Shear:** Stirrups Required (Vu > phiVc)")
+        req_As = rho_des * b_mm * d_mm # mm2
+        req_As_cm2 = req_As / 100
+        
+        # Shear (ACI Simplified 318-19 valid for Av > Avmin)
+        lambda_c = 1.0 # normal weight
+        Vc = 0.17 * lambda_c * np.sqrt(fc_mpa) * b_mm * d_mm
+        phi_v = 0.75 # ACI standard for shear
+        phiVc = phi_v * Vc
+        
+        if Vu > phiVc:
+            Vs = (Vu - phiVc) / phi_v
+            s_req = (Av_stirrup*100 * fys_mpa * d_mm) / Vs # mm
+            spacing_show = min(s_req, d_mm/2, 600)
+            shear_txt = f"USE {stirrup_name} @ {int(spacing_show/10)} cm"
+            shear_color = "red"
+        elif Vu > 0.5 * phiVc:
+             shear_txt = f"Min Stirrup: {stirrup_name} @ {int(d_mm/20)} cm"
+             shear_color = "orange"
+        else:
+             shear_txt = "Concrete Shear OK (Min Stirrups)"
+             shear_color = "green"
 
-        with c_sheet:
-            with st.expander("📝 Detailed Calculation (SDM)", expanded=True):
-                st.latex(f"M_u = {m_max:.2f} \\text{{ {UNIT_M}}}")
-                st.latex(f"R_n = {Rn:.2f} \\text{{ MPa}}")
-                st.latex(f"\\rho_{{req}} = {rho_req:.4f} \\rightarrow \\text{{Use }} {rho_use:.4f}")
-                st.latex(f"A_s = {As_req:.2f} \\text{{ cm}}^2")
-
-    # --- WSD ---
     else:
-        with c_res:
-            st.markdown("### ✅ Design Results (WSD)")
-            n = round(2.04e6 / (15100*np.sqrt(fc)))
-            fc_all = 0.45 * fc
-            fs_all = min(0.5 * fy, 2500) # Cap fs
-            k = 1 / (1 + fs_all/(n*fc_all))
-            j = 1 - k/3
-            
-            # Moment Check
-            Mc_kgm = (0.5 * fc_all * k * j * b_val * (h_val-cover)**2) / 100
-            M_chk = m_max * (1000/9.81) if "kN" in unit_opt else m_max
-            
-            if M_chk > Mc_kgm:
-                st.error(f"❌ Concrete Fail (Mc={Mc_kgm:.0f} < M={M_chk:.0f})")
-            else:
-                As_req = (M_chk * 100) / (fs_all * j * (h_val-cover))
-                nb = max(2, int(np.ceil(As_req / bar_map[main_bar])))
-                st.success(f"**Flexure:** Use {nb} - {main_bar}")
-                st.metric("As Required", f"{As_req:.2f} cm²")
-                
-                # Shear
-                v_act = (V_des_N/9.81) / (b_val * (h_val-cover))
-                vc_all = 0.29 * np.sqrt(fc)
-                st.markdown("---")
-                if v_act > vc_all:
-                    st.warning(f"**Shear:** Stirrups Required (v={v_act:.1f} > vc={vc_all:.1f})")
-                else:
-                    st.info(f"**Shear:** Concrete OK (v={v_act:.1f} < vc={vc_all:.1f})")
+        # Working Stress (WSD)
+        n = 135 / np.sqrt(fc) if fc > 0 else 10 # Approx n
+        fc_all, fs_all = 0.45*fc, 0.5*fy
+        k = 1 / (1 + fs_all/(n*fc_all))
+        j = 1 - k/3
+        
+        # Check Moment Capacity
+        Mc_kgm = (0.5 * fc_all * k * j * b * (h-cover)**2) / 100
+        M_chk_kgm = Mu / (9.81 * 100) # Convert Mu(Nmm) back to kg-m approximately for check
+        
+        if M_chk_kgm > Mc_kgm:
+             design_status = "FAIL"
+             req_As_cm2 = 0
+        else:
+             req_As_cm2 = (M_chk_kgm * 100) / (fs_all * j * (h-cover)) # cm2
+        
+        # Shear
+        vc_all = 0.29 * np.sqrt(fc) # ksc
+        v_act = (Vu/9.81) / (b*d_mm/10) # ksc
+        if v_act > vc_all:
+             shear_txt = f"Design Stirrups ({stirrup_name})"
+             shear_color = "red"
+        else:
+             shear_txt = "Concrete Shear OK"
+             shear_color = "green"
 
-        with c_sheet:
-            with st.expander("📝 Detailed Calculation (WSD)", expanded=True):
-                st.latex(f"n={n}, k={k:.3f}, j={j:.3f}")
-                st.latex(f"M_{{design}} = {M_chk:.0f} \\text{{ kg-m}}")
-                st.latex(f"A_s = \\frac{{M}}{{f_s j d}} = {As_req:.2f} \\text{{ cm}}^2")
+    # Number of Bars
+    if design_status != "FAIL":
+        n_bars = max(2, int(np.ceil(req_As_cm2 / bar_opts[main_bar])))
+        
+    # --- VISUALIZATION (Middle Column) ---
+    with col_draw:
+        st.markdown("##### 📐 Section View")
+        if design_status == "FAIL":
+            st.error("❌ Section Too Small (Concrete Fail)")
+        else:
+            fig_sec = draw_section_detail(b, h, cover, n_bars, main_bar, stirrup_name)
+            st.plotly_chart(fig_sec, use_container_width=True)
+
+    # --- RESULTS (Right Column) ---
+    with col_calc:
+        st.markdown("##### 📝 Design Results")
+        
+        if design_status == "FAIL":
+            st.error(f"Cannot Design: Moment too high for this section size.")
+        else:
+            st.success(f"**Flexure:** Use {n_bars} - {main_bar}")
+            st.write(f"As Required: {req_As_cm2:.2f} cm²")
+            st.write(f"As Provided: {n_bars * bar_opts[main_bar]:.2f} cm²")
+            
+            st.divider()
+            
+            st.markdown(f"**Shear:** :{shear_color}[{shear_txt}]")
+            st.write(f"Vu Max: {Vu/1000 if 'kN' in unit_opt else Vu/9.81:.2f} {UNIT_F}")
+            
+            with st.expander("Show Calculation Details"):
+                if is_sdm:
+                    st.latex(f"M_u = {Mu/1e6:.2f} \\text{{ kNm}}")
+                    st.latex(f"R_n = {Rn:.2f} \\text{{ MPa}}")
+                    st.latex(f"\\rho_{{req}} = {rho_req:.4f}")
+                    st.latex(f"A_s = {req_As_cm2:.2f} \\text{{ cm}}^2")
+                    st.markdown("**Shear (Simplified ACI):**")
+                    st.latex(f"\\phi V_c = {phiVc/1000:.2f} \\text{{ kN}}")
+                else:
+                    st.latex(f"M = {Mu/(9.81*100):.2f} \\text{{ kg-m}}")
+                    st.latex(f"M_c = {Mc_kgm:.2f} \\text{{ kg-m}}")
+                    st.latex(f"A_s = M / (f_s j d)")
