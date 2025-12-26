@@ -7,17 +7,20 @@ def render_sidebar():
     design_code = st.sidebar.selectbox("Design Code", ["EIT Standard (WSD)", "ACI 318 (SDM)"])
     method = "SDM" if "ACI" in design_code else "WSD"
     
-    # 2. Safety Factors
+    # 2. Safety Factors (คืนค่าให้แสดงตลอด)
     st.sidebar.markdown("### 🛡️ Load Factors")
-    if method == "SDM":
-        fact_dl = st.sidebar.number_input("Dead Load Factor (DL)", value=1.4, step=0.1)
-        fact_ll = st.sidebar.number_input("Live Load Factor (LL)", value=1.7, step=0.1)
-    else:
-        fact_dl = 1.0
-        fact_ll = 1.0
-        st.sidebar.info("WSD uses Service Load (Factor = 1.0)")
+    
+    # ถ้าเป็น SDM ให้ค่า Default เป็น 1.4/1.7 ถ้า WSD ให้เป็น 1.0
+    default_dl = 1.4 if method == "SDM" else 1.0
+    default_ll = 1.7 if method == "SDM" else 1.0
+    
+    fact_dl = st.sidebar.number_input("Dead Load Factor (DL)", value=default_dl, step=0.1)
+    fact_ll = st.sidebar.number_input("Live Load Factor (LL)", value=default_ll, step=0.1)
 
-    # 3. Unit System (Display Only, logic handled internally)
+    if method == "WSD":
+        st.sidebar.caption("Note: Standard WSD uses factor 1.0")
+
+    # 3. Unit System
     unit_sys = st.sidebar.selectbox("Unit System", ["Metric (kg, m)", "SI (kN, m)"])
     
     return design_code, method, fact_dl, fact_ll, unit_sys
@@ -26,21 +29,24 @@ def render_geometry_input():
     st.markdown("### 📐 Beam Geometry")
     n_span = st.number_input("Number of Spans", min_value=1, max_value=5, value=2)
     
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns([1.5, 1])
     spans = []
-    supports = ["Pin"] # Start with Pin
+    supports = []
     
     with c1:
         st.write(" **Span Lengths (m)**")
         for i in range(n_span):
             l = st.number_input(f"Span {i+1} Length (m)", min_value=1.0, value=4.0, key=f"L{i}")
             spans.append(l)
-            supports.append("Roller") # Default intermediate
             
     with c2:
-        st.write("**Support Types**")
-        # Simple Logic: Left is Pin, others Roller/Fixed (Can be expanded)
-        st.caption("Default: Pin-Roller system. (Advanced support customization coming soon)")
+        st.write("**Support Types** (Left -> Right)")
+        # Loop สร้าง Dropdown สำหรับเลือก Support (คืนค่าส่วนนี้กลับมา)
+        for i in range(n_span + 1):
+            # ตั้ง Default: ตัวแรก Pin, ตัวสุดท้าย Roller, ตรงกลาง Roller
+            def_idx = 0 if i == 0 else 1 
+            s = st.selectbox(f"Support {i+1}", ["Pin", "Roller", "Fixed", "None"], index=def_idx, key=f"sup{i}")
+            supports.append(s)
     
     return n_span, spans, supports
 
@@ -49,7 +55,6 @@ def render_loads_input(n_span, spans, f_dl, f_ll, unit_sys):
     u_load = "kN/m" if "kN" in unit_sys else "kg/m"
     
     loads = []
-    # Simplified: Uniform Load per span
     for i in range(n_span):
         with st.expander(f"Loads on Span {i+1}", expanded=True):
             col_dl, col_ll = st.columns(2)
@@ -72,7 +77,7 @@ def render_design_input(unit_sys):
     fy = c2.number_input(f"Steel fy ({u_str})", value=4000) # SD40
     
     st.markdown("---")
-    # Section Properties (UPDATED TO mm)
+    # Section Properties (Input เป็น mm)
     c3, c4, c5 = st.columns(3)
     b_mm = c3.number_input("Width b (mm)", value=250, step=50)
     h_mm = c4.number_input("Depth h (mm)", value=500, step=50)
@@ -85,7 +90,7 @@ def render_design_input(unit_sys):
     stir_bar = c7.selectbox("Stirrup Size", ["RB6", "RB9", "DB10", "DB12"], index=0)
     manual_s = c8.number_input("Manual Stirrup Spacing (cm) [0=Auto]", value=0, help="ใส่ 0 เพื่อให้โปรแกรมคำนวณอัตโนมัติ")
 
-    # Convert mm inputs to cm for calculation logic
+    # แปลงหน่วยส่งออกเป็น cm สำหรับ logic คำนวณเดิม
     b_cm = b_mm / 10.0
     h_cm = h_mm / 10.0
     cov_cm = cov_mm / 10.0
