@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # --- IMPORT MODULES ---
-# ตรวจสอบการ import ให้แน่ใจว่าไฟล์เหล่านี้อยู่ใน folder เดียวกัน
 try:
     from beam_analysis import run_beam_analysis 
     from rc_design import calculate_rc_design
@@ -19,9 +18,7 @@ except ImportError as e:
 # ==========================================
 st.set_page_config(page_title="RC Beam Pro Ultimate", layout="wide", page_icon="🏗️")
 
-# Initialize Session State
 if 'analyzed' not in st.session_state: st.session_state['analyzed'] = False
-if 'loads_input' not in st.session_state: st.session_state['loads_input'] = []
 
 st.markdown("""
 <style>
@@ -29,13 +26,106 @@ st.markdown("""
     html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
     .header-box { background: linear-gradient(90deg, #1565C0 0%, #0D47A1 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     .sub-header { border-left: 5px solid #1565C0; padding-left: 15px; font-size: 1.25rem; font-weight: 600; margin-top: 30px; margin-bottom: 15px; background: #E3F2FD; padding: 10px; border-radius: 0 8px 8px 0; color: #0D47A1; }
-    .metric-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 15px; text-align: center; }
+    .stNumberInput input { font-weight: bold; color: #1565C0; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# PLOTTING FUNCTIONS
+# CUSTOM UI FUNCTIONS (To fix missing Point Load)
 # ==========================================
+def render_custom_load_input(n_span, spans, unit_sys):
+    """
+    Custom Load Input Handler to ensure Point Load is present.
+    """
+    st.markdown("### 3️⃣ Applied Loads")
+    force_unit = "kg" if "Metric" in unit_sys else "kN"
+    dist_unit = "m"
+    
+    loads = []
+    
+    # Create Tabs for each Span
+    tabs = st.tabs([f"Span {i+1}" for i in range(n_span)])
+    
+    for i, tab in enumerate(tabs):
+        with tab:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**Uniform Load (w)**")
+                w_dl = st.number_input(f"Dead Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_dl_{i}")
+                w_ll = st.number_input(f"Live Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_ll_{i}")
+                if w_dl + w_ll != 0:
+                    loads.append({'span_idx': i, 'type': 'U', 'w_dl': w_dl, 'w_ll': w_ll, 'w': w_dl + w_ll}) # Total w for view
+            
+            with c2:
+                st.markdown(f"**Point Loads (P)**")
+                # Dynamic Point Load Input
+                num_p = st.number_input(f"Number of Point Loads on Span {i+1}", min_value=0, max_value=5, value=0, key=f"num_p_{i}")
+                
+                for j in range(num_p):
+                    cc1, cc2, cc3 = st.columns([1, 1, 1])
+                    p_dl = cc1.number_input(f"P{j+1} DL ({force_unit})", value=0.0, key=f"p_dl_{i}_{j}")
+                    p_ll = cc2.number_input(f"P{j+1} LL ({force_unit})", value=0.0, key=f"p_ll_{i}_{j}")
+                    x_loc = cc3.number_input(f"Dist x ({dist_unit}) from Left", value=spans[i]/2, min_value=0.0, max_value=float(spans[i]), key=f"px_{i}_{j}")
+                    
+                    if p_dl + p_ll != 0:
+                        loads.append({
+                            'span_idx': i, 
+                            'type': 'P', 
+                            'P_dl': p_dl, 
+                            'P_ll': p_ll, 
+                            'P': p_dl + p_ll, # Total P
+                            'x': x_loc
+                        })
+    return loads
+
+# ==========================================
+# ADVANCED PLOTTING (TEXTBOOK STYLE)
+# ==========================================
+
+def draw_support_shape(fig, x, y, sup_type, size=1.0):
+    """
+    Draws engineering standard support symbols manually using shapes.
+    """
+    s = size * 0.8
+    # Color settings
+    line_col = "#37474F"
+    fill_col = "#CFD8DC"
+    
+    if sup_type == "Pin":
+        # Triangle
+        fig.add_shape(type="path",
+            path=f"M {x},{y} L {x-s/2},{y-s} L {x+s/2},{y-s} Z",
+            fillcolor=fill_col, line_color=line_col, line_width=2, row=1, col=1
+        )
+        # Base Line (Hatch simulation)
+        fig.add_shape(type="line", x0=x-s, y0=y-s, x1=x+s, y1=y-s, line=dict(color=line_col, width=3), row=1, col=1)
+        # Little hatch marks
+        for hx in np.linspace(x-s, x+s, 5):
+            fig.add_shape(type="line", x0=hx, y0=y-s, x1=hx-s/4, y1=y-s*1.3, line=dict(color=line_col, width=1), row=1, col=1)
+
+    elif sup_type == "Roller":
+        # Triangle
+        fig.add_shape(type="path",
+            path=f"M {x},{y} L {x-s/2},{y-s*0.8} L {x+s/2},{y-s*0.8} Z",
+            fillcolor=fill_col, line_color=line_col, line_width=2, row=1, col=1
+        )
+        # Wheels (Circles)
+        r_wheel = s * 0.15
+        fig.add_shape(type="circle", x0=x-s/3, y0=y-s*0.8-2*r_wheel, x1=x-s/3+2*r_wheel, y1=y-s*0.8, line_color=line_col, row=1, col=1)
+        fig.add_shape(type="circle", x0=x+s/3-2*r_wheel, y0=y-s*0.8-2*r_wheel, x1=x+s/3, y1=y-s*0.8, line_color=line_col, row=1, col=1)
+        # Base Line
+        base_y = y - s*0.8 - 2*r_wheel
+        fig.add_shape(type="line", x0=x-s, y0=base_y, x1=x+s, y1=base_y, line=dict(color=line_col, width=2), row=1, col=1)
+
+    elif sup_type == "Fixed":
+        # Vertical Wall
+        h_wall = s * 1.5
+        fig.add_shape(type="line", x0=x, y0=y-h_wall/2, x1=x, y1=y+h_wall/2, line=dict(color=line_col, width=4), row=1, col=1)
+        # Hatching (Assume Left Fixed if x=0, else Right)
+        direction = -1 if x == 0 else 1
+        hatch_w = s * 0.4
+        for hy in np.linspace(y-h_wall/2, y+h_wall/2, 6):
+            fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * hatch_w), y1=hy - hatch_w, line=dict(color=line_col, width=1), row=1, col=1)
 
 def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     """
@@ -44,42 +134,35 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     cum_len = [0] + list(np.cumsum(vis_spans))
     total_len = cum_len[-1]
     
-    # Define Units
-    force_unit = "kg" if unit_sys == "Metric (kg/cm)" else "kN"
+    force_unit = "kg" if "Metric" in unit_sys else "kN"
     dist_unit = "m"
-    moment_unit = "kg-m" if unit_sys == "Metric (kg/cm)" else "kN-m"
+    moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     
-    # --- 1. PRE-CALCULATE SCALING ---
-    max_load_val = 1.0 
+    # 1. Scaling Logic
+    max_load_val = 1.0
     for load in loads:
         val = max(abs(load.get('w', 0)), abs(load.get('P', 0)))
         if val > max_load_val: max_load_val = val
     
-    load_plot_height = max_load_val * 1.5 
+    load_plot_height = max_load_val * 1.8 # Increase headroom
 
-    # --- 2. CREATE SUBPLOTS ---
     fig = make_subplots(
-        rows=3, cols=1, 
-        shared_xaxes=True, 
-        vertical_spacing=0.05,
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
         subplot_titles=("<b>Loading Diagram</b>", "<b>Shear Force Diagram (SFD)</b>", "<b>Bending Moment Diagram (BMD)</b>"),
         row_heights=[0.3, 0.35, 0.35]
     )
 
     # --- ROW 1: LOADING DIAGRAM ---
+    # Draw Beam
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
-    # Draw Supports
+    # Draw Supports (Standard Symbols)
+    support_size = load_plot_height * 0.15 # Scale support size relative to plot
     for i, x in enumerate(cum_len):
-        if i < len(vis_supports): # Defensive check
-            sup_type = vis_supports.iloc[i]['type']
-            if sup_type != "None":
-                fig.add_trace(go.Scatter(
-                    x=[x], y=[-load_plot_height*0.05], 
-                    mode='markers', 
-                    marker=dict(symbol="triangle-up", size=15, color="#212121"), 
-                    hoverinfo='text', text=f"Support: {sup_type}"
-                ), row=1, col=1)
+        if i < len(vis_supports):
+            stype = vis_supports.iloc[i]['type']
+            if stype != "None":
+                draw_support_shape(fig, x, 0, stype, size=max(support_size, max_load_val*0.2))
 
     # Draw Loads
     for load in loads:
@@ -88,93 +171,58 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         x_end = cum_len[span_idx+1]
         
         # UDL
-        if 'w' in load and load['w'] != 0:
+        if load.get('type') == 'U' and load['w'] != 0:
             w = load['w']
-            h = (w / max_load_val) * (load_plot_height * 0.7)
-            
+            h = (w / max_load_val) * (load_plot_height * 0.6)
             # Fill
-            fig.add_trace(go.Scatter(
-                x=[x_start, x_end, x_end, x_start], 
-                y=[0, 0, h, h], 
-                fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', 
-                line=dict(width=0), showlegend=False, hoverinfo='skip'
-            ), row=1, col=1)
-            
+            fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
             # Comb Line
-            fig.add_trace(go.Scatter(
-                x=[x_start, x_end], y=[h, h],
-                mode='lines', line=dict(color='#EF6C00', width=2),
-                showlegend=False, hoverinfo='text', text=f"UDL: {w} {force_unit}/{dist_unit}"
-            ), row=1, col=1)
-            
+            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w} {force_unit}/{dist_unit}"), row=1, col=1)
             # Arrows
-            n_arrows = max(3, int((x_end - x_start) * 2)) 
-            arrow_x = np.linspace(x_start, x_end, n_arrows)
-            for ax in arrow_x:
-                fig.add_annotation(
-                    x=ax, y=0, ax=ax, ay=h,
-                    xref="x1", yref="y1", axref="x1", ayref="y1",
-                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="#EF6C00",
-                    row=1, col=1
-                )
-            fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"<b>w = {w}</b>", showarrow=False, yshift=15, font=dict(color="#EF6C00", size=11), row=1, col=1)
+            n_arrows = max(3, int((x_end - x_start) * 3)) 
+            for ax in np.linspace(x_start, x_end, n_arrows):
+                fig.add_annotation(x=ax, y=0, ax=ax, ay=h, xref="x1", yref="y1", axref="x1", ayref="y1", showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="#EF6C00", row=1, col=1)
+            fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"<b>w={w:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#EF6C00", size=11), row=1, col=1)
 
-        # Point Load (Visual Support)
-        elif 'P' in load and load['P'] != 0:
+        # Point Load
+        elif load.get('type') == 'P' and load['P'] != 0:
             P = load['P']
-            # Default to center if 'x' not provided
-            rel_x = load.get('x', 0.5 * (x_end - x_start)) 
-            load_x = x_start + rel_x
-            h = (P / max_load_val) * (load_plot_height * 0.8)
+            load_x = load['x'] + x_start
+            h = (P / max_load_val) * (load_plot_height * 0.7)
             
+            # Thick Arrow
             fig.add_annotation(
                 x=load_x, y=0, ax=load_x, ay=h,
                 xref="x1", yref="y1", axref="x1", ayref="y1",
-                showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=3, arrowcolor="#D32F2F",
+                showarrow=True, arrowhead=3, arrowsize=1, arrowwidth=3, arrowcolor="#D32F2F",
                 row=1, col=1
             )
-            fig.add_annotation(x=load_x, y=h, text=f"<b>P = {P}</b>", showarrow=False, yshift=15, font=dict(color="#D32F2F", size=12, weight="bold"), row=1, col=1)
+            # Label
+            fig.add_annotation(x=load_x, y=h, text=f"<b>P={P:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#D32F2F", size=12, weight="bold"), row=1, col=1)
 
-    fig.update_yaxes(range=[-load_plot_height*0.2, load_plot_height*1.3], visible=False, row=1, col=1)
+    fig.update_yaxes(range=[-load_plot_height*0.3, load_plot_height*1.4], visible=False, row=1, col=1)
 
-    # --- ROW 2: SHEAR FORCE ---
-    fig.add_trace(go.Scatter(
-        x=df['x'], y=df['shear'], 
-        mode='lines', line=dict(color='#D32F2F', width=2), 
-        fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)',
-        name="Shear", hovertemplate="%{y:.2f} " + force_unit
-    ), row=2, col=1)
-
+    # --- ROW 2 & 3: SFD / BMD ---
+    # (Reuse optimized plotting from previous step)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], mode='lines', line=dict(color='#D32F2F', width=2), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="%{y:.2f}"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], mode='lines', line=dict(color='#1976D2', width=2), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="%{y:.2f}"), row=3, col=1)
+    
     # Annotate Peaks
     for i in range(len(vis_spans)):
         span_data = df[df['span_id'] == i]
         if not span_data.empty:
-            v_max, v_min = span_data['shear'].max(), span_data['shear'].min()
-            for val, color in [(v_max, 'red'), (v_min, 'red')]:
-                if abs(val) > 0.1:
-                    match_row = span_data.iloc[(span_data['shear']-val).abs().argsort()[:1]]
-                    vx = match_row['x'].values[0]
-                    fig.add_annotation(x=vx, y=val, text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10, font=dict(color=color, size=10), bgcolor="white", row=2, col=1)
+            # Shear Peaks
+            for val in [span_data['shear'].max(), span_data['shear'].min()]:
+                if abs(val) > 0.01:
+                    vx = span_data.iloc[(span_data['shear']-val).abs().argsort()[:1]]['x'].values[0]
+                    fig.add_annotation(x=vx, y=val, text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10, font=dict(color="red", size=10), row=2, col=1)
+            # Moment Peaks
+            for val in [span_data['moment'].max(), span_data['moment'].min()]:
+                if abs(val) > 0.01:
+                    mx = span_data.iloc[(span_data['moment']-val).abs().argsort()[:1]]['x'].values[0]
+                    fig.add_annotation(x=mx, y=val, text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10, font=dict(color="blue", size=10), row=3, col=1)
 
-    # --- ROW 3: BENDING MOMENT ---
-    fig.add_trace(go.Scatter(
-        x=df['x'], y=df['moment'], 
-        mode='lines', line=dict(color='#1976D2', width=2), 
-        fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)',
-        name="Moment", hovertemplate="%{y:.2f} " + moment_unit
-    ), row=3, col=1)
-    
-    for i in range(len(vis_spans)):
-        span_data = df[df['span_id'] == i]
-        if not span_data.empty:
-            m_max, m_min = span_data['moment'].max(), span_data['moment'].min()
-            for val in [m_max, m_min]:
-                if abs(val) > 0.1:
-                    match_row = span_data.iloc[(span_data['moment']-val).abs().argsort()[:1]]
-                    mx = match_row['x'].values[0]
-                    fig.add_annotation(x=mx, y=val, text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10, font=dict(color="#1976D2", size=10), bgcolor="white", row=3, col=1)
-
-    # Layout
+    # Layout Polish
     for r in [2, 3]:
         fig.add_hline(y=0, line_width=1, line_color="black", row=r, col=1)
         for x in cum_len:
@@ -196,14 +244,13 @@ def draw_reinforcement_profile(spans, design_results, m_bar, s_bar):
     for i in range(len(spans)):
         x0, x1 = cum_len[i], cum_len[i+1]
         res = design_results[i]
-        # Bott
         fig.add_trace(go.Scatter(x=[x0 + 0.1, x1 - 0.1], y=[-0.35, -0.35], mode='lines', line=dict(color='#1565C0', width=5), name=f"Bott {i+1}", showlegend=False, hoverinfo='text', text=f"Span {i+1}: {res['nb']}-{m_bar}"))
-        # Top
         fig.add_trace(go.Scatter(x=[x0, x1], y=[0.35, 0.35], mode='lines', line=dict(color='#D32F2F', width=3), name=f"Top {i+1}", showlegend=False, hoverinfo='skip'))
         mid = (x0+x1)/2
         fig.add_annotation(x=mid, y=0, text=f"<b>SPAN {i+1}</b><br>{res['nb']}-{m_bar}<br>{s_bar} {res['stirrup_text']}", showarrow=False, font=dict(size=10), bgcolor="rgba(255,255,255,0.8)")
 
     for x in cum_len:
+         # Simplified support for design view
          fig.add_trace(go.Scatter(x=[x], y=[-0.6], mode='markers', marker=dict(symbol="triangle-up", size=15, color="#333"), showlegend=False, hoverinfo='skip'))
 
     fig.update_layout(title="🏗️ Reinforcement Profile (Side View)", height=250, xaxis=dict(range=[-0.5, total_len+0.5], showgrid=True), yaxis=dict(visible=False, range=[-1, 1]), margin=dict(l=20,r=20,t=40,b=20), plot_bgcolor='white')
@@ -247,18 +294,21 @@ st.markdown('<div class="header-box"><h2>🏗️ RC Beam Pro Ultimate</h2></div>
 design_code, method, fact_dl, fact_ll, unit_sys = ui.render_sidebar()
 c_geo, c_load = st.columns([1, 1.5])
 with c_geo: n_span, spans, supports = ui.render_geometry_input()
-with c_load: loads_input = ui.render_loads_input(n_span, spans, fact_dl, fact_ll, unit_sys)
+
+# *** REPLACED EXTERNAL INPUT HANDLER WITH CUSTOM LOCAL ONE ***
+with c_load: 
+    loads_input = render_custom_load_input(n_span, spans, unit_sys)
 
 # 2. Calculation
 if st.button("🚀 Calculate Analysis & Design", type="primary"):
     try:
-        # Save inputs for visualization
+        # Save inputs
         st.session_state['loads_input'] = loads_input
         
-        # New Wrapper Function from beam_analysis.py
+        # Run Analysis
         vis_spans_df, vis_supports_df = run_beam_analysis(spans, supports, loads_input)
         
-        # Store in session state
+        # Store
         st.session_state['res_df'] = vis_spans_df
         st.session_state['vis_data'] = (spans, vis_supports_df) 
         st.session_state['analyzed'] = True
@@ -276,16 +326,14 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     
     st.markdown('<div class="sub-header">1️⃣ Analysis Results</div>', unsafe_allow_html=True)
     
-    # --- PLOT ANALYSIS (ENGINEERING GRADE) ---
     try:
         fig_eng = create_engineering_plots(df, vis_spans, vis_supports_df, loads, unit_sys)
         st.plotly_chart(fig_eng, use_container_width=True, key="eng_plot")
     except Exception as e:
         st.error(f"Error plotting diagrams: {e}")
 
-    # --- DESIGN SECTION ---
+    # Design
     st.markdown('<div class="sub-header">2️⃣ Structural Design Results</div>', unsafe_allow_html=True)
-    
     fc, fy, b_cm, h_cm, cov_cm, m_bar, s_bar, man_s_cm = ui.render_design_input(unit_sys)
     
     bar_areas = {'DB12':1.13, 'DB16':2.01, 'DB20':3.14, 'DB25':4.91, 'DB28':6.16}
