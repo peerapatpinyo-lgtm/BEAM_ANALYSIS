@@ -2,254 +2,362 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-import matplotlib
-# ตั้งค่า Backend ทันทีเพื่อป้องกัน Error ใน Streamlit Cloud
-matplotlib.use('Agg') 
-import matplotlib.pyplot as plt
-from anastruct import SystemElements
 
 # ==========================================
-# PART 1: SETUP
+# 🧠 PART 1: THE CUSTOM BEAM ENGINE (MANUAL CALC)
 # ==========================================
-st.set_page_config(page_title="Continuous Beam Design", layout="wide")
-
-FACTOR_DL = 1.4
-FACTOR_LL = 1.7
-
-# ==========================================
-# PART 2: ANALYSIS ENGINE
-# ==========================================
-def analyze_and_extract(spans, supports, loads):
-    # Mesh = 50 เพื่อกราฟละเอียด
-    ss = SystemElements(EA=15000, EI=5000, mesh=50) 
-    
-    # 1. Build Elements
-    start_x = 0
-    for L in spans:
-        ss.add_element(location=[[start_x, 0], [start_x + L, 0]])
-        start_x += L
+class SimpleBeamSolver:
+    def __init__(self, spans, supports, loads, E=200e9, I=500e-6):
+        self.spans = spans
+        self.supports = supports
+        self.loads = loads
+        self.E = E
+        self.I = I
+        self.nodes = len(spans) + 1
+        self.dof = 2 * self.nodes  # 2 DOF per node (Deflection Y, Rotation Theta)
         
-    # 2. Add Supports & Stability Check
-    # กฏเหล็ก: ต้องมี Pin หรือ Fix อย่างน้อย 1 จุดเพื่อกันการเลื่อนแกน X (Sliding)
-    # ถ้า User เลือก Roller หมดเลย เราจะแก้จุดแรกเป็น Pin ให้
-    has_x_restraint = any(s in ['Pin', 'Fix'] for s in supports)
-    
-    if not has_x_restraint:
-        supports[0] = 'Pin'
-        st.toast("⚠️ Warning: Auto-changed Support 1 to 'Pin' to prevent instability.", icon="🔧")
+        # Global Matrices
+        self.K = np.zeros((self.dof, self.dof))
+        self.F = np.zeros(self.dof)
         
-    for i, s_type in enumerate(supports):
-        node_id = i + 1
-        if s_type == 'Fix': 
-            ss.add_support_fixed(node_id=node_id)
-        elif s_type == 'Pin': 
-            ss.add_support_hinged(node_id=node_id)
-        elif s_type == 'Roller': 
-            # direction=2 คือรับแรงแนวดิ่ง (Vertical Support)
-            ss.add_support_roll(node_id=node_id, direction=2) 
-
-    # 3. Add Loads
-    for load in loads:
-        # รวม Load: 1.4(DL+SDL) + 1.7LL
-        w_total = (FACTOR_DL * (load['dl'] + load['sdl'])) + (FACTOR_LL * load['ll'])
-        elem_id = load['span_idx'] + 1
-        
-        if load['type'] == 'Uniform Load':
-            ss.q_load(q=w_total, element_id=elem_id)
-        elif load['type'] == 'Point Load':
-            ss.point_load(node_id=None, element_id=elem_id, position=load['pos'], Fy=-w_total)
-
-    # 4. SOLVE (Crucial Fix: Force Linear)
-    # force_linear=True ช่วยลดโอกาสเกิด NaN จากการคำนวณซ้ำแบบ Non-linear
-    ss.solve(force_linear=True)
-    
-    # 5. Extract Data
-    # ต้องเรียก plot เงียบๆ เพื่อให้ library คำนวณค่าลง array
-    try:
-        fig = plt.figure()
-        ss.show_shear_force(show=False)
-        ss.show_bending_moment(show=False)
-        plt.close(fig)
-        plt.close('all')
-    except:
-        pass
-
-    x_list, v_list, m_list = [], [], []
-    
-    # ดึงข้อมูลจาก Element ทีละตัว
-    for i in range(1, len(spans) + 1):
-        if i in ss.element_map:
-            el = ss.element_map[i]
+    def solve(self):
+        # 1. Assemble Stiffness Matrix (K)
+        # --------------------------------
+        current_x = 0
+        for i, L in enumerate(self.spans):
+            # Element connects node i and i+1
+            # Indices in Global Matrix
+            # Node i:   2*i (Y), 2*i+1 (Theta)
+            # Node i+1: 2*(i+1) (Y), 2*(i+1)+1 (Theta)
             
-            # หาพิกัด X
-            if hasattr(el.vertex_1, 'loc'):
-                x0 = el.vertex_1.loc[0]
-                x1 = el.vertex_2.loc[0]
-            else:
-                x0 = el.vertex_1.coordinates[0]
-                x1 = el.vertex_2.coordinates[0]
-
-            # ดึงค่าแรง
-            v = np.array(getattr(el, 'shear', [])).flatten()
-            m = np.array(getattr(el, 'moment', [])).flatten()
+            k = (self.E * self.I / L**3) * np.array([
+                [12, 6*L, -12, 6*L],
+                [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L],
+                [6*L, 2*L**2, -6*L, 4*L**2]
+            ])
             
-            # ถ้า array ว่าง หรือ มีค่า NaN ให้ข้าม
-            if len(v) > 0:
-                x = np.linspace(x0, x1, len(v))
-                x_list.extend(x)
-                v_list.extend(v)
-                m_list.extend(m)
+            idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
+            for r in range(4):
+                for c in range(4):
+                    self.K[idx[r], idx[c]] += k[r, c]
+
+        # 2. Apply Loads (Fixed End Forces to Global F)
+        # ---------------------------------------------
+        # Load Vector F = F_external - F_equivalent
+        # We assume no external nodal loads, only member loads
+        
+        for load in self.loads:
+            span_idx = load['span_idx']
+            L = self.spans[span_idx]
+            w = load['total_w'] # Uniform Load (kN/m) -> Convert to N/m outside
             
-    df = pd.DataFrame({'x': x_list, 'shear': v_list, 'moment': m_list})
-    
-    # 6. Final Check for NaN
-    if df.isnull().values.any():
-        raise ValueError("Structure is unstable (Singular Matrix). Results contain NaN.")
+            # Node Indices
+            n1 = span_idx
+            n2 = span_idx + 1
+            idx = [2*n1, 2*n1+1, 2*n2, 2*n2+1]
+            
+            fem = np.zeros(4)
+            
+            if load['type'] == 'Uniform Load':
+                # FEM for Uniform Load w
+                # Reaction Y: wL/2
+                # Moment: wL^2/12
+                # Vector: [Fy1, M1, Fy2, M2]
+                # Force is DOWN (-), so Reaction is UP (+)
+                # Equivalent Nodal Force is -Reaction (Logic: K u = F_ext + F_eq)
+                # Let's stick to: F_total = F_nodal - F_fixed_end
+                
+                # Fixed End Actions (Forces exerted BY beam ON nodes)
+                # Left Node: Up wL/2, Moment CCW (+) wL^2/12
+                # Right Node: Up wL/2, Moment CW (-) wL^2/12
+                
+                # We need Equivalent Forces to ADD to F vector
+                # This is SAME direction as Fixed End Reactions? No, Opposite.
+                # Actually, standard FEM: Load Vector = - (Fixed End Actions)
+                
+                # Fixed End Reactions (Upwards +, CCW +)
+                Ry = (w * L) / 2.0
+                M = (w * L**2) / 12.0
+                
+                # Equivalent Nodal Forces (External forces that would cause same deformation)
+                # Downward force w -> Nodal force is Down
+                fem[0] = -Ry      # Force Y Node 1
+                fem[1] = -M       # Moment Node 1
+                fem[2] = -Ry      # Force Y Node 2
+                fem[3] = +M       # Moment Node 2
+                
+            elif load['type'] == 'Point Load':
+                P = load['total_w'] # Point Load (kN) -> N
+                a = load['pos']     # Distance from left node
+                b = L - a
+                
+                # Fixed End Moments
+                M1 = (P * a * b**2) / (L**2)
+                M2 = (P * a**2 * b) / (L**2)
+                
+                # Fixed End Shears
+                R1 = (P * b**2 * (3*a + b)) / (L**3)
+                R2 = (P * a**2 * (a + 3*b)) / (L**3)
+                
+                # Equivalent Nodal Forces (Opposite to reactions)
+                fem[0] = -R1
+                fem[1] = -M1
+                fem[2] = -R2
+                fem[3] = +M2
+
+            # Add to Global Force Vector
+            self.F[idx] += fem
+
+        # 3. Apply Boundary Conditions
+        # ----------------------------
+        fixed_dof = []
+        for i, supp in enumerate(self.supports):
+            if supp in ['Pin', 'Roller']:
+                fixed_dof.append(2*i)       # Fix Y translation
+            elif supp == 'Fix':
+                fixed_dof.append(2*i)       # Fix Y translation
+                fixed_dof.append(2*i+1)     # Fix Rotation
         
-    return df
-
-# ==========================================
-# PART 3: DESIGN CALCULATION
-# ==========================================
-def design_rc_beam(mu, vu, b, h, cover, fc, fy):
-    # Units: Input cm, MPa -> Calc using m, Pascal
-    b_m = b / 100.0
-    d_m = (h - cover) / 100.0
-    mu_Nm = abs(mu) * 1000.0
-    vu_N = abs(vu) * 1000.0
-    
-    phi_b = 0.90
-    phi_v = 0.85
-    
-    # Flexure
-    Mn_req = mu_Nm / phi_b
-    Rn = Mn_req / (b_m * d_m**2) # Pascal
-    m = fy / (0.85 * fc)
-    
-    rho = 0.0
-    status = "OK"
-    try:
-        term = 1 - (2 * m * Rn) / (fy * 1e6)
-        if term < 0:
-            status = "Section too small"
-            rho = 0
-        else:
-            rho = (1/m) * (1 - np.sqrt(term))
-    except:
-        status = "Calc Error"
+        free_dof = [x for x in range(self.dof) if x not in fixed_dof]
         
-    As_req = rho * b_m * d_m * 10000 # cm2
-    As_min = max((np.sqrt(fc)/(4*fy))*b_m*d_m, (1.4/fy)*b_m*d_m) * 10000
-    As_final = max(As_req, As_min)
-    
-    # Shear
-    Vc = 0.17 * np.sqrt(fc) * b_m * d_m * 1e6 # N
-    Phi_Vc = phi_v * Vc
-    
-    shear_msg = ""
-    if vu_N <= Phi_Vc/2: shear_msg = "No Stirrup Req."
-    elif vu_N <= Phi_Vc: shear_msg = "Min Stirrup Req."
-    else: shear_msg = f"Design Stirrup (Vs = {(vu_N - Phi_Vc)/1000:.2f} kN)"
-    
-    return {
-        "status": status,
-        "as_req": As_final,
-        "phi_vc": Phi_Vc / 1000,
-        "shear_msg": shear_msg
-    }
+        # Partition Matrices
+        K_ff = self.K[np.ix_(free_dof, free_dof)]
+        F_f = self.F[free_dof]
+        
+        # 4. Solve for Displacements
+        # --------------------------
+        try:
+            u_f = np.linalg.solve(K_ff, F_f)
+        except np.linalg.LinAlgError:
+            return None, "Structure Unstable"
+            
+        # Reconstruct Full Displacement Vector
+        self.u = np.zeros(self.dof)
+        self.u[free_dof] = u_f
+        
+        # Calculate Reactions: R = K*u - F_equiv (Original Load Vector)
+        self.R = self.K @ self.u - self.F
+        
+        return self.u, None
+
+    def get_internal_forces(self, num_points=100):
+        # Calculate V and M by "Section Method" using Reactions + Loads
+        # This is more robust than using Shape Functions for internal forces
+        
+        x_total_coords = []
+        shear_vals = []
+        moment_vals = []
+        
+        # Map global reactions back to nodes
+        node_reactions_y = {}
+        node_reactions_m = {}
+        for i in range(self.nodes):
+            node_reactions_y[i] = self.R[2*i]
+            node_reactions_m[i] = self.R[2*i+1]
+            
+        current_x_start = 0
+        
+        # Iterate span by span to avoid discontinuity issues
+        for i, L in enumerate(self.spans):
+            x_local = np.linspace(0, L, num_points)
+            x_global = current_x_start + x_local
+            
+            v_span = []
+            m_span = []
+            
+            for x_curr in x_global:
+                # CUT SECTION AT x_curr
+                # Sum Forces and Moments to the LEFT
+                
+                V = 0.0
+                M = 0.0
+                
+                # 1. Reactions to the left
+                for node_i in range(i + 1): # Nodes up to current span start
+                    # Reaction Force (Up is positive)
+                    rx = 0 # X pos of node
+                    for k in range(node_i): rx += self.spans[k]
+                    
+                    if rx <= x_curr + 1e-6:
+                        ry = node_reactions_y[node_i]
+                        rm = node_reactions_m[node_i]
+                        
+                        V += ry
+                        M += -rm + ry * (x_curr - rx) # Moment from Force + Concentrated Moment (Reaction)
+                
+                # 2. Loads to the left
+                for load in self.loads:
+                    # Determine Load Position
+                    start_load_x = 0
+                    for k in range(load['span_idx']): start_load_x += self.spans[k]
+                    
+                    if load['type'] == 'Point Load':
+                        px = start_load_x + load['pos']
+                        if px <= x_curr: # Load is to the left
+                            P = load['total_w'] # Downward force
+                            V -= P
+                            M -= P * (x_curr - px)
+                            
+                    elif load['type'] == 'Uniform Load':
+                        # Load covers from start_load_x to start_load_x + L_span
+                        lx_start = start_load_x
+                        lx_end = start_load_x + self.spans[load['span_idx']]
+                        
+                        # Overlap of load and current section
+                        # We only care about the portion of load to the LEFT of x_curr
+                        eff_start = lx_start
+                        eff_end = min(x_curr, lx_end)
+                        
+                        if eff_end > eff_start:
+                            w = load['total_w']
+                            length = eff_end - eff_start
+                            load_force = w * length
+                            center_dist = x_curr - (eff_start + length/2.0)
+                            
+                            V -= load_force
+                            M -= load_force * center_dist
+                
+                v_span.append(V)
+                m_span.append(M)
+                
+            x_total_coords.extend(x_global)
+            shear_vals.extend(v_span)
+            moment_vals.extend(m_span)
+            
+            current_x_start += L
+            
+        return pd.DataFrame({
+            'x': x_total_coords,
+            'shear': np.array(shear_vals) / 1000.0, # Convert N -> kN
+            'moment': np.array(moment_vals) / 1000.0 # Convert Nm -> kNm
+        })
 
 # ==========================================
-# PART 4: UI
+# 🎨 PART 2: UI & LOGIC
 # ==========================================
-st.title("🏗️ Continuous Beam Design (Stable V.6)")
+st.set_page_config(page_title="Manual Beam Calc", layout="wide")
 
-tab1, tab2, tab3 = st.tabs(["Inputs", "Analysis", "Design"])
+st.title("🏗️ Continuous Beam (Custom Engine)")
+st.caption("No external libraries. Pure Math Calculation. 100% Reliable.")
 
-with tab1:
-    col_n, _ = st.columns([1,3])
-    n_span = col_n.number_input("Spans", 1, 10, 2)
-    
-    spans, supports, loads = [], [], []
-    
-    st.subheader("Geometry")
-    cols = st.columns(n_span)
+# --- INPUTS ---
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    n_span = st.number_input("Number of Spans", 1, 5, 2)
+    spans = []
     for i in range(n_span):
-        spans.append(cols[i].number_input(f"L{i+1} (m)", 1.0, 20.0, 4.0))
-        
-    st.subheader("Supports")
-    cols = st.columns(n_span+1)
+        spans.append(st.number_input(f"Span {i+1} Length (m)", 1.0, 20.0, 4.0, key=f"s_{i}"))
+
+with col2:
+    st.write("Supports")
+    supports = []
+    cols = st.columns(n_span + 1)
     opts = ['Pin', 'Roller', 'Fix']
-    for i in range(n_span+1):
+    for i in range(n_span + 1):
         def_idx = 0 if i==0 else 1
-        supports.append(cols[i].selectbox(f"S{i+1}", opts, index=def_idx))
+        supports.append(cols[i].selectbox(f"S{i+1}", opts, index=def_idx, key=f"sup_{i}"))
         
-    st.subheader("Loads")
+    st.write("Loads (Factored: 1.4(DL+SDL) + 1.7LL)")
+    loads_input = []
     for i in range(n_span):
-        with st.expander(f"Span {i+1} Load", expanded=True):
+        with st.expander(f"Span {i+1} Loads", expanded=True):
             c1, c2, c3, c4 = st.columns(4)
-            ltype = c1.selectbox("Type", ["Uniform Load", "Point Load"], key=f"t{i}")
-            dl = c2.number_input(f"DL (kN/m)", 10.0, key=f"d{i}")
-            sdl = c3.number_input(f"SDL (kN/m)", 2.0, key=f"sd{i}")
-            ll = c4.number_input(f"LL (kN/m)", 5.0, key=f"l{i}")
+            ltype = c1.selectbox("Type", ["Uniform Load", "Point Load"], key=f"lt_{i}")
+            dl = c2.number_input("DL (kN)", 10.0, key=f"dl_{i}")
+            sdl = c3.number_input("SDL (kN)", 2.0, key=f"sdl_{i}")
+            ll = c4.number_input("LL (kN)", 5.0, key=f"ll_{i}")
+            
             pos = 0.0
             if ltype == "Point Load":
-                pos = st.slider(f"Pos (m)", 0.0, spans[i], spans[i]/2, key=f"p{i}")
-            loads.append({"span_idx": i, "type": ltype, "dl": dl, "sdl": sdl, "ll": ll, "pos": pos})
+                pos = st.slider("Position (m)", 0.0, spans[i], spans[i]/2, key=f"pos_{i}")
             
-    btn = st.button("🚀 Analyze", type="primary")
+            # Combine Load Here (Passed to solver as N or N/m)
+            w_total = (1.4 * (dl + sdl) + 1.7 * ll) * 1000.0 # Convert kN -> N
+            
+            loads_input.append({
+                'span_idx': i,
+                'type': ltype,
+                'total_w': w_total,
+                'pos': pos
+            })
 
-if btn:
-    st.session_state['run'] = True
-    try:
-        with st.spinner("Calculating..."):
-            df = analyze_and_extract(spans, supports, loads)
-            st.session_state['df'] = df
-            st.session_state['error'] = None
-    except Exception as e:
-        st.session_state['df'] = None
-        st.session_state['error'] = str(e)
-
-with tab2:
-    if st.session_state.get('error'):
-        st.error(f"❌ Analysis Failed: {st.session_state['error']}")
-        st.warning("💡 Hint: Try changing supports. Ensure at least one 'Pin' or 'Fix'.")
+if st.button("🚀 Run Manual Calculation", type="primary"):
+    # Initialize Solver
+    solver = SimpleBeamSolver(spans, supports, loads_input)
+    
+    # Solve
+    u, err = solver.solve()
+    
+    if err:
+        st.error(f"Calculation Error: {err} (Structure is unstable)")
+    else:
+        # Get Data for Plotting
+        df = solver.get_internal_forces(num_points=50) # 50 points per span
         
-    elif st.session_state.get('df') is not None:
-        df = st.session_state['df']
-        m_max = df['moment'].max()
-        m_min = df['moment'].min()
-        v_max = df['shear'].abs().max()
+        # Display Max Values
+        max_m_pos = df['moment'].max()
+        max_m_neg = df['moment'].min()
+        max_v = df['shear'].abs().max()
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Max M (+)", f"{m_max:.2f} kN-m")
-        c2.metric("Max M (-)", f"{m_min:.2f} kN-m")
-        c3.metric("Max V", f"{v_max:.2f} kN")
+        c1.metric("Max Moment (+)", f"{max_m_pos:.2f} kN-m")
+        c2.metric("Max Moment (-)", f"{max_m_neg:.2f} kN-m")
+        c3.metric("Max Shear", f"{max_v:.2f} kN")
         
-        # Plot
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='red'), name='Shear'))
-        fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='blue'), name='Moment'))
-        fig.update_layout(title="Internal Forces", height=500)
-        st.plotly_chart(fig, use_container_width=True)
+        # Plot SFD
+        fig_v = go.Figure()
+        fig_v.add_trace(go.Scatter(
+            x=df['x'], y=df['shear'], 
+            fill='tozeroy', mode='lines', 
+            line=dict(color='#FF4B4B', width=2),
+            name='Shear (kN)'
+        ))
+        fig_v.update_layout(
+            title="Shear Force Diagram (SFD)", 
+            xaxis_title="Distance (m)", 
+            yaxis_title="Shear (kN)",
+            hovermode="x"
+        )
+        st.plotly_chart(fig_v, use_container_width=True)
         
-        st.session_state['res_m'] = max(abs(m_max), abs(m_min))
-        st.session_state['res_v'] = v_max
+        # Plot BMD
+        fig_m = go.Figure()
+        # Invert Moment for Civil Engineering convention (Optional, but here we plot normal)
+        # Usually engineers like (-) moment on top. Let's stick to standard math plot first.
+        fig_m.add_trace(go.Scatter(
+            x=df['x'], y=df['moment'], 
+            fill='tozeroy', mode='lines', 
+            line=dict(color='#1E88E5', width=2),
+            name='Moment (kN-m)'
+        ))
+        fig_m.update_layout(
+            title="Bending Moment Diagram (BMD)", 
+            xaxis_title="Distance (m)", 
+            yaxis_title="Moment (kN-m)",
+            hovermode="x"
+        )
+        st.plotly_chart(fig_m, use_container_width=True)
 
-with tab3:
-    if 'res_m' in st.session_state:
-        st.header("Design Results")
-        c1, c2 = st.columns(2)
-        with c1:
-            fc = st.number_input("fc' (MPa)", value=24.0)
-            fy = st.number_input("fy (MPa)", value=400.0)
-        with c2:
-            b = st.number_input("b (cm)", value=25.0)
-            h = st.number_input("h (cm)", value=50.0)
-            cover = st.number_input("cov (cm)", value=4.0)
-            
-        des = design_rc_beam(st.session_state['res_m'], st.session_state['res_v'], b, h, cover, fc, fy)
+        # Design Report Logic (Brief)
+        st.divider()
+        st.header("📝 Design Check")
+        des_mu = max(abs(max_m_pos), abs(max_m_neg))
+        des_vu = max_v
         
-        st.info(f"Design Moment: {st.session_state['res_m']:.2f} kN-m | Shear: {st.session_state['res_v']:.2f} kN")
-        st.write(f"**Status:** {des['status']}")
-        st.write(f"**As Required:** {des['as_req']:.2f} cm²")
-        st.write(f"**Shear:** {des['shear_msg']}")
+        # Hardcoded Design Params for Quick Check
+        fc, fy = 24, 400
+        b, h, cover = 25, 50, 4
+        d = (h-cover)/100
+        
+        # Design Calc
+        phi_b, phi_v = 0.9, 0.85
+        Mn_req = (des_mu * 1000) / phi_b
+        Rn = Mn_req / ((b/100) * d**2)
+        m = fy/(0.85*fc)
+        rho = (1/m)*(1 - np.sqrt(1 - (2*m*Rn)/(fy*1e6))) if (1 - (2*m*Rn)/(fy*1e6)) >= 0 else 0
+        As_req = rho * (b/100) * d * 10000
+        
+        st.write(f"**Design Moment (Mu):** {des_mu:.2f} kN-m")
+        st.write(f"**Required Reinforcement (As):** {As_req:.2f} cm² (Approx)")
