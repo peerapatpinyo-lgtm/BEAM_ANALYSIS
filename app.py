@@ -31,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT (Standardized Data Structure)
+# CUSTOM LOAD INPUT
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys):
     st.markdown("### 3️⃣ Applied Loads")
@@ -48,18 +48,8 @@ def render_custom_load_input(n_span, spans, unit_sys):
                 st.markdown(f"**Uniform Load (w)**")
                 w_dl = st.number_input(f"Dead Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_dl_{i}")
                 w_ll = st.number_input(f"Live Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_ll_{i}")
-                
-                # Logic: Add to list if not zero
                 if w_dl + w_ll != 0:
-                    loads.append({
-                        'span_idx': i, 
-                        'type': 'U', 
-                        'w_dl': w_dl, 
-                        'w_ll': w_ll, 
-                        'w': w_dl + w_ll,
-                        # Safety Defaults for Backend Compatibility
-                        'P_dl': 0.0, 'P_ll': 0.0, 'P': 0.0, 'x': 0.0
-                    })
+                    loads.append({'span_idx': i, 'type': 'U', 'w_dl': w_dl, 'w_ll': w_ll, 'w': w_dl + w_ll})
             
             with c2:
                 st.markdown(f"**Point Loads (P)**")
@@ -71,20 +61,11 @@ def render_custom_load_input(n_span, spans, unit_sys):
                     x_loc = cc3.number_input(f"x (m)", value=spans[i]/2, min_value=0.0, max_value=float(spans[i]), key=f"px_{i}_{j}")
                     
                     if p_dl + p_ll != 0:
-                        loads.append({
-                            'span_idx': i, 
-                            'type': 'P', 
-                            'P_dl': p_dl, 
-                            'P_ll': p_ll, 
-                            'P': p_dl + p_ll, 
-                            'x': x_loc,
-                            # Safety Defaults for Backend Compatibility
-                            'w_dl': 0.0, 'w_ll': 0.0, 'w': 0.0
-                        })
+                        loads.append({'span_idx': i, 'type': 'P', 'P_dl': p_dl, 'P_ll': p_ll, 'P': p_dl + p_ll, 'x': x_loc})
     return loads
 
 # ==========================================
-# ENGINEERING PLOTTING
+# ENGINEERING PLOTTING (Textbook Convention Fix)
 # ==========================================
 
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
@@ -114,7 +95,7 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1), row=1, col=1)
 
 def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
-    if not vis_spans: return go.Figure()
+    if not vis_spans or df.empty: return go.Figure()
 
     cum_len = [0] + list(np.cumsum(vis_spans))
     total_len = cum_len[-1]
@@ -122,24 +103,23 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     force_unit = "kg" if "Metric" in unit_sys else "kN"
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     
-    # --- INTELLIGENT SCALING LOGIC ---
+    # --- INTELLIGENT SCALING ---
     w_vals = [abs(l['w']) for l in loads if l.get('type') == 'U' and l['w'] != 0]
     p_vals = [abs(l['P']) for l in loads if l.get('type') == 'P' and l['P'] != 0]
-    
     max_w = max(w_vals) if w_vals else 1.0
     max_p = max(p_vals) if p_vals else 1.0
     target_h = 1.0 
     
     fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.06,
-        subplot_titles=("<b>Loading Diagram</b>", "<b>Shear Force Diagram (SFD)</b>", "<b>Bending Moment Diagram (BMD)</b>"),
-        row_heights=[0.3, 0.35, 0.35]
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+        subplot_titles=("<b>Loading Diagram</b>", "<b>Shear Force Diagram (SFD)</b>", "<b>Bending Moment Diagram (BMD) - Tension Side</b>"),
+        row_heights=[0.25, 0.375, 0.375]
     )
 
     # --- ROW 1: LOADING DIAGRAM ---
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
-    # 1. Supports
+    # Supports
     sup_size = target_h * 0.25
     for i, x in enumerate(cum_len):
         if i < len(vis_supports):
@@ -147,81 +127,69 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
             if stype != "None":
                 draw_support_shape(fig, x, 0, stype, size=sup_size)
 
-    # 2. Loads
+    # Loads
     for load in loads:
         span_idx = load.get('span_idx', 0)
-        
-        # Guard Clause: Prevent IndexError if span count reduced
         if span_idx >= len(vis_spans): continue 
-
         x_start = cum_len[span_idx]
         x_end = cum_len[span_idx+1]
         
-        # --- UDL ---
         if load.get('type') == 'U' and load['w'] != 0:
             w = load['w']
             ratio = abs(w) / max_w
             h = (0.3 + 0.7 * ratio) * target_h 
-            
-            # Fill
-            fig.add_trace(go.Scatter(
-                x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], 
-                fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', 
-                line=dict(width=0), showlegend=False, hoverinfo='text', text=f"UDL: {w}"
-            ), row=1, col=1)
-            
-            # Comb Line
-            fig.add_trace(go.Scatter(
-                x=[x_start, x_end], y=[h, h],
-                mode='lines', line=dict(color='#EF6C00', width=2),
-                showlegend=False, hoverinfo='skip'
-            ), row=1, col=1)
-            
-            # Arrows
+            fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
+            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w}"), row=1, col=1)
             n_arrows = max(5, int((x_end - x_start) * 4)) 
             for ax in np.linspace(x_start, x_end, n_arrows):
-                fig.add_annotation(
-                    x=ax, y=0, ax=ax, ay=h,
-                    xref="x1", yref="y1", axref="x1", ayref="y1",
-                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="#EF6C00",
-                    row=1, col=1
-                )
+                fig.add_annotation(x=ax, y=0, ax=ax, ay=h, xref="x1", yref="y1", axref="x1", ayref="y1", showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="#EF6C00", row=1, col=1)
             fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"<b>w={w:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#EF6C00", size=11), row=1, col=1)
 
-        # --- POINT LOAD ---
         elif load.get('type') == 'P' and load['P'] != 0:
             P = load['P']
             load_x = load['x'] + x_start
-            
             ratio = abs(P) / max_p
             h = (0.3 + 0.7 * ratio) * target_h
-            
-            fig.add_annotation(
-                x=load_x, y=0, ax=load_x, ay=h,
-                xref="x1", yref="y1", axref="x1", ayref="y1",
-                showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=3, arrowcolor="#D32F2F",
-                row=1, col=1
-            )
+            fig.add_annotation(x=load_x, y=0, ax=load_x, ay=h, xref="x1", yref="y1", axref="x1", ayref="y1", showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=3, arrowcolor="#D32F2F", row=1, col=1)
             fig.add_annotation(x=load_x, y=h, text=f"<b>P={P:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#D32F2F", size=12, weight="bold"), row=1, col=1)
 
     fig.update_yaxes(range=[-target_h*0.4, target_h*1.5], visible=False, row=1, col=1)
 
-    # --- ROW 2 & 3: SFD / BMD ---
-    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], mode='lines', line=dict(color='#D32F2F', width=2), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="%{y:.2f}"), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], mode='lines', line=dict(color='#1976D2', width=2), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="%{y:.2f}"), row=3, col=1)
+    # --- ROW 2: SFD (Standard: Up is positive) ---
+    plot_shear = df['shear']
+    fig.add_trace(go.Scatter(x=df['x'], y=plot_shear, mode='lines', line=dict(color='#D32F2F', width=2), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="%{y:.2f}"), row=2, col=1)
+
+    # --- ROW 3: BMD (Textbook: Tension side / Sagging down) ---
+    # *** FIX: INVERT MOMENT FOR PLOTTING ***
+    plot_moment = -df['moment'] 
+    fig.add_trace(go.Scatter(x=df['x'], y=plot_moment, mode='lines', line=dict(color='#1976D2', width=2), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="%{y:.2f} (Tension Side)"), row=3, col=1)
     
-    # Annotate Peaks
+    # --- ANNOTATIONS (Peaks based on plotted data) ---
     for i in range(len(vis_spans)):
-        span_data = df[df['span_id'] == i]
-        if not span_data.empty:
-            for val in [span_data['shear'].max(), span_data['shear'].min()]:
-                if abs(val) > 0.01:
-                    vx = span_data.iloc[(span_data['shear']-val).abs().argsort()[:1]]['x'].values[0]
-                    fig.add_annotation(x=vx, y=val, text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10, font=dict(color="red", size=10), row=2, col=1)
-            for val in [span_data['moment'].max(), span_data['moment'].min()]:
-                if abs(val) > 0.01:
-                    mx = span_data.iloc[(span_data['moment']-val).abs().argsort()[:1]]['x'].values[0]
-                    fig.add_annotation(x=mx, y=val, text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10, font=dict(color="blue", size=10), row=3, col=1)
+        # Filter data for this span
+        span_indices = df['span_id'] == i
+        span_x = df.loc[span_indices, 'x']
+        span_v_plot = plot_shear[span_indices]
+        span_m_plot = plot_moment[span_indices]
+
+        if span_x.empty: continue
+
+        # SFD Peaks
+        for val in [span_v_plot.max(), span_v_plot.min()]:
+            if abs(val) > 0.01:
+                # Find x corresponding to this peak value in the plotted data
+                idx = span_v_plot[span_v_plot == val].index[0]
+                vx = df.loc[idx, 'x']
+                fig.add_annotation(x=vx, y=val, text=f"{val:.2f}", showarrow=False, yshift=15 if val>0 else -15, font=dict(color="red", size=10), row=2, col=1)
+
+        # BMD Peaks (Annotate the inverted values)
+        for val in [span_m_plot.max(), span_m_plot.min()]:
+            if abs(val) > 0.01:
+                # Find x corresponding to this peak value in the plotted data
+                idx = span_m_plot[span_m_plot == val].index[0]
+                mx = df.loc[idx, 'x']
+                # The value to show is the plotted value (which is already inverted)
+                fig.add_annotation(x=mx, y=val, text=f"{val:.2f}", showarrow=False, yshift=15 if val>0 else -15, font=dict(color="blue", size=10), row=3, col=1)
 
     # Layout
     for r in [2, 3]:
@@ -229,9 +197,9 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         for x in cum_len:
             fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, row=r, col=1)
 
-    fig.update_layout(height=800, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=30, b=30, l=50, r=20))
+    fig.update_layout(height=900, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=40, b=40, l=60, r=40))
     fig.update_yaxes(title_text=f"V ({force_unit})", row=2, col=1)
-    fig.update_yaxes(title_text=f"M ({moment_unit})", row=3, col=1)
+    fig.update_yaxes(title_text=f"M ({moment_unit})<br>(Tension Side)", row=3, col=1) # Clarify axis label
     fig.update_xaxes(title_text=f"Position (m)", row=3, col=1)
 
     return fig
@@ -291,7 +259,9 @@ with c_load: loads_input = render_custom_load_input(n_span, spans, unit_sys)
 if st.button("🚀 Calculate Analysis & Design", type="primary"):
     try:
         st.session_state['loads_input'] = loads_input
-        vis_spans_df, vis_supports_df = run_beam_analysis(spans, supports, loads_input)
+        # Clean inputs before sending to backend (Redundant safety)
+        clean_loads = [l for l in loads_input if isinstance(l, dict)]
+        vis_spans_df, vis_supports_df = run_beam_analysis(spans, supports, clean_loads)
         st.session_state['res_df'] = vis_spans_df
         st.session_state['vis_data'] = (spans, vis_supports_df) 
         st.session_state['analyzed'] = True
@@ -319,6 +289,7 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     for i in range(n_span):
         x0, x1 = cum_len[i], cum_len[i+1]
         sub_df = df[(df['x'] >= x0) & (df['x'] <= x1)]
+        # Use abs() for design forces, as RC design uses magnitude
         res = calculate_rc_design(sub_df['moment'].abs().max(), sub_df['shear'].abs().max(), fc, fy, b_cm, h_cm, cov_cm, method, unit_sys, bar_areas[m_bar], stir_areas[s_bar], man_s_cm)
         res['id'] = i+1
         span_results.append(res)
@@ -333,5 +304,5 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
             c1, c2 = st.columns([1, 2])
             with c1: st.plotly_chart(draw_section_real(b_cm, h_cm, cov_cm, r['nb'], int(m_bar[2:]), (int(s_bar[2:]) if 'DB' in s_bar else int(s_bar[2:])), m_bar, s_bar, r['s_value_mm'], f"Section {r['id']}"), use_container_width=True, key=f"sec_{i}")
             with c2: 
-                st.info(f"**Forces:** M_u={r['Mu']:.2f}, V_u={r['Vu']:.2f}")
+                st.info(f"**Design Forces Span {i+1}:**\n\n- M_u = {r['Mu']:.2f}\n- V_u = {r['Vu']:.2f}")
                 for l in r['logs']: st.markdown(l)
