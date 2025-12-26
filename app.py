@@ -1,141 +1,118 @@
 import streamlit as st
 import matplotlib.pyplot as plt
-from indeterminbeam import Beam, Support, PointLoadV, UDLV
+from anastruct import SystemElements
 import numpy as np
 import pandas as pd
 
 # ==========================================
 # PART 1: CONFIGURATION & UTILS
 # ==========================================
-st.set_page_config(page_title="Continuous Beam Design (Thai Code)", layout="wide")
+st.set_page_config(page_title="Continuous Beam Design (AnaStruct)", layout="wide")
 
-# Thai Code Load Combinations (EIT Standard / USD Method)
 FACTOR_DL = 1.4
 FACTOR_LL = 1.7
 
 def explain_calc(text):
-    """Helper to display calculation logic explanation"""
     with st.expander("📝 ดูหลักการคำนวณ (Calculation Logic)"):
         st.markdown(text)
 
 # ==========================================
-# PART 2: ANALYSIS ENGINE (ENGINEERING LOGIC)
+# PART 2: ANALYSIS ENGINE (anaStruct)
 # ==========================================
 def analyze_structure(spans_data, supports_data, loads_data):
     """
-    วิเคราะห์หา Moment และ Shear โดยใช้ indeterminbeam
+    วิเคราะห์คานโดยใช้ anaStruct (2D FEM)
     """
-    # 1. Setup Beam Span
-    # indeterminbeam ใช้พิกัดรวม (Global Coordinate) เราต้องแปลงความยาวช่วงเป็นพิกัด
-    span_coords = [0]
-    current_length = 0
+    ss = SystemElements(EA=15000, EI=5000) # กำหนดค่า stiffness สมมติ (ไม่มีผลต่อ Force ในคาน Determinate/Indeterminate ทั่วไปถ้า EI คงที่)
+    
+    # 1. สร้าง Elements (คานแต่ละช่วง)
+    # anaStruct สร้าง node อัตโนมัติ: Node 0, 1, 2...
+    start_x = 0
     for length in spans_data:
-        current_length += length
-        span_coords.append(current_length)
+        end_x = start_x + length
+        # สร้าง element จากซ้ายไปขวา
+        ss.add_element(location=[[start_x, 0], [end_x, 0]])
+        start_x = end_x
     
-    beam = Beam(current_length)
-    
-    # 2. Setup Supports
-    # Supports: Fix (1,1,1), Pin (1,1,0), Roller (0,1,0) -> (x, y, moment)
-    support_objects = []
+    # 2. ใส่ Supports (จุดรองรับ)
+    # Node id จะเรียงตามจุดต่อ: 0, 1, 2, ...
     for i, supp_type in enumerate(supports_data):
-        coord = span_coords[i]
+        node_id = i
         if supp_type == 'Fix':
-            # Fix ต้องรับ Force Y และ Moment (ใน library นี้ fix X ไม่จำเป็นสำหรับคานแนวราบล้วนๆ แต่ใส่ไว้ได้)
-            support_objects.append(Support(coord, (1, 1, 1)))
+            ss.add_support_fixed(node_id=node_id)
         elif supp_type == 'Pin':
-            support_objects.append(Support(coord, (1, 1, 0)))
+            ss.add_support_hinged(node_id=node_id)
         elif supp_type == 'Roller':
-            support_objects.append(Support(coord, (0, 1, 0)))
-            
-    beam.add_supports(*support_objects)
-    
-    # 3. Setup Loads (Apply Load Combination here)
-    # เราจะ Combine load ก่อนวิเคราะห์เพื่อให้ได้ Ultimate Internal Forces
-    load_objects = []
-    
+            # Roller ใน anaStruct: direction=1 คือกลิ้งได้แกน x (รับแรงแกน y), direction=2 คือกลิ้งได้แกน y
+            ss.add_support_roll(node_id=node_id, direction=1) 
+
+    # 3. ใส่ Loads (Apply Load Combination)
     for load in loads_data:
-        # load = {'type': 'UDL/Point', 'dl': val, 'sdl': val, 'll': val, 'pos': val, 'span_idx': val}
-        
-        # Calculate Factored Load (Wu)
-        # Wu = 1.4(DL + SDL) + 1.7(LL)
+        # Load Combination
         mag_dead = load['dl'] + load['sdl']
         mag_live = load['ll']
-        factored_load = (FACTOR_DL * mag_dead) + (FACTOR_LL * mag_live)
+        wu_total = (FACTOR_DL * mag_dead) + (FACTOR_LL * mag_live)
         
-        # Determine Global Position based on span index
-        start_x = span_coords[load['span_idx']]
+        span_idx = load['span_idx']
+        # anaStruct ใช้ Element ID เริ่มที่ 1, 2, 3... (ต่างจาก index list 0,1,2)
+        element_id = span_idx + 1 
         
         if load['type'] == 'Uniform Load':
-            # UDLV (Uniform Distributed Load Vertical)
-            # รับค่าเป็น (force, coordinate range)
-            span_len = spans_data[load['span_idx']]
-            # ใส่เครื่องหมายลบ เพราะ load ลงทิศล่าง
-            load_objects.append(UDLV(-factored_load, (start_x, start_x + span_len)))
+            # q_load (แรงกระจาย) ทิศลงค่าต้องเป็นลบ? ใน anaStruct q ใส่เป็นค่า + คือ load ลง (Gravity) *เช็ค doc แล้ว*
+            # แต่เพื่อความชัวร์ anaStruct Convention: q=positive acts against y-axis (downwards)
+            ss.q_load(q=wu_total, element_id=element_id)
             
         elif load['type'] == 'Point Load':
-            # PointLoadV
-            # pos คือระยะจากซ้ายสุดของ span นั้นๆ
-            abs_pos = start_x + load['pos']
-            load_objects.append(PointLoadV(-factored_load, abs_pos))
-            
-    beam.add_loads(*load_objects)
+            # point_load: node_id หรือ position
+            # ใส่ load ที่ element โดยระบุระยะจาก node ซ้าย
+            # Fx, Fy (Fy ลบ คือทิศลง)
+            ss.point_load(node_id=None, element_id=element_id, position=load['pos'], Fy=-wu_total)
     
     # 4. Analyze
-    beam.analyse()
+    ss.solve()
     
-    return beam
+    return ss
 
 # ==========================================
-# PART 3: RC DESIGN ENGINE (SDM / USD METHOD)
+# PART 3: RC DESIGN ENGINE (USD METHOD)
 # ==========================================
 def design_rc_beam(mu_kNm, vu_kN, b, h, cover, fc, fy):
-    """
-    ออกแบบหน้าตัดคอนกรีตเสริมเหล็ก (USD Method)
-    """
-    d = h - cover # Effective depth
-    phi_b = 0.90  # Flexure reduction factor
-    phi_v = 0.85  # Shear reduction factor
+    d = h - cover
+    phi_b = 0.90
+    phi_v = 0.85
     
-    # --- Flexure Design ---
-    # Mu = phi * Mn
-    # Mn_req = Mu / phi
-    mn_req = (abs(mu_kNm) * 10**6) / phi_b # N-mm
-    
-    # Rn = Mn / (b * d^2)
+    # Flexure
+    mn_req = (abs(mu_kNm) * 10**6) / phi_b
     Rn = mn_req / (b * d**2)
-    
-    # Rho (Reinforcement Ratio)
     m = fy / (0.85 * fc)
+    
+    rho = 0.0
     try:
-        rho = (1/m) * (1 - np.sqrt(1 - (2 * m * Rn) / fy))
+        val_root = 1 - (2 * m * Rn) / fy
+        if val_root >= 0:
+            rho = (1/m) * (1 - np.sqrt(val_root))
     except:
-        rho = 0.0 # กรณีรากติดลบ (หน้าตัดเล็กไป)
+        pass
         
     As_req = rho * b * d
-    
-    # Minimum Steel Check (Simplified ACI/EIT)
     as_min = max((np.sqrt(fc)/(4*fy))*b*d, (1.4/fy)*b*d)
     As_final = max(As_req, as_min)
     
-    # --- Shear Design ---
-    # Vc = 0.53 * sqrt(fc) * b * d (หน่วย kg/cm2 -> ต้องแปลงหน่วยให้ตรง)
-    # ใช้สูตร SI: Vc = 0.17 * sqrt(fc) * b * d (N)
-    Vc = 0.17 * np.sqrt(fc) * b * d # Newton
-    phi_Vc = phi_v * Vc / 1000 # kN
+    # Shear
+    Vc = 0.17 * np.sqrt(fc) * b * d
+    phi_Vc = phi_v * Vc / 1000
     
-    vs_req = 0
-    message_shear = "OK (Concreteรับไหว)"
+    message_shear = "OK (Concrete Only)"
     if abs(vu_kN) > phi_Vc:
         vs_req = (abs(vu_kN) - phi_Vc) / phi_v
         message_shear = f"Need Stirrup (Vs = {vs_req:.2f} kN)"
     
     status = "OK"
-    if rho == 0:
+    if rho == 0 and mu_kNm > 0.1: # ignore extremely small moment
         status = "Fails (Section too small)"
         
     return {
-        "As_req_cm2": As_final / 100, # Convert mm2 to cm2
+        "As_req_cm2": As_final / 100,
         "Rho": rho,
         "Phi_Vc_kN": phi_Vc,
         "Status": status,
@@ -143,190 +120,117 @@ def design_rc_beam(mu_kNm, vu_kN, b, h, cover, fc, fy):
     }
 
 # ==========================================
-# PART 4: MAIN UI APPLICATION
+# PART 4: UI
 # ==========================================
 
-st.title("🏗️ Continuous Beam Design (USD Method)")
-st.caption("Developed by Senior Structural Engineer & Dev")
+st.title("🏗️ Continuous Beam Design (AnaStruct Engine)")
+st.caption("Robust Cloud-Ready Version")
 
-# --- UI TAB SEPARATION ---
 tab1, tab2, tab3 = st.tabs(["1. Input Data", "2. Analysis Results", "3. Concrete Design"])
 
-# ---------------------------------------
-# TAB 1: INPUT
-# ---------------------------------------
 with tab1:
-    st.header("⚙️ กำหนดค่าโครงสร้าง (Input Parameters)")
-    
+    st.header("⚙️ กำหนดค่าโครงสร้าง")
     col1, col2 = st.columns(2)
     with col1:
-        num_spans = st.number_input("จำนวนช่วงคาน (Number of Spans)", min_value=2, max_value=10, value=2)
+        num_spans = st.number_input("จำนวนช่วงคาน", 2, 10, 2)
     
-    st.markdown("---")
-    
-    # Dynamic Input Containers
     spans = []
     supports = []
     loads = []
     
-    # 1. Span Lengths
-    st.subheader("1. ความยาวแต่ละช่วง (Span Lengths)")
+    st.subheader("1. ความยาว (Span Lengths)")
     cols_span = st.columns(num_spans)
     for i in range(num_spans):
-        l = cols_span[i].number_input(f"Span {i+1} (m)", min_value=1.0, value=4.0, key=f"span_{i}")
-        spans.append(l)
+        spans.append(cols_span[i].number_input(f"Span {i+1} (m)", 1.0, value=4.0, key=f"s{i}"))
         
-    # 2. Supports
     st.subheader("2. จุดรองรับ (Supports)")
-    # มี support จำนวน num_spans + 1
     cols_supp = st.columns(num_spans + 1)
-    support_options = ['Pin', 'Roller', 'Fix']
+    opts = ['Pin', 'Roller', 'Fix']
     for i in range(num_spans + 1):
-        default_idx = 0 if i==0 else 1 # Fix/Pin start, Roller others typically
-        s = cols_supp[i].selectbox(f"Supp {i}", support_options, index=default_idx, key=f"supp_{i}")
-        supports.append(s)
+        def_idx = 0 if i==0 else 1
+        supports.append(cols_supp[i].selectbox(f"Supp {i}", opts, index=def_idx, key=f"sup{i}"))
         
-    # 3. Loads
-    st.subheader("3. น้ำหนักบรรทุก (Loads)")
-    st.info(f"Load Combination (Thai Code): {FACTOR_DL}*(DL+SDL) + {FACTOR_LL}*LL")
-    
+    st.subheader("3. Loads (1.4DL + 1.7LL)")
     for i in range(num_spans):
-        with st.expander(f"📍 Load on Span {i+1}", expanded=True):
-            # Allow multiple loads per span? For simplicity here, assume 1 Main UDL + Optional Point
+        with st.expander(f"📍 Load Span {i+1}", expanded=True):
             c1, c2, c3, c4 = st.columns(4)
-            load_type = c1.selectbox("Load Type", ["Uniform Load", "Point Load"], key=f"ltype_{i}")
-            dl = c2.number_input("Dead Load (DL)", value=10.0, key=f"dl_{i}", help="kN/m or kN")
-            sdl = c3.number_input("Super Dead Load (SDL)", value=5.0, key=f"sdl_{i}")
-            ll = c4.number_input("Live Load (LL)", value=8.0, key=f"ll_{i}")
-            
+            ltype = c1.selectbox("Type", ["Uniform Load", "Point Load"], key=f"lt{i}")
+            dl = c2.number_input("DL", value=10.0, key=f"d{i}")
+            sdl = c3.number_input("SDL", value=5.0, key=f"sd{i}")
+            ll = c4.number_input("LL", value=8.0, key=f"l{i}")
             pos = 0.0
-            if load_type == "Point Load":
-                pos = st.slider(f"Position from left of Span {i+1} (m)", 0.0, spans[i], spans[i]/2, key=f"pos_{i}")
+            if ltype == "Point Load":
+                pos = st.slider(f"Position (m)", 0.0, spans[i], spans[i]/2.0, key=f"p{i}")
             
-            loads.append({
-                "span_idx": i,
-                "type": load_type,
-                "dl": dl, "sdl": sdl, "ll": ll,
-                "pos": pos
-            })
+            loads.append({"span_idx": i, "type": ltype, "dl": dl, "sdl": sdl, "ll": ll, "pos": pos})
 
-    # Button to Trigger Analysis
     analyze_btn = st.button("🚀 Run Analysis", type="primary")
 
-# ---------------------------------------
-# LOGIC PROCESSING
-# ---------------------------------------
 if analyze_btn:
     st.session_state['analyzed'] = True
-    st.session_state['beam_model'] = analyze_structure(spans, supports, loads)
-    st.session_state['input_config'] = {'spans': spans} # Save for design usage
+    st.session_state['ss_model'] = analyze_structure(spans, supports, loads)
 
-# ---------------------------------------
-# TAB 2: OUTPUT (ANALYSIS)
-# ---------------------------------------
 with tab2:
-    if 'analyzed' in st.session_state and st.session_state['analyzed']:
-        beam = st.session_state['beam_model']
+    if 'analyzed' in st.session_state:
+        ss = st.session_state['ss_model']
+        st.header("📊 Analysis Results")
         
-        st.header("📊 ผลการวิเคราะห์ (Analysis Results)")
+        # Plotting using AnaStruct's built-in matplotlib wrapper
+        # 1. Shear
+        st.subheader("Shear Force Diagram")
+        fig_sf = ss.show_shear_force(show=False)
+        st.pyplot(fig_sf)
         
-        # Plotting Diagrams
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+        # 2. Moment
+        st.subheader("Bending Moment Diagram")
+        fig_bm = ss.show_bending_moment(show=False)
+        st.pyplot(fig_bm)
         
-        # Indeterminbeam plotting helper
-        beam.plot_shear_force(ax=ax1)
-        ax1.set_title("Shear Force Diagram (SFD)")
-        ax1.set_ylabel("Shear (kN)")
-        ax1.grid(True, linestyle='--', alpha=0.6)
-        
-        beam.plot_bending_moment(ax=ax2)
-        ax2.set_title("Bending Moment Diagram (BMD)")
-        ax2.set_ylabel("Moment (kN-m)")
-        ax2.set_xlabel("Length (m)")
-        ax2.grid(True, linestyle='--', alpha=0.6)
-        
-        st.pyplot(fig)
-        
-        # Get Max Values for Design
-        try:
-            # indeterminbeam 2.x returns min/max
-            v_max = beam.get_shear_force(return_max=True)
-            v_min = beam.get_shear_force(return_min=True)
-            m_max = beam.get_bending_moment(return_max=True)
-            m_min = beam.get_bending_moment(return_min=True)
+        # Extract Min/Max for Design
+        # anaStruct stores results in nodes/elements range. 
+        # We can extract moment array from elements
+        m_vals = []
+        v_vals = []
+        for el in ss.element_map.values():
+            # shear and moment arrays
+            # note: anaStruct conventions might differ slightly, checking absolute max is safe
+            m_vals.extend(el.moment_map.values())
+            v_vals.extend(el.shear_map.values())
             
-            st.metric("Max Positive Moment (+M)", f"{m_max:.2f} kN-m")
-            st.metric("Max Negative Moment (-M)", f"{m_min:.2f} kN-m")
-            st.metric("Max Shear (V)", f"{max(abs(v_max), abs(v_min)):.2f} kN")
-            
-            # Store max absolute values for simple design
-            st.session_state['max_moment'] = max(abs(m_max), abs(m_min))
-            st.session_state['max_shear'] = max(abs(v_max), abs(v_min))
-            
-        except Exception as e:
-            st.error(f"Error extracting values: {e}")
-
-        explain_calc(f"""
-        **Calculation Details:**
-        - **Load Combination:** $1.4(DL+SDL) + 1.7(LL)$
-        - **Method:** Stiffness Matrix Method (via `indeterminbeam` library)
-        - **Supports:** Converted to stiffness nodes (Fix/Pin/Roller)
-        """)
+        # หาค่า Max Absolute
+        m_max_abs = max([abs(x) for x in m_vals]) if m_vals else 0
+        v_max_abs = max([abs(x) for x in v_vals]) if v_vals else 0
+        
+        c1, c2 = st.columns(2)
+        c1.metric("Max Moment (Design)", f"{m_max_abs:.2f} kN-m")
+        c2.metric("Max Shear (Design)", f"{v_max_abs:.2f} kN")
+        
+        st.session_state['max_moment'] = m_max_abs
+        st.session_state['max_shear'] = v_max_abs
         
     else:
-        st.info("กรุณากดปุ่ม 'Run Analysis' ในหน้า Input ก่อนครับ")
+        st.info("Please Run Analysis")
 
-# ---------------------------------------
-# TAB 3: DESIGN
-# ---------------------------------------
 with tab3:
-    st.header("🧱 ออกแบบหน้าตัดคาน (RC Design)")
-    
     if 'max_moment' in st.session_state:
-        col_d1, col_d2 = st.columns(2)
-        
-        with col_d1:
-            st.subheader("Material Properties")
-            fc = st.number_input("f'c (MPa)", value=24.0)
-            fy = st.number_input("fy (MPa) - เหล็กเสริมหลัก", value=400.0)
-            
-        with col_d2:
-            st.subheader("Section Properties")
-            b = st.number_input("ความกว้าง b (cm)", value=25.0)
-            h = st.number_input("ความลึก h (cm)", value=50.0)
-            cover = st.number_input("Covering (cm)", value=4.0)
-            
-        # Design Calculation
+        st.header("🧱 Design RC")
         mu = st.session_state['max_moment']
         vu = st.session_state['max_shear']
         
-        st.markdown("---")
-        st.subheader("ผลการออกแบบ (Design Output)")
-        st.write(f"Based on Max Moment: **{mu:.2f} kN-m** and Max Shear: **{vu:.2f} kN**")
-        
-        # Convert units for calculation (input cm -> mm, output cm2)
+        c1, c2 = st.columns(2)
+        with c1:
+            fc = st.number_input("fc (MPa)", value=24.0)
+            fy = st.number_input("fy (MPa)", value=400.0)
+        with c2:
+            b = st.number_input("b (cm)", value=25.0)
+            h = st.number_input("h (cm)", value=50.0)
+            cover = st.number_input("cover (cm)", value=4.0)
+            
         res = design_rc_beam(mu, vu, b*10, h*10, cover*10, fc, fy)
         
-        r1, r2, r3 = st.columns(3)
-        r1.metric("Status", res['Status'], delta_color="normal" if res['Status']=="OK" else "inverse")
-        r2.metric("เหล็กเสริมที่ต้องการ (As req)", f"{res['As_req_cm2']:.2f} cm²")
-        r3.metric("กำลังรับแรงเฉือนคอนกรีต", f"{res['Phi_Vc_kN']:.2f} kN")
-        
-        st.info(f"Shear Check: {res['Shear_Msg']}")
-        
-        # Visualization of Section
-        #  - Conceptually represented by text/plot below
-        st.caption("ℹ️ เหล็กเสริมที่คำนวณได้เป็นปริมาณเหล็กรับแรงดึงสูงสุด (Bottom or Top) ตาม Moment ที่มากที่สุด")
-        
-        explain_calc(r"""
-        **Design Formulas (USD Method):**
-        1. **Effective Depth:** $d = h - cover$
-        2. **Required Moment Strength:** $M_n = M_u / \phi_b$ ($\phi_b=0.9$)
-        3. **Reinforcement Ratio ($\rho$):**
-           $$ \rho = \frac{1}{m} \left( 1 - \sqrt{1 - \frac{2m R_n}{f_y}} \right) $$
-           Where $m = \frac{f_y}{0.85 f_c'}$ and $R_n = \frac{M_n}{b d^2}$
-        4. **Shear Capacity:** $\phi V_c = 0.85 \times 0.17 \sqrt{f_c'} b d$
-        """)
-        
-    else:
-        st.warning("รอผลการวิเคราะห์จาก Tab 2 ก่อนครับ")
+        st.write("---")
+        c3, c4, c5 = st.columns(3)
+        c3.metric("Status", res['Status'])
+        c4.metric("As req", f"{res['As_req_cm2']:.2f} cm²")
+        c5.metric("Phi Vc", f"{res['Phi_Vc_kN']:.2f} kN")
+        st.warning(f"Shear Check: {res['Shear_Msg']}")
