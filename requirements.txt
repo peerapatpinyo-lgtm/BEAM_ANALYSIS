@@ -3,3 +3,4 @@ anastruct
 matplotlib
 numpy
 pandas
+plotly
