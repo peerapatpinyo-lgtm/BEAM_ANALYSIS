@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 
 # --- IMPORT MODULES ---
 try:
-    from beam_analysis import BeamFiniteElement
+    from beam_analysis import run_beam_analysis # ใช้ function wrapper ใหม่
     from rc_design import calculate_rc_design
     import input_handler as ui
 except ImportError:
@@ -14,23 +14,183 @@ except ImportError:
     st.stop()
 
 # ==========================================
-# SETUP
+# SETUP & STYLES
 # ==========================================
 st.set_page_config(page_title="RC Beam Pro Ultimate", layout="wide", page_icon="🏗️")
 
 if 'analyzed' not in st.session_state: st.session_state['analyzed'] = False
+if 'loads_input' not in st.session_state: st.session_state['loads_input'] = []
 
-# CSS
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');
     html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
-    .header-box { background: #1565C0; color: white; padding: 15px; border-radius: 8px; text-align: center; margin-bottom: 20px; }
-    .sub-header { border-left: 5px solid #1565C0; padding-left: 10px; font-size: 1.2rem; font-weight: bold; margin-top: 25px; margin-bottom: 10px; background: #E3F2FD; padding: 8px; border-radius: 0 5px 5px 0;}
+    .header-box { background: linear-gradient(90deg, #1565C0 0%, #0D47A1 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .sub-header { border-left: 5px solid #1565C0; padding-left: 15px; font-size: 1.25rem; font-weight: 600; margin-top: 30px; margin-bottom: 15px; background: #E3F2FD; padding: 10px; border-radius: 0 8px 8px 0; color: #0D47A1; }
+    .metric-card { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 15px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- PLOTTING FUNCTIONS ---
+# ==========================================
+# ADVANCED PLOTTING FUNCTIONS
+# ==========================================
+
+def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
+    """
+    Creates professional structural engineering diagrams.
+    1. Load Diagram (Visual representation of inputs)
+    2. Shear Force Diagram (with local max/min per span)
+    3. Bending Moment Diagram (with local max/min per span)
+    """
+    cum_len = [0] + list(np.cumsum(vis_spans))
+    total_len = cum_len[-1]
+    
+    # Define Units
+    force_unit = "kg" if unit_sys == "Metric (kg/cm)" else "kN"
+    dist_unit = "m"
+    moment_unit = "kg-m" if unit_sys == "Metric (kg/cm)" else "kN-m"
+    
+    # Create Subplots
+    fig = make_subplots(
+        rows=3, cols=1, 
+        shared_xaxes=True, 
+        vertical_spacing=0.08,
+        subplot_titles=("<b>Load Diagram</b>", "<b>Shear Force Diagram (SFD)</b>", "<b>Bending Moment Diagram (BMD)</b>"),
+        row_heights=[0.25, 0.375, 0.375]
+    )
+
+    # --- 1. LOAD DIAGRAM (Row 1) ---
+    # Draw Beam
+    fig.add_shape(type="rect", x0=0, y0=-0.05, x1=total_len, y1=0.05, fillcolor="#CFD8DC", line_color="black", row=1, col=1)
+    
+    # Draw Supports
+    for i, x in enumerate(cum_len):
+        sup_type = vis_supports.iloc[i]['type'] if i < len(vis_supports) else "None" # Fix index logic if needed
+        # Check actual supports logic from input. Assuming standard nodes here.
+        # For simplicity, using the span endpoints
+        if i < len(vis_supports): # Defensive
+            stype = vis_supports.iloc[i]['type'] if 'type' in vis_supports.columns else "Pin"
+            if stype != "None":
+                symbol = "triangle-up" if stype == "Pin" else "circle"
+                fig.add_trace(go.Scatter(x=[x], y=[-0.05], mode='markers', marker=dict(symbol=symbol, size=15, color="black"), hoverinfo='skip', showlegend=False), row=1, col=1)
+
+    # Draw Loads
+    max_load_h = 0
+    for load in loads:
+        span_idx = load['span_idx']
+        w = load.get('w', 0)
+        x_start = cum_len[span_idx]
+        x_end = cum_len[span_idx+1]
+        
+        if w != 0: # Distributed Load
+            # Draw a shaded block
+            fig.add_trace(go.Scatter(
+                x=[x_start, x_end, x_end, x_start], 
+                y=[0, 0, w, w], 
+                fill='toself', fillcolor='rgba(255, 179, 0, 0.3)', 
+                line=dict(color='orange', width=0), 
+                showlegend=False, hoverinfo='text', text=f"w = {w} {force_unit}/{dist_unit}"
+            ), row=1, col=1)
+            
+            # Draw Arrows (Visual representation)
+            steps = np.linspace(x_start, x_end, 5) # 5 arrows per span
+            for sx in steps:
+                fig.add_annotation(
+                    x=sx, y=w/2, ax=0, ay=-20,
+                    xref="x1", yref="y1",
+                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5, arrowcolor="orange"
+                )
+            # Label
+            fig.add_annotation(x=(x_start+x_end)/2, y=w, text=f"w={w:.0f}", showarrow=False, yshift=10, row=1, col=1)
+
+    # --- 2. SHEAR FORCE (Row 2) ---
+    fig.add_trace(go.Scatter(
+        x=df['x'], y=df['shear'], 
+        mode='lines', line=dict(color='#D32F2F', width=2), 
+        fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)',
+        name="Shear"
+    ), row=2, col=1)
+
+    # Annotate Max/Min Shear per Span
+    for i in range(len(vis_spans)):
+        # Filter data for this span
+        span_data = df[df['span_id'] == i]
+        if not span_data.empty:
+            max_v = span_data['shear'].max()
+            min_v = span_data['shear'].min()
+            
+            # Label Positive Peak
+            idxmax = span_data['shear'].idxmax()
+            fig.add_annotation(
+                x=span_data.loc[idxmax, 'x'], y=max_v,
+                text=f"<b>{max_v:.2f}</b>", showarrow=False, yshift=10,
+                font=dict(color="#D32F2F", size=10), bgcolor="rgba(255,255,255,0.7)", row=2, col=1
+            )
+            # Label Negative Peak
+            idxmin = span_data['shear'].idxmin()
+            fig.add_annotation(
+                x=span_data.loc[idxmin, 'x'], y=min_v,
+                text=f"<b>{min_v:.2f}</b>", showarrow=False, yshift=-10,
+                font=dict(color="#D32F2F", size=10), bgcolor="rgba(255,255,255,0.7)", row=2, col=1
+            )
+
+    # --- 3. BENDING MOMENT (Row 3) ---
+    # Note: Engineering convention usually flips moment, but for charts standard is fine, just label well.
+    fig.add_trace(go.Scatter(
+        x=df['x'], y=df['moment'], 
+        mode='lines', line=dict(color='#1976D2', width=2), 
+        fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)',
+        name="Moment"
+    ), row=3, col=1)
+
+    # Annotate Max/Min Moment per Span
+    for i in range(len(vis_spans)):
+        span_data = df[df['span_id'] == i]
+        if not span_data.empty:
+            # Positive Moment (Sagging)
+            max_m = span_data['moment'].max()
+            if max_m > 0.1: # Threshold to avoid labeling zero noise
+                idxmax = span_data['moment'].idxmax()
+                fig.add_annotation(
+                    x=span_data.loc[idxmax, 'x'], y=max_m,
+                    text=f"<b>{max_m:.2f}</b>", showarrow=False, yshift=10,
+                    font=dict(color="#1976D2", size=10), bgcolor="rgba(255,255,255,0.7)", row=3, col=1
+                )
+            
+            # Negative Moment (Hogging - usually at supports)
+            min_m = span_data['moment'].min()
+            if min_m < -0.1:
+                idxmin = span_data['moment'].idxmin()
+                fig.add_annotation(
+                    x=span_data.loc[idxmin, 'x'], y=min_m,
+                    text=f"<b>{min_m:.2f}</b>", showarrow=False, yshift=-10,
+                    font=dict(color="#1976D2", size=10), bgcolor="rgba(255,255,255,0.7)", row=3, col=1
+                )
+
+    # --- COMMON LAYOUT SETTINGS ---
+    # Add vertical lines for supports across all subplots
+    for x in cum_len:
+        fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="gray", opacity=0.5)
+
+    # Zero lines
+    fig.add_hline(y=0, line_width=1.5, line_color="black", opacity=1, row=2, col=1)
+    fig.add_hline(y=0, line_width=1.5, line_color="black", opacity=1, row=3, col=1)
+
+    fig.update_layout(
+        height=800, 
+        showlegend=False, 
+        plot_bgcolor="white",
+        hovermode="x unified",
+        margin=dict(t=40, b=40, l=60, r=40)
+    )
+    
+    # Update Axes Labels
+    fig.update_yaxes(title_text=f"Load", row=1, col=1, showticklabels=False)
+    fig.update_yaxes(title_text=f"Shear ({force_unit})", row=2, col=1)
+    fig.update_yaxes(title_text=f"Moment ({moment_unit})", row=3, col=1)
+    fig.update_xaxes(title_text=f"Length ({dist_unit})", row=3, col=1)
+
+    return fig
 
 def draw_reinforcement_profile(spans, design_results, m_bar, s_bar):
     total_len = sum(spans)
@@ -140,50 +300,37 @@ with c_load: loads_input = ui.render_loads_input(n_span, spans, fact_dl, fact_ll
 
 # 2. Calculation
 if st.button("🚀 Calculate Analysis & Design", type="primary"):
-    solver = BeamFiniteElement(spans, supports, loads_input)
-    success, msg = solver.solve()
-    if success:
-        st.session_state['res_df'] = solver.get_internal_forces()
-        st.session_state['vis_data'] = (spans, supports)
+    try:
+        # Save inputs for visualization later
+        st.session_state['loads_input'] = loads_input
+        
+        # New Wrapper Function from beam_analysis.py
+        vis_spans_df, vis_supports_df = run_beam_analysis(spans, supports, loads_input)
+        
+        # Store in session state
+        st.session_state['res_df'] = vis_spans_df
+        st.session_state['vis_data'] = (spans, vis_supports_df) # Store input spans and Result reactions
         st.session_state['analyzed'] = True
-    else:
-        st.error(f"Analysis Failed: {msg}")
+        
+    except ValueError as ve:
+        st.error(str(ve))
+    except Exception as e:
+        st.error(f"System Error: {e}")
 
 # 3. Visualization
 if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     df = st.session_state['res_df']
-    vis_spans, vis_supports = st.session_state['vis_data']
-    total_len = sum(vis_spans)
-    cum_len = [0] + list(np.cumsum(vis_spans))
-
-    st.markdown('<div class="sub-header">1️⃣ Analysis Diagrams</div>', unsafe_allow_html=True)
+    vis_spans, vis_supports_df = st.session_state['vis_data']
+    loads = st.session_state['loads_input']
     
-    # --- PLOT ANALYSIS ---
+    st.markdown('<div class="sub-header">1️⃣ Analysis Results</div>', unsafe_allow_html=True)
+    
+    # --- PLOT ANALYSIS (ENGINEERING GRADE) ---
     try:
-        fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.05, 
-                            subplot_titles=("Beam Model", "Shear Force", "Bending Moment"),
-                            row_heights=[0.2, 0.4, 0.4])
-
-        # Row 1: Beam
-        fig.add_shape(type="rect", x0=0, y0=-0.1, x1=total_len, y1=0.1, fillcolor="#E0E0E0", line_color="black", row=1, col=1)
-        for i, s in enumerate(vis_supports):
-            if s != "None":
-                fig.add_trace(go.Scatter(x=[cum_len[i]], y=[-0.15], mode='markers', marker=dict(symbol="triangle-up", size=12, color="green"), name=s), row=1, col=1)
-
-        # Row 2: Shear
-        fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#E53935'), name="Shear"), row=2, col=1)
-
-        # Row 3: Moment
-        fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1E88E5'), name="Moment"), row=3, col=1)
-
-        fig.update_layout(height=700, showlegend=False, hovermode="x unified")
-        fig.update_xaxes(range=[-0.5, total_len+0.5]) 
-        fig.update_yaxes(visible=False, row=1, col=1)
-        
-        st.plotly_chart(fig, use_container_width=True, key="analysis_plot")
-        
+        fig_eng = create_engineering_plots(df, vis_spans, vis_supports_df, loads, unit_sys)
+        st.plotly_chart(fig_eng, use_container_width=True, key="eng_plot")
     except Exception as e:
-        st.error(f"Error plotting graph: {e}")
+        st.error(f"Error plotting diagrams: {e}")
 
     # --- DESIGN SECTION ---
     st.markdown('<div class="sub-header">2️⃣ Structural Design Results</div>', unsafe_allow_html=True)
@@ -196,12 +343,19 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     sd_map = {k: (int(k[2:]) if 'DB' in k else int(k[2:])) for k in stir_areas}
 
     span_results = []
+    cum_len = [0] + list(np.cumsum(vis_spans))
+    
     for i in range(n_span):
         x0, x1 = cum_len[i], cum_len[i+1]
+        # Filter Data for this Span
         sub_df = df[(df['x'] >= x0) & (df['x'] <= x1)]
         
+        # Get Max Forces
+        max_m = sub_df['moment'].abs().max()
+        max_v = sub_df['shear'].abs().max()
+        
         res = calculate_rc_design(
-            sub_df['moment'].abs().max(), sub_df['shear'].abs().max(),
+            max_m, max_v,
             fc, fy, b_cm, h_cm, cov_cm, method, unit_sys, 
             bar_areas[m_bar], stir_areas[s_bar], man_s_cm
         )
@@ -226,4 +380,5 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
                 )
                 st.plotly_chart(fig_sec, use_container_width=True, key=f"sec_{i}")
             with c2:
+                st.info(f"**Design Forces Span {i+1}:**\n\n- M_u = {r.get('Mu', 0):.2f}\n- V_u = {r.get('Vu', 0):.2f}")
                 for line in r['logs']: st.markdown(line)
