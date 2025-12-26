@@ -7,10 +7,8 @@ def render_sidebar():
     design_code = st.sidebar.selectbox("Design Code", ["EIT Standard (WSD)", "ACI 318 (SDM)"])
     method = "SDM" if "ACI" in design_code else "WSD"
     
-    # 2. Safety Factors (คืนค่าให้แสดงตลอด)
+    # 2. Safety Factors
     st.sidebar.markdown("### 🛡️ Load Factors")
-    
-    # ถ้าเป็น SDM ให้ค่า Default เป็น 1.4/1.7 ถ้า WSD ให้เป็น 1.0
     default_dl = 1.4 if method == "SDM" else 1.0
     default_ll = 1.7 if method == "SDM" else 1.0
     
@@ -41,9 +39,7 @@ def render_geometry_input():
             
     with c2:
         st.write("**Support Types** (Left -> Right)")
-        # Loop สร้าง Dropdown สำหรับเลือก Support (คืนค่าส่วนนี้กลับมา)
         for i in range(n_span + 1):
-            # ตั้ง Default: ตัวแรก Pin, ตัวสุดท้าย Roller, ตรงกลาง Roller
             def_idx = 0 if i == 0 else 1 
             s = st.selectbox(f"Support {i+1}", ["Pin", "Roller", "Fixed", "None"], index=def_idx, key=f"sup{i}")
             supports.append(s)
@@ -61,7 +57,6 @@ def render_loads_input(n_span, spans, f_dl, f_ll, unit_sys):
             wd = col_dl.number_input(f"DL ({u_load}) - Span {i+1}", value=1000.0)
             wl = col_ll.number_input(f"LL ({u_load}) - Span {i+1}", value=500.0)
             
-            # Combine
             w_total = (wd * f_dl) + (wl * f_ll)
             loads.append({'type': 'uniform', 'span_idx': i, 'w': w_total})
             
@@ -74,10 +69,10 @@ def render_design_input(unit_sys):
     c1, c2 = st.columns(2)
     u_str = "MPa" if "kN" in unit_sys else "ksc"
     fc = c1.number_input(f"Concrete f'c ({u_str})", value=240)
-    fy = c2.number_input(f"Steel fy ({u_str})", value=4000) # SD40
+    fy = c2.number_input(f"Steel fy ({u_str})", value=4000)
     
     st.markdown("---")
-    # Section Properties (Input เป็น mm)
+    # Section Properties (Input mm)
     c3, c4, c5 = st.columns(3)
     b_mm = c3.number_input("Width b (mm)", value=250, step=50)
     h_mm = c4.number_input("Depth h (mm)", value=500, step=50)
@@ -88,11 +83,14 @@ def render_design_input(unit_sys):
     c6, c7, c8 = st.columns(3)
     main_bar = c6.selectbox("Main Bar Size", ["DB12", "DB16", "DB20", "DB25", "DB28"], index=1)
     stir_bar = c7.selectbox("Stirrup Size", ["RB6", "RB9", "DB10", "DB12"], index=0)
-    manual_s = c8.number_input("Manual Stirrup Spacing (cm) [0=Auto]", value=0, help="ใส่ 0 เพื่อให้โปรแกรมคำนวณอัตโนมัติ")
+    
+    # FIX: Input เป็น mm แล้วหาร 10 ส่งค่าเป็น cm ไปคำนวณ
+    manual_s_mm = c8.number_input("Manual Stirrup Spacing (mm) [0=Auto]", value=0, help="ใส่ 0 เพื่อให้คำนวณอัตโนมัติ")
+    manual_s_cm = manual_s_mm / 10.0
 
-    # แปลงหน่วยส่งออกเป็น cm สำหรับ logic คำนวณเดิม
+    # แปลง Section เป็น cm ส่งไปคำนวณ
     b_cm = b_mm / 10.0
     h_cm = h_mm / 10.0
     cov_cm = cov_mm / 10.0
     
-    return fc, fy, b_cm, h_cm, cov_cm, main_bar, stir_bar, manual_s
+    return fc, fy, b_cm, h_cm, cov_cm, main_bar, stir_bar, manual_s_cm
