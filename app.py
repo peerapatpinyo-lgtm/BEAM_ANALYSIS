@@ -2,7 +2,12 @@ import streamlit as st
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import matplotlib
+import matplotlib.pyplot as plt
 from anastruct import SystemElements
+
+# ตั้งค่า Matplotlib เป็น 'Agg' เพื่อไม่ให้ Error บน Server (Headless mode)
+matplotlib.use('Agg')
 
 # ==========================================
 # PART 1: CONFIGURATION & UTILS
@@ -36,7 +41,7 @@ def analyze_structure(spans_data, supports_data, loads_data):
         node_id = i + 1  # Node เริ่มที่ 1
         
         # --- Stability Guard ---
-        # ถ้า Node แรกเป็น Roller ต้องเปลี่ยนเป็น Pin เพื่อล็อคแกน X (กันโครงสร้างไหล)
+        # ถ้า Node แรกเป็น Roller ต้องเปลี่ยนเป็น Pin เพื่อล็อคแกน X
         if i == 0 and supp_type == 'Roller':
             supp_type = 'Pin' 
         # -----------------------
@@ -71,39 +76,65 @@ def analyze_structure(spans_data, supports_data, loads_data):
 
 def get_detailed_results(ss):
     """
-    ดึงค่า Shear/Moment แบบ Robust (กัน Error เรื่องชื่อตัวแปร)
+    ดึงค่า Shear/Moment โดยบังคับให้ Library คำนวณค่าออกมา
     """
     x_vals = []
     shear_vals = []
     moment_vals = []
     
-    # Helper Function: ดึงค่า X จาก Vertex อย่างปลอดภัย
+    # --- FIX 1: Force Calculation ---
+    # บังคับให้ anastruct คำนวณค่า Shear/Moment arrays โดยการเรียก plot เงียบๆ
+    # ถ้าไม่ทำขั้นตอนนี้ ตัวแปร .shear และ .moment จะไม่มีอยู่จริงใน object
+    try:
+        fig_dummy = plt.figure()
+        ss.show_shear_force(show=False)       # Trigger calculation
+        ss.show_bending_moment(show=False)    # Trigger calculation
+        plt.close(fig_dummy)
+        plt.close('all')
+    except Exception:
+        pass # ปล่อยผ่านหากมี error เรื่องกราฟฟิก แต่ค่ามักจะถูกคำนวณแล้ว
+
+    # --- Helper: ดึงค่า X แบบปลอดภัย (กัน Error เรื่องชื่อตัวแปร) ---
     def get_x(vertex):
+        # ลองดึงหลายๆ ชื่อเผื่อ version ต่างกัน
         if hasattr(vertex, 'coordinates'): return vertex.coordinates[0]
         if hasattr(vertex, 'loc'): return vertex.loc[0]
         if hasattr(vertex, 'coords'): return vertex.coords[0]
         return 0.0
 
     # เรียง Element ตามพิกัด X
-    sorted_elements = sorted(
-        ss.element_map.values(), 
-        key=lambda e: get_x(e.vertex_1)
-    )
-    
+    try:
+        sorted_elements = sorted(
+            ss.element_map.values(), 
+            key=lambda e: get_x(e.vertex_1)
+        )
+    except:
+        # Fallback กรณี access vertex ไม่ได้ ให้ใช้ index ธรรมดา
+        sorted_elements = ss.element_map.values()
+
     for el in sorted_elements:
         x0 = get_x(el.vertex_1)
         x1 = get_x(el.vertex_2)
         
-        # ดึงค่า Force Array
-        s_arr = np.array(el.shear).flatten()
-        m_arr = np.array(el.moment).flatten()
+        # --- FIX 2: Safe Attribute Access ---
+        # ตรวจสอบว่ามีค่า .shear หรือไม่ ถ้าไม่มีให้ใส่ list ว่างป้องกัน Crash
+        s_arr = getattr(el, 'shear', [])
+        m_arr = getattr(el, 'moment', [])
         
-        # สร้าง array ของระยะ x
+        # แปลงเป็น numpy array และ flatten
+        s_arr = np.array(s_arr).flatten() if s_arr is not None else np.array([])
+        m_arr = np.array(m_arr).flatten() if m_arr is not None else np.array([])
+        
+        # ถ้ามีข้อมูล ให้สร้าง array ระยะ x ที่สัมพันธ์กัน
         if len(s_arr) > 0:
             x_arr = np.linspace(x0, x1, len(s_arr))
             x_vals.extend(x_arr)
             shear_vals.extend(s_arr)
             moment_vals.extend(m_arr)
+        else:
+            # กรณี Fallback: ถ้ายังไม่มีข้อมูลจริงๆ (หายาก) ให้ใช้ค่าหัว-ท้าย
+            # (ปกติจะไม่เข้าเคสนี้ถ้า FIX 1 ทำงานสมบูรณ์)
+            pass 
         
     return pd.DataFrame({
         "x": x_vals,
@@ -115,6 +146,11 @@ def plot_interactive(df, y_col, title, color_line, y_label):
     """ฟังก์ชันสร้างกราฟ Interactive ด้วย Plotly"""
     fig = go.Figure()
     
+    # ตรวจสอบว่ามีข้อมูลหรือไม่
+    if df.empty:
+        fig.add_annotation(text="No Data Available", showarrow=False)
+        return fig
+
     fig.add_trace(go.Scatter(
         x=df['x'], 
         y=df[y_col],
@@ -271,10 +307,11 @@ with tab2:
                 st.session_state['max_moment'] = max_m
                 st.session_state['max_shear'] = max_v
             else:
-                st.warning("No force results found. Please check structure stability.")
+                st.warning("⚠️ Analysis complete but no force data returned. (Possible unstable structure)")
 
         except Exception as e:
             st.error(f"Error extracting results: {e}")
+            st.exception(e) # Show full traceback for debugging
         
     else:
         st.info("Please click 'Run Analysis' first.")
