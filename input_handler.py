@@ -2,11 +2,17 @@ import streamlit as st
 
 def render_sidebar():
     st.sidebar.header("⚙️ Settings")
-    code = st.sidebar.selectbox("Design Standard", ["EIT 1007 (WSD)", "EIT 1008 (SDM)", "ACI 318 (SDM)"], index=1)
+    # เพิ่ม Code ACI แยกปี
+    code = st.sidebar.selectbox("Design Code", 
+                                ["EIT 1007 (WSD)", "EIT 1008 (SDM)", "ACI 318-14 (SDM)", "ACI 318-19 (SDM)"], index=1)
     
-    def_dl = 1.0 if "WSD" in code else (1.2 if "ACI" in code else 1.4)
-    def_ll = 1.0 if "WSD" in code else (1.6 if "ACI" in code else 1.7)
-    method = "WSD" if "WSD" in code else "SDM"
+    # Auto Factors based on Code
+    if "WSD" in code:
+        def_dl, def_ll, method = 1.0, 1.0, "WSD"
+    elif "ACI" in code:
+        def_dl, def_ll, method = 1.2, 1.6, "SDM"
+    else:
+        def_dl, def_ll, method = 1.4, 1.7, "SDM" # EIT SDM
 
     st.sidebar.divider()
     c1, c2 = st.sidebar.columns(2)
@@ -20,12 +26,8 @@ def render_sidebar():
 
 def render_geometry_input():
     st.info("📍 Geometry & Supports")
-    
-    # 1. จำนวนช่วงคาน
     n = st.number_input("Number of Spans", 1, 10, 2)
-    
     spans = []
-    # 2. รับความยาวแต่ละช่วง
     cols_len = st.columns(n)
     for i, col in enumerate(cols_len):
         l = col.number_input(f"L{i+1} (m)", 0.5, 20.0, 5.0, key=f"span_len_{i}")
@@ -33,20 +35,13 @@ def render_geometry_input():
 
     st.markdown("---")
     st.caption("Select Support Types (Left to Right)")
-    
-    # 3. รับชนิดจุดรองรับ (มี n+1 จุด)
     supports = []
-    # จัด Layout ให้เรียงกันสวยๆ
     cols_sup = st.columns(n + 1)
-    support_options = ["Pin", "Roller", "Fix", "None"] # None = Cantilever end (Free)
-    
+    support_options = ["Pin", "Roller", "Fix", "None"]
     for i, col in enumerate(cols_sup):
-        # Default logic: ตัวแรก Pin, ตัวสุดท้าย Roller, ตรงกลาง Roller
-        def_idx = 0 if i==0 else 1 
-        
-        s = col.selectbox(f"Sup {i}", support_options, index=def_idx, key=f"sup_type_{i}")
+        def_idx = 0 if i==0 else (1 if i < n else 1)
+        s = col.selectbox(f"S{i}", support_options, index=def_idx, key=f"sup_type_{i}")
         supports.append(s)
-        
     return n, spans, supports
 
 def render_loads_input(n_span, spans, fdl, fll, unit_sys):
@@ -63,12 +58,11 @@ def render_loads_input(n_span, spans, fdl, fll, unit_sys):
             if w > 0: 
                 loads.append({'span_idx': i, 'type': 'Uniform', 'total_w': w, 'display_val': udl+ull})
             
-            st.markdown("---")
             if st.checkbox("Add Point Load", key=f"chk{i}"):
                 c3, c4, c5 = st.columns(3)
                 pdl = c3.number_input("P DL", 0.0, key=f"pdl{i}")
                 pll = c4.number_input("P LL", 0.0, key=f"pll{i}")
-                px = c5.number_input("Dist x (from left)", 0.0, spans[i], spans[i]/2, key=f"px{i}")
+                px = c5.number_input("Dist x", 0.0, spans[i], spans[i]/2, key=f"px{i}")
                 p = pdl*fdl + pll*fll
                 if p > 0: 
                     loads.append({'span_idx': i, 'type': 'Point', 'total_w': p, 'pos': px, 'display_val': pdl+pll})
@@ -94,7 +88,10 @@ def render_design_input(unit_sys):
     with c3:
         st.markdown("##### ⛓️ Rebar")
         m_bar = st.selectbox("Main", ["DB12", "DB16", "DB20", "DB25", "DB28"], index=1)
-        s_bar = st.selectbox("Stirrup", ["RB6", "RB9", "DB10"], index=1)
+        # เพิ่ม DB12 ในตัวเลือก Stirrup
+        s_bar = st.selectbox("Stirrup", ["RB6", "RB9", "DB10", "DB12"], index=1)
+        # เพิ่มช่องกรอกระยะ @
+        man_s = st.number_input("Manual Stirrup @ (cm) [0=Auto]", 0, 50, 0, help="ใส่ค่าเพื่อบังคับระยะแอด")
         
     st.markdown('</div>', unsafe_allow_html=True)
-    return fc, fy, b, h, cov, m_bar, s_bar
+    return fc, fy, b, h, cov, m_bar, s_bar, man_s
