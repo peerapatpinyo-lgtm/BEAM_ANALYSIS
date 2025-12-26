@@ -4,13 +4,11 @@ def calculate_rc_design(max_M, max_V, fc, fy, b, h, cov, method, unit_sys, main_
     logs = []
     
     stress_unit = "MPa" if "kN" in unit_sys else "ksc"
-    
     logs.append("### 1. Design Parameters")
     logs.append(f"- **Material:** $f'_c = {fc}$ {stress_unit}, $f_y = {fy}$ {stress_unit}")
-    # รับค่ามาเป็น cm (จาก input_handler) แต่โชว์เป็น mm ใน Log
     logs.append(f"- **Section:** $b={b*10:.0f}$ mm, $h={h*10:.0f}$ mm") 
 
-    # Convert Units for Internal Calculation (kg, cm)
+    # Convert to kg, cm for internal calculation
     if "kN" in unit_sys:
         Mu_calc = max_M * 1000 * 100 / 9.80665
         Vu_calc = max_V * 1000 / 9.80665
@@ -26,7 +24,7 @@ def calculate_rc_design(max_M, max_V, fc, fy, b, h, cov, method, unit_sys, main_
     
     result = {}
 
-    # --- A. Flexural Design ---
+    # --- Flexural ---
     logs.append("### 2. Flexural Design")
     if method == "SDM":
         phi_b = 0.9
@@ -56,7 +54,7 @@ def calculate_rc_design(max_M, max_V, fc, fy, b, h, cov, method, unit_sys, main_
         result['nb'] = nb_use
         logs.append(f"- **Use:** {nb_use} Bars ($A_s={nb_use*main_bar_area:.2f}$ cm²)")
 
-    # --- B. Shear Design ---
+    # --- Shear ---
     logs.append("### 3. Shear Design")
     if method == "SDM": 
         Vc = 0.85 * 0.53 * np.sqrt(fc_c) * b * d 
@@ -72,7 +70,6 @@ def calculate_rc_design(max_M, max_V, fc, fy, b, h, cov, method, unit_sys, main_
         else: s_req_cm = (Av * stress * d) / Vs_req
         
         logs.append(f"- $V_u > V_c$: Need Stirrups")
-        
         if manual_s > 0:
             s_use_cm = manual_s
         else:
@@ -85,7 +82,6 @@ def calculate_rc_design(max_M, max_V, fc, fy, b, h, cov, method, unit_sys, main_
         logs.append(f"- $V_u < V_c$: Min Stirrups")
         s_use_cm = manual_s if manual_s > 0 else int(d/2)
 
-    # Output mm
     s_use_mm = int(s_use_cm * 10)
     result['stirrup_text'] = f"@{s_use_mm} mm"
     result['s_value_mm'] = s_use_mm
