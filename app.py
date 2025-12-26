@@ -24,7 +24,7 @@ FACTOR_LL = 1.7
 def analyze_structure(spans_data, supports_data, loads_data):
     """
     วิเคราะห์คานโดยใช้ anaStruct (2D FEM)
-    พร้อมระบบป้องกัน Stability Error
+    พร้อมระบบป้องกัน Stability Error (แก้ไข Roller Direction)
     """
     # สร้าง System Model
     ss = SystemElements(EA=15000, EI=5000) 
@@ -36,24 +36,30 @@ def analyze_structure(spans_data, supports_data, loads_data):
         ss.add_element(location=[[start_x, 0], [end_x, 0]])
         start_x = end_x
     
-    # 2. ใส่ Supports (จุดรองรับ)
+    # 2. ตรวจสอบความเสถียร (Auto-Fix Stability)
+    # คานต้องมีจุดยึดแกน X อย่างน้อย 1 จุด (Pin หรือ Fix) ไม่งั้นคานจะไหล (Slider Mechanism)
+    has_x_restraint = any(s in ['Pin', 'Fix'] for s in supports_data)
+    
+    if not has_x_restraint:
+        # ถ้าไม่มี Pin/Fix เลย (เช่นมีแต่ Roller) ให้บังคับจุดแรกเป็น Pin
+        supports_data[0] = 'Pin'
+        st.toast("⚠️ Warning: Changed first support to 'Pin' to prevent instability.", icon="🔧")
+
+    # 3. ใส่ Supports (จุดรองรับ)
     for i, supp_type in enumerate(supports_data):
         node_id = i + 1  # Node เริ่มที่ 1
         
-        # --- Stability Guard ---
-        # ถ้า Node แรกเป็น Roller ต้องเปลี่ยนเป็น Pin เพื่อล็อคแกน X
-        if i == 0 and supp_type == 'Roller':
-            supp_type = 'Pin' 
-        # -----------------------
-
         if supp_type == 'Fix':
             ss.add_support_fixed(node_id=node_id)
         elif supp_type == 'Pin':
             ss.add_support_hinged(node_id=node_id)
         elif supp_type == 'Roller':
-            ss.add_support_roll(node_id=node_id, direction=1) 
+            # --- CRITICAL FIX ---
+            # direction=2 หมายถึง Roller วางบนพื้น (รับแรงแกน Y, ขยับแกน X ได้)
+            # ของเดิม direction=1 มันคือ Vertical Slider (ขยับแกน Y ได้) -> พัง
+            ss.add_support_roll(node_id=node_id, direction=2) 
 
-    # 3. ใส่ Loads
+    # 4. ใส่ Loads
     for load in loads_data:
         mag_dead = load['dl'] + load['sdl']
         mag_live = load['ll']
@@ -69,8 +75,14 @@ def analyze_structure(spans_data, supports_data, loads_data):
             # Fy ติดลบ = ทิศลง
             ss.point_load(node_id=None, element_id=element_id, position=load['pos'], Fy=-wu_total)
     
-    # 4. Analyze
-    ss.solve()
+    # 5. Analyze (พร้อมดัก Error)
+    try:
+        ss.solve()
+    except Exception as e:
+        if "Singular matrix" in str(e) or "eigenvalues" in str(e):
+            raise ValueError("Structure is unstable! Please check supports (must have at least one Pin/Fix).")
+        else:
+            raise e
     
     return ss
 
@@ -84,19 +96,17 @@ def get_detailed_results(ss):
     
     # --- FIX 1: Force Calculation ---
     # บังคับให้ anastruct คำนวณค่า Shear/Moment arrays โดยการเรียก plot เงียบๆ
-    # ถ้าไม่ทำขั้นตอนนี้ ตัวแปร .shear และ .moment จะไม่มีอยู่จริงใน object
     try:
         fig_dummy = plt.figure()
-        ss.show_shear_force(show=False)       # Trigger calculation
-        ss.show_bending_moment(show=False)    # Trigger calculation
+        ss.show_shear_force(show=False)       
+        ss.show_bending_moment(show=False)    
         plt.close(fig_dummy)
         plt.close('all')
     except Exception:
-        pass # ปล่อยผ่านหากมี error เรื่องกราฟฟิก แต่ค่ามักจะถูกคำนวณแล้ว
+        pass 
 
-    # --- Helper: ดึงค่า X แบบปลอดภัย (กัน Error เรื่องชื่อตัวแปร) ---
+    # --- Helper: ดึงค่า X แบบปลอดภัย ---
     def get_x(vertex):
-        # ลองดึงหลายๆ ชื่อเผื่อ version ต่างกัน
         if hasattr(vertex, 'coordinates'): return vertex.coordinates[0]
         if hasattr(vertex, 'loc'): return vertex.loc[0]
         if hasattr(vertex, 'coords'): return vertex.coords[0]
@@ -109,7 +119,6 @@ def get_detailed_results(ss):
             key=lambda e: get_x(e.vertex_1)
         )
     except:
-        # Fallback กรณี access vertex ไม่ได้ ให้ใช้ index ธรรมดา
         sorted_elements = ss.element_map.values()
 
     for el in sorted_elements:
@@ -117,7 +126,6 @@ def get_detailed_results(ss):
         x1 = get_x(el.vertex_2)
         
         # --- FIX 2: Safe Attribute Access ---
-        # ตรวจสอบว่ามีค่า .shear หรือไม่ ถ้าไม่มีให้ใส่ list ว่างป้องกัน Crash
         s_arr = getattr(el, 'shear', [])
         m_arr = getattr(el, 'moment', [])
         
@@ -125,16 +133,11 @@ def get_detailed_results(ss):
         s_arr = np.array(s_arr).flatten() if s_arr is not None else np.array([])
         m_arr = np.array(m_arr).flatten() if m_arr is not None else np.array([])
         
-        # ถ้ามีข้อมูล ให้สร้าง array ระยะ x ที่สัมพันธ์กัน
         if len(s_arr) > 0:
             x_arr = np.linspace(x0, x1, len(s_arr))
             x_vals.extend(x_arr)
             shear_vals.extend(s_arr)
             moment_vals.extend(m_arr)
-        else:
-            # กรณี Fallback: ถ้ายังไม่มีข้อมูลจริงๆ (หายาก) ให้ใช้ค่าหัว-ท้าย
-            # (ปกติจะไม่เข้าเคสนี้ถ้า FIX 1 ทำงานสมบูรณ์)
-            pass 
         
     return pd.DataFrame({
         "x": x_vals,
@@ -146,7 +149,6 @@ def plot_interactive(df, y_col, title, color_line, y_label):
     """ฟังก์ชันสร้างกราฟ Interactive ด้วย Plotly"""
     fig = go.Figure()
     
-    # ตรวจสอบว่ามีข้อมูลหรือไม่
     if df.empty:
         fig.add_annotation(text="No Data Available", showarrow=False)
         return fig
@@ -271,10 +273,11 @@ if analyze_btn:
         st.session_state['ss_model'] = analyze_structure(spans, supports, loads)
     except Exception as e:
         st.error(f"Analysis Error: {e}")
+        st.session_state['analyzed'] = False
 
 # --- TAB 2: ANALYSIS ---
 with tab2:
-    if 'analyzed' in st.session_state and 'ss_model' in st.session_state:
+    if st.session_state.get('analyzed') and 'ss_model' in st.session_state:
         ss = st.session_state['ss_model']
         st.header("📊 Interactive Results")
         
@@ -311,7 +314,6 @@ with tab2:
 
         except Exception as e:
             st.error(f"Error extracting results: {e}")
-            st.exception(e) # Show full traceback for debugging
         
     else:
         st.info("Please click 'Run Analysis' first.")
