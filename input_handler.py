@@ -3,11 +3,9 @@ import streamlit as st
 def render_sidebar():
     st.sidebar.header("⚙️ Design Code & Safety")
     
-    # 1. Code Selection
     design_code = st.sidebar.selectbox("Design Code", ["EIT Standard (WSD)", "ACI 318 (SDM)"])
     method = "SDM" if "ACI" in design_code else "WSD"
     
-    # 2. Safety Factors
     st.sidebar.markdown("### 🛡️ Load Factors")
     default_dl = 1.4 if method == "SDM" else 1.0
     default_ll = 1.7 if method == "SDM" else 1.0
@@ -18,9 +16,7 @@ def render_sidebar():
     if method == "WSD":
         st.sidebar.caption("Note: Standard WSD uses factor 1.0")
 
-    # 3. Unit System
     unit_sys = st.sidebar.selectbox("Unit System", ["Metric (kg, m)", "SI (kN, m)"])
-    
     return design_code, method, fact_dl, fact_ll, unit_sys
 
 def render_geometry_input():
@@ -65,30 +61,26 @@ def render_loads_input(n_span, spans, f_dl, f_ll, unit_sys):
 def render_design_input(unit_sys):
     st.markdown("### 🏗️ Design Parameters")
     
-    # Material
     c1, c2 = st.columns(2)
     u_str = "MPa" if "kN" in unit_sys else "ksc"
     fc = c1.number_input(f"Concrete f'c ({u_str})", value=240)
     fy = c2.number_input(f"Steel fy ({u_str})", value=4000)
     
     st.markdown("---")
-    # Section Properties (Input mm)
     c3, c4, c5 = st.columns(3)
     b_mm = c3.number_input("Width b (mm)", value=250, step=50)
     h_mm = c4.number_input("Depth h (mm)", value=500, step=50)
     cov_mm = c5.number_input("Covering (mm)", value=25, step=5)
     
-    # Rebar Selection
     st.markdown("---")
     c6, c7, c8 = st.columns(3)
     main_bar = c6.selectbox("Main Bar Size", ["DB12", "DB16", "DB20", "DB25", "DB28"], index=1)
     stir_bar = c7.selectbox("Stirrup Size", ["RB6", "RB9", "DB10", "DB12"], index=0)
     
-    # FIX: Input เป็น mm แล้วหาร 10 ส่งค่าเป็น cm ไปคำนวณ
+    # Input mm -> Convert to cm for calculation
     manual_s_mm = c8.number_input("Manual Stirrup Spacing (mm) [0=Auto]", value=0, help="ใส่ 0 เพื่อให้คำนวณอัตโนมัติ")
     manual_s_cm = manual_s_mm / 10.0
 
-    # แปลง Section เป็น cm ส่งไปคำนวณ
     b_cm = b_mm / 10.0
     h_cm = h_mm / 10.0
     cov_cm = cov_mm / 10.0
