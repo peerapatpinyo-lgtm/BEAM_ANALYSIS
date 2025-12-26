@@ -5,11 +5,11 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import base64
 
-# --- IMPORT ENGINE ---
+# --- MOCK ENGINE (กรณีไม่มีไฟล์ beam_engine.py) ---
+# เพื่อให้ Code รันได้ทันทีโดยไม่ Error
 try:
     from beam_engine import SimpleBeamSolver
 except ImportError:
-    # MOCK ENGINE สำหรับกรณีไม่มีไฟล์ (เพื่อให้รันโชว์ UI ได้)
     class SimpleBeamSolver:
         def __init__(self, spans, supports, loads):
             self.spans = spans
@@ -17,359 +17,399 @@ except ImportError:
         def solve(self):
             return None, None
         def get_internal_forces(self, n):
-            x = np.linspace(0, sum(self.spans), n)
-            # Create dummy parabola moment and linear shear
             L = sum(self.spans)
+            x = np.linspace(0, L, n)
+            # สร้างกราฟจำลอง (Sine wave + Linear)
             return pd.DataFrame({
                 'x': x,
-                'shear': 1000 * (1 - 2*x/L), # Dummy
-                'moment': 5000 * (x/L) * (1 - x/L) # Dummy
+                'shear': 15 * np.cos(x) * (1 - x/L), 
+                'moment': 30 * np.sin(x) * x
             })
 
 # ==========================================
-# 🛡️ 0. SESSION STATE INITIALIZATION
+# ⚙️ CONFIG & STYLES
 # ==========================================
-if 'analyzed' not in st.session_state:
-    st.session_state['analyzed'] = False
-if 'res_df' not in st.session_state:
-    st.session_state['res_df'] = None
-if 'inputs' not in st.session_state:
-    st.session_state['inputs'] = None
-
-# ==========================================
-# 🎨 1. SETTINGS & STYLES
-# ==========================================
-st.set_page_config(page_title="RC Beam Pro V.17.2", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="RC Beam Pro V.18 (Clean UI)", layout="wide", page_icon="🏗️")
 
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');
     html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
     
-    .header-box { background: linear-gradient(90deg, #1565C0 0%, #0D47A1 100%); padding: 15px; border-radius: 8px; color: white; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .report-card { background-color: #ffffff; border: 2px solid #e0e0e0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-    .stMetric { background-color: #e3f2fd; padding: 10px; border-radius: 5px; border: 1px solid #90caf9; }
-    hr { margin: 1.5rem 0; border-top: 2px solid #bbb; }
+    /* Headers */
+    .main-header { 
+        background-color: #1E88E5; color: white; padding: 15px; 
+        border-radius: 10px; text-align: center; margin-bottom: 20px; 
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    }
+    .section-header {
+        font-size: 1.2rem; font-weight: bold; color: #1565C0;
+        border-bottom: 2px solid #1565C0; padding-bottom: 5px; margin-top: 30px; margin-bottom: 15px;
+    }
+    
+    /* Input Cards */
+    .input-card { background-color: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #ddd; margin-bottom: 10px; }
+    
+    /* Result Box */
+    .design-box { 
+        background-color: #e3f2fd; border: 2px solid #2196F3; 
+        padding: 20px; border-radius: 10px; margin-top: 20px; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 🛠️ 2. FUNCTIONS
+# 🛠️ HELPER FUNCTIONS
 # ==========================================
 
-def get_code_params(code_name):
-    if "WSD" in code_name:
-        return {"type": "WSD", "DL": 1.0, "LL": 1.0, "phi_b": 1.0, "phi_v": 1.0}
-    elif "ACI 318" in code_name:
-        return {"type": "SDM", "DL": 1.2, "LL": 1.6, "phi_b": 0.90, "phi_v": 0.75}
-    else: # EIT SDM
-        return {"type": "SDM", "DL": 1.4, "LL": 1.7, "phi_b": 0.90, "phi_v": 0.85}
+def get_default_factors(code_name):
+    if "WSD" in code_name: return 1.0, 1.0, "WSD"
+    elif "ACI" in code_name: return 1.2, 1.6, "SDM"
+    else: return 1.4, 1.7, "SDM" # EIT SDM
 
-def draw_section_view(b, h, cover, n_bars, bar_dia_mm, stirrup_dia_mm):
-    """ฟังก์ชันวาดหน้าตัดคานด้วย Plotly"""
-    fig = go.Figure()
-
-    # 1. Concrete Face (สีเทา)
-    fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, 
-                  line=dict(color="Black", width=2), fillcolor="#E0E0E0")
-
-    # 2. Stirrup (เหล็กปลอก - สีแดง)
-    s_inset = cover
-    fig.add_shape(type="rect", x0=s_inset, y0=s_inset, x1=b-s_inset, y1=h-s_inset,
-                  line=dict(color="#D32F2F", width=3))
-
-    # 3. Main Bars (เหล็กแกน - สีน้ำเงิน)
-    # คำนวณตำแหน่ง X ของเหล็กแต่ละเส้น
-    eff_width = b - 2*cover - 2*(stirrup_dia_mm/10) - (bar_dia_mm/10)
+def draw_beam_diagram(spans, supports, loads, unit_load="kg/m", unit_force="kg"):
+    """ สร้างกราฟแสดงโมเดลคานที่สวยงามและมีตัวเลขชัดเจน """
+    total_len = sum(spans)
+    cum_len = [0] + list(np.cumsum(spans))
     
-    if n_bars > 1:
-        spacing = eff_width / (n_bars - 1)
-        x_positions = [cover + (stirrup_dia_mm/10) + (bar_dia_mm/20) + i*spacing for i in range(n_bars)]
-    else:
-        x_positions = [b/2] # กรณี 1 เส้น (ไม่ควรเกิด)
-
-    y_pos = cover + (stirrup_dia_mm/10) + (bar_dia_mm/20)
-
+    fig = go.Figure()
+    
+    # 1. เส้นคานหลัก
     fig.add_trace(go.Scatter(
-        x=x_positions, 
-        y=[y_pos]*n_bars,
-        mode='markers',
-        marker=dict(size=bar_dia_mm*1.2, color='#1565C0', line=dict(width=1, color='Black')),
-        name='Main Bar'
+        x=[0, total_len], y=[0, 0], 
+        mode='lines', line=dict(color='black', width=5), 
+        hoverinfo='skip'
     ))
 
-    # Decoration
+    # 2. จุดรองรับ (Supports)
+    for i, s_type in enumerate(supports):
+        sx = cum_len[i]
+        symbol = "triangle-up" if s_type != "Fix" else "square"
+        color = "#388E3C" if s_type != "Fix" else "#D32F2F"
+        fig.add_trace(go.Scatter(
+            x=[sx], y=[-0.02], mode='markers+text',
+            marker=dict(symbol=symbol, size=15, color=color),
+            text=[s_type], textposition="bottom center",
+            hoverinfo='none', showlegend=False
+        ))
+
+    # 3. โหลด (Loads) & Annotations
+    max_load_h = 0.2
+    
+    for load in loads:
+        start_x = cum_len[load['span_idx']]
+        val = load['display_val'] # Unfactored value for display
+        
+        if load['type'] == 'Uniform':
+            end_x = start_x + spans[load['span_idx']]
+            # วาดสี่เหลี่ยมแทน UDL
+            fig.add_shape(type="rect", x0=start_x, y0=0, x1=end_x, y1=max_load_h,
+                          line=dict(width=0), fillcolor="rgba(255, 69, 0, 0.2)")
+            # เส้นขอบบน
+            fig.add_trace(go.Scatter(
+                x=[start_x, end_x], y=[max_load_h, max_load_h],
+                mode='lines', line=dict(color='orangered', width=2), showlegend=False
+            ))
+            # Text Label
+            fig.add_annotation(
+                x=(start_x+end_x)/2, y=max_load_h+0.05,
+                text=f"w = {val} {unit_load}", showarrow=False,
+                font=dict(color="orangered", size=12)
+            )
+
+        elif load['type'] == 'Point':
+            lx = start_x + load['pos']
+            # วาดลูกศร
+            fig.add_annotation(
+                x=lx, y=0, ax=0, ay=-40,
+                text=f"P = {val} {unit_force}",
+                showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor="red"
+            )
+
+    # 4. Dimension Lines (บอกระยะ Span)
+    for i, span in enumerate(spans):
+        mid_x = cum_len[i] + span/2
+        fig.add_annotation(
+            x=mid_x, y=-0.15, text=f"{span:.2f} m",
+            showarrow=False, font=dict(size=14, color="blue")
+        )
+        # เส้นกั้นช่วง
+        fig.add_shape(type="line", x0=cum_len[i], y0=-0.1, x1=cum_len[i], y1=-0.2, line=dict(color="gray", dash="dot"))
+        fig.add_shape(type="line", x0=cum_len[i+1], y0=-0.1, x1=cum_len[i+1], y1=-0.2, line=dict(color="gray", dash="dot"))
+
     fig.update_layout(
-        width=300, height=300 * (h/b) if b>0 else 300,
-        xaxis=dict(visible=False, range=[-5, b+5]),
-        yaxis=dict(visible=False, range=[-5, h+5]),
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor='rgba(0,0,0,0)',
-        showlegend=False
+        title="Beam Model & Loads",
+        height=300,
+        yaxis=dict(visible=False, range=[-0.3, 0.5]),
+        xaxis=dict(title="Distance (m)", showgrid=True),
+        margin=dict(l=20, r=20, t=40, b=20),
+        plot_bgcolor='white'
     )
     return fig
 
-def generate_report_html(project_data, res_data):
-    # (ใช้ HTML Template เดิมของคุณ แต่เพิ่มส่วน Section View เล็กน้อยถ้าต้องการ)
-    # เพื่อความกระชับ ขอใช้ Code เดิมของคุณในส่วนนี้
-    html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap" rel="stylesheet">
-        <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-        <style>
-            body {{ font-family: 'Sarabun', sans-serif; padding: 40px; }}
-            .head {{ text-align: center; border: 2px solid #000; padding: 15px; margin-bottom: 20px; }}
-            table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
-            th, td {{ border: 1px solid #000; padding: 8px; text-align: center; }}
-            th {{ background-color: #f0f0f0; }}
-            .footer {{ margin-top: 50px; text-align: center; font-size: 10px; }}
-        </style>
-    </head>
-    <body>
-        <div class="head">
-            <h2>📄 รายการคำนวณออกแบบคาน (RC Beam Design)</h2>
-            <p>Code: {project_data['code']} | Method: {project_data['method']}</p>
-        </div>
+def draw_section_view(b, h, cover, n_bars, bar_dia_mm, stirrup_dia_mm):
+    """ วาดรูปหน้าตัดคาน """
+    fig = go.Figure()
+    # Concrete
+    fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=2), fillcolor="#eeeeee")
+    # Stirrup
+    inset = cover
+    fig.add_shape(type="rect", x0=inset, y0=inset, x1=b-inset, y1=h-inset, line=dict(color="red", width=2))
+    # Main Bars
+    if n_bars > 0:
+        eff_w = b - 2*cover - 2*(stirrup_dia_mm/10) - (bar_dia_mm/10)
+        gap = eff_w / (n_bars - 1) if n_bars > 1 else 0
+        y_pos = cover + (stirrup_dia_mm/10) + (bar_dia_mm/20)
         
-        <h3>1. Design Criteria</h3>
-        <table>
-            <tr><th>Parameter</th><th>Value</th></tr>
-            <tr><td>Concrete (fc')</td><td>{project_data['fc']} ksc</td></tr>
-            <tr><td>Steel (fy)</td><td>{project_data['fy']} ksc</td></tr>
-            <tr><td>Size</td><td>{res_data['b']} x {res_data['h']} cm</td></tr>
-        </table>
+        x_list = []
+        start_x = cover + (stirrup_dia_mm/10) + (bar_dia_mm/20)
+        for i in range(n_bars):
+            x_list.append(start_x + i*gap)
+            
+        fig.add_trace(go.Scatter(
+            x=x_list, y=[y_pos]*n_bars, mode='markers',
+            marker=dict(size=bar_dia_mm, color='blue', line=dict(width=1, color='black'))
+        ))
 
-        <h3>2. Analysis & Design Results</h3>
-        <table>
-            <tr><th>Item</th><th>Result</th></tr>
-            <tr><td>Max Moment (Mu)</td><td>{res_data['Mu']:.2f} {res_data['u_m']}</td></tr>
-            <tr><td>Req. Area (As)</td><td>{res_data['As_req']:.2f} cm²</td></tr>
-            <tr><td><b>Selected Main Bar</b></td><td><b>{res_data['main_bar']}</b></td></tr>
-            <tr><td><b>Selected Stirrup</b></td><td><b>{res_data['stirrup']}</b></td></tr>
-        </table>
-        
-        <div class="footer">Generated by RC Beam Pro V.17.2</div>
-    </body>
-    </html>
-    """
-    return html
+    fig.update_layout(
+        width=250, height=250*(h/b) if b>0 else 250,
+        xaxis=dict(visible=False, range=[-5, b+5]),
+        yaxis=dict(visible=False, range=[-5, h+5]),
+        margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor='rgba(0,0,0,0)', showlegend=False
+    )
+    return fig
 
 # ==========================================
-# 🖥️ MAIN UI
+# 🖥️ MAIN APPLICATION
 # ==========================================
 
-st.markdown('<div class="header-box"><h2>🏗️ RC Beam Pro V.17.2 (With Section View)</h2></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h2>🏗️ RC Beam Pro V.18 (Engineering Suite)</h2></div>', unsafe_allow_html=True)
 
-# --- SIDEBAR ---
+# ------------------------------------------
+# PART 1: SETTINGS & INPUTS
+# ------------------------------------------
 with st.sidebar:
-    st.header("⚙️ Project Settings")
-    code_options = ["EIT 1007 (WSD)", "EIT 1008 (SDM Thai)", "ACI 318-25 (SDM)"]
-    design_code = st.selectbox("Design Standard", code_options, index=1)
-    params = get_code_params(design_code)
-    is_wsd = params['type'] == "WSD"
+    st.header("⚙️ Settings")
     
-    st.info(f"Method: **{params['type']}**\n\nLoad Factors: {params['DL']}DL + {params['LL']}LL")
+    # 1. Code Selection
+    design_code = st.selectbox("Design Standard", ["EIT 1007 (WSD)", "EIT 1008 (SDM)", "ACI 318 (SDM)"], index=1)
+    def_dl, def_ll, method = get_default_factors(design_code)
     
     st.divider()
-    unit_sys = st.radio("System of Units", ["SI (kN, m, MPa)", "MKS (kg, m, ksc)"], index=1)
+    st.markdown("**Load Factors (Editable)**")
+    col_f1, col_f2 = st.columns(2)
+    fact_dl = col_f1.number_input("DL Factor", value=def_dl, step=0.1)
+    fact_ll = col_f2.number_input("LL Factor", value=def_ll, step=0.1)
+    
+    st.divider()
+    unit_sys = st.radio("Units", ["MKS (kg, m)", "SI (kN, m)"], index=0)
+    
     if "kN" in unit_sys:
-        U_F, U_L, U_M = "kN", "kN/m", "kN-m"
+        U_L, U_M, U_F = "kN/m", "kN-m", "kN"
         TO_N, FROM_N = 1000.0, 0.001
     else:
-        U_F, U_L, U_M = "kg", "kg/m", "kg-m"
+        U_L, U_M, U_F = "kg/m", "kg-m", "kg"
         TO_N, FROM_N = 9.80665, 1/9.80665
 
-# --- INPUT SECTION ---
-with st.expander("📝 1. Structure & Loading Inputs", expanded=True):
-    col_geo, col_load = st.columns([1, 1.2])
-    
-    with col_geo:
-        st.subheader("Geometry")
-        n_span = st.number_input("Number of Spans", 1, 6, 2)
-        spans, supports = [], []
-        
-        c_sup_start, c_sup_end = st.columns(2)
-        sup_start = c_sup_start.selectbox("Left Support", ["Pin", "Roller", "Fix"], key="s_start")
-        sup_end_val = c_sup_end.selectbox("Right Support", ["Pin", "Roller", "Fix"], index=1, key="s_end")
-        
-        supports.append(sup_start)
-        for i in range(n_span):
-            l = st.number_input(f"Span {i+1} Length (m)", 0.5, 30.0, 4.0, key=f"L{i}")
-            spans.append(l)
-            if i < n_span - 1:
-                supports.append("Roller")
-        supports.append(sup_end_val)
-        
-    with col_load:
-        st.subheader("Loads (Service)")
-        loads_input = []
-        tabs_spans = st.tabs([f"Span {i+1}" for i in range(n_span)])
-        
-        for i, tab in enumerate(tabs_spans):
-            with tab:
-                c1, c2 = st.columns(2)
-                udl = c1.number_input(f"Uniform DL ({U_L})", 0.0, key=f"udl{i}")
-                ull = c2.number_input(f"Uniform LL ({U_L})", 0.0, key=f"ull{i}")
-                
-                w_factored = udl*params['DL'] + ull*params['LL']
-                if w_factored > 0:
-                    loads_input.append({'span_idx': i, 'type': 'Uniform', 'total_w': w_factored*TO_N, 'display_val': w_factored})
-                
-                if st.checkbox(f"Add Point Load?", key=f"chk{i}"):
-                    cp1, cp2, cp3 = st.columns(3)
-                    p_dl = cp1.number_input("P DL", 0.0, key=f"pdl{i}")
-                    p_ll = cp2.number_input("P LL", 0.0, key=f"pll{i}")
-                    x_p = cp3.number_input("Dist (m)", 0.0, spans[i], spans[i]/2, key=f"xp{i}")
-                    
-                    p_factored = p_dl*params['DL'] + p_ll*params['LL']
-                    if p_factored > 0:
-                        loads_input.append({'span_idx': i, 'type': 'Point', 'total_w': p_factored*TO_N, 'pos': x_p, 'display_val': p_factored})
+# --- INPUT AREA ---
+st.markdown('<div class="section-header">1️⃣ Structure & Loads (ระบุโครงสร้างและน้ำหนักบรรทุก)</div>', unsafe_allow_html=True)
 
-if st.button("🚀 Analyze & Design", type="primary", use_container_width=True):
-    solver = SimpleBeamSolver(spans, supports, loads_input)
-    u, err = solver.solve()
-    if err:
-        st.error(err)
-    else:
-        df = solver.get_internal_forces(100)
-        df['V_disp'] = df['shear'] * FROM_N
-        df['M_disp'] = df['moment'] * FROM_N
-        st.session_state['res_df'] = df
-        st.session_state['inputs'] = (spans, supports, loads_input)
-        st.session_state['analyzed'] = True
-        st.rerun()
+col_geo, col_loads = st.columns([1, 1.5])
 
-# ==========================================
-# 📊 3. DASHBOARD
-# ==========================================
-if st.session_state.get('analyzed', False) and st.session_state.get('res_df') is not None:
-    df = st.session_state['res_df']
-    spans, supports, loads_input = st.session_state['inputs']
+with col_geo:
+    st.info("📍 Geometry (รูปทรง)")
+    n_span = st.number_input("จำนวนช่วงคาน (Spans)", 1, 5, 2)
+    spans = []
+    supports = []
     
-    st.divider()
-    col_graph, col_design = st.columns([1.5, 1])
+    c_sup_L, c_sup_R = st.columns(2)
+    sup_L = c_sup_L.selectbox("Left Support", ["Pin", "Roller", "Fix"], key="SL")
+    sup_R = c_sup_R.selectbox("Right Support", ["Pin", "Roller", "Fix"], index=1, key="SR")
     
-    # --- GRAPHS ---
-    with col_graph:
-        st.subheader("📊 Structural Analysis")
-        total_len = sum(spans)
-        cum_len = [0] + list(np.cumsum(spans))
-        
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, subplot_titles=(f"Shear ({U_F})", f"Moment ({U_M})"))
-        
-        # SFD
-        fig.add_trace(go.Scatter(x=df['x'], y=df['V_disp'], fill='tozeroy', line=dict(color='#D32F2F'), name="Shear"), row=1, col=1)
-        # BMD
-        fig.add_trace(go.Scatter(x=df['x'], y=df['M_disp'], fill='tozeroy', line=dict(color='#1976D2'), name="Moment"), row=2, col=1)
-        
-        fig.update_layout(height=500, showlegend=False)
-        fig.update_yaxes(autorange="reversed", row=2, col=1)
-        st.plotly_chart(fig, use_container_width=True)
+    supports.append(sup_L)
+    for i in range(n_span):
+        l = st.number_input(f"ความยาวช่วงที่ {i+1} (m)", 1.0, 20.0, 4.0, key=f"L{i}")
+        spans.append(l)
+        if i < n_span-1: supports.append("Roller")
+    supports.append(sup_R)
 
-    # --- DESIGN ---
-    with col_design:
-        st.markdown('<div class="report-card">', unsafe_allow_html=True)
-        st.subheader(f"🛠️ Part Design: Section")
-        
-        c_mat1, c_mat2 = st.columns(2)
-        fc = c_mat1.number_input("f'c (ksc)", value=240.0)
-        fy = c_mat2.number_input("fy (ksc)", value=4000.0 if not is_wsd else 3000.0)
-        
-        c_sec1, c_sec2, c_sec3 = st.columns(3)
-        b = c_sec1.number_input("b (cm)", value=25.0)
-        h = c_sec2.number_input("h (cm)", value=50.0)
-        cover = c_sec3.number_input("Cov (cm)", value=3.0)
-        
-        # Bar Selection
-        bar_map = {'DB12':1.13, 'DB16':2.01, 'DB20':3.14, 'DB25':4.91}
-        bar_dia_map = {'DB12':12, 'DB16':16, 'DB20':20, 'DB25':25}
-        
-        main_bar = st.selectbox("Main Bar", list(bar_map.keys()), index=2)
-        
-        stir_map = {'RB6':0.28, 'RB9':0.64, 'DB10':0.78}
-        stir_dia_map = {'RB6':6, 'RB9':9, 'DB10':10}
-        stirrup = st.selectbox("Stirrup", list(stir_map.keys()), index=1)
-        
-        # --- CALCULATION LOGIC ---
-        Mu = df['M_disp'].abs().max()
-        Vu = df['V_disp'].abs().max()
-        
-        # Unit Conversion to kg, cm
-        if "kN" in unit_sys:
-            Mu_kgm, Vu_kg = Mu * 101.97, Vu * 101.97
-        else:
-            Mu_kgm, Vu_kg = Mu, Vu
+with col_loads:
+    st.info(f"⬇️ Loads (น้ำหนักบรรทุก - {unit_sys})")
+    loads_input = []
+    tabs = st.tabs([f"Span {i+1}" for i in range(n_span)])
+    
+    for i, tab in enumerate(tabs):
+        with tab:
+            st.markdown(f"**Load on Span {i+1}**")
+            c1, c2 = st.columns(2)
+            udl = c1.number_input(f"Uniform DL ({U_L})", 0.0, key=f"udl{i}")
+            ull = c2.number_input(f"Uniform LL ({U_L})", 0.0, key=f"ull{i}")
             
-        fc_ksc, fy_ksc = fc, fy
-        d = h - cover - 1.0 # approx effective depth
-        
-        # 1. Flexure Design
-        if is_wsd:
-             # WSD Approx
-             As_req = (Mu_kgm * 100) / (0.875 * fy_ksc * d) # Using j approx 0.875
-        else:
-             # SDM
-             phi_b = params['phi_b']
-             Mu_kgcm = Mu_kgm * 100
-             Rn = Mu_kgcm / (phi_b * b * d**2)
-             rho = (0.85*fc_ksc/fy_ksc) * (1 - np.sqrt(1 - (2*Rn)/(0.85*fc_ksc))) if (1 - (2*Rn)/(0.85*fc_ksc)) >= 0 else 999
-             As_req = rho * b * d
-             if As_req == 999: st.error("Section too small!")
+            # Factored Calculation
+            w_total = udl*fact_dl + ull*fact_ll
+            if w_total > 0:
+                loads_input.append({'span_idx': i, 'type': 'Uniform', 'total_w': w_total*TO_N, 'display_val': udl+ull})
+            
+            st.markdown("---")
+            if st.checkbox("เพิ่ม Point Load", key=f"chk{i}"):
+                c3, c4, c5 = st.columns(3)
+                pdl = c3.number_input("P DL", 0.0, key=f"pdl{i}")
+                pll = c4.number_input("P LL", 0.0, key=f"pll{i}")
+                px = c5.number_input("ระยะ x (m)", 0.0, spans[i], spans[i]/2, key=f"px{i}")
+                
+                p_total = pdl*fact_dl + pll*fact_ll
+                if p_total > 0:
+                    loads_input.append({'span_idx': i, 'type': 'Point', 'total_w': p_total*TO_N, 'pos': px, 'display_val': pdl+pll})
 
-        nb = max(2, int(np.ceil(As_req / bar_map[main_bar])))
-        
-        # 2. Shear Design (More Detailed)
-        phi_v = params['phi_v']
-        Vc = 0.53 * np.sqrt(fc_ksc) * b * d # SDM Formula
-        Vs_req = (Vu_kg / phi_v) - Vc
-        
-        if Vs_req <= 0:
-            s_req = d/2
-            shear_status = "Min Reinf."
-        else:
-            Av = 2 * stir_map[stirrup] # 2 legs
-            s_req = (Av * fy_ksc * d) / Vs_req
-            shear_status = "Designed"
-        
-        # Check Max Spacing
-        s_max = min(d/2, 60) # Simplified
-        s_final = min(s_req, s_max)
-        s_final_int = int(5 * round(s_final/5)) # Round to nearest 5
-        if s_final_int == 0: s_final_int = 5
+# ------------------------------------------
+# PART 2: ANALYSIS
+# ------------------------------------------
+st.markdown('<div class="section-header">2️⃣ Structural Analysis (วิเคราะห์โครงสร้าง)</div>', unsafe_allow_html=True)
 
-        # --- DISPLAY RESULTS ---
-        st.markdown("---")
-        st.success("✅ Design PASSED")
-        
-        # Metrics
-        col_res1, col_res2 = st.columns(2)
-        col_res1.metric("Top/Bot Steel", f"{nb}-{main_bar}")
-        col_res2.metric("Stirrups", f"{stirrup} @ {s_final_int} cm", delta=shear_status)
-        
-        # Section Visualization
-        st.markdown("##### 📐 Section View")
-        fig_sec = draw_section_view(b, h, cover, nb, bar_dia_map[main_bar], stir_dia_map[stirrup])
-        st.plotly_chart(fig_sec, use_container_width=True, config={'displayModeBar': False})
-        
-        # Deflection Check (L/d)
-        L_max = max(spans) * 100 # cm
-        min_h = L_max / 16 # Approx for simple support
-        st.caption(f"ℹ️ Check Deflection: h provided ({h} cm) vs L/16 ({min_h:.1f} cm)")
-        if h < min_h:
-            st.warning("⚠️ Beam might be too shallow (Large Deflection).")
+if st.button("🚀 Calculate Analysis", type="primary", use_container_width=True):
+    # 1. Draw Beam Diagram
+    fig_beam = draw_beam_diagram(spans, supports, loads_input, U_L, U_F)
+    st.plotly_chart(fig_beam, use_container_width=True)
+    
+    # 2. Solve
+    solver = SimpleBeamSolver(spans, supports, loads_input)
+    u, err = solver.solve() # Mock doesn't use u
+    
+    # 3. Get Results
+    df = solver.get_internal_forces(100)
+    
+    # Convert units back for display
+    df['V_show'] = df['shear'] * FROM_N
+    df['M_show'] = df['moment'] * FROM_N
+    
+    st.session_state['res_df'] = df
+    st.session_state['analyzed'] = True
 
-        # Report Generation
-        project_data = {'code': design_code, 'method': params['type'], 'fc': fc, 'fy': fy}
-        res_data = {
-            'b':b, 'h':h, 'Mu':Mu, 'Vu':Vu, 'u_m':U_M, 'u_f':U_F, 
-            'As_req': As_req, 'nb': nb, 
-            'main_bar': f"{nb}-{main_bar}", 'stirrup': f"{stirrup}@{s_final_int}cm"
-        }
+# Show Graphs if analyzed
+if st.session_state.get('analyzed', False):
+    df = st.session_state['res_df']
+    
+    col_res1, col_res2 = st.columns(2)
+    max_M = df['M_show'].abs().max()
+    max_V = df['V_show'].abs().max()
+    
+    col_res1.metric(f"Max Moment (Mu)", f"{max_M:.2f} {U_M}")
+    col_res2.metric(f"Max Shear (Vu)", f"{max_V:.2f} {U_F}")
+
+    # Plot SFD & BMD
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1, 
+                        subplot_titles=(f"Shear Diagram ({U_F})", f"Moment Diagram ({U_M})"))
+    
+    fig.add_trace(go.Scatter(x=df['x'], y=df['V_show'], fill='tozeroy', line=dict(color='#E53935'), name="V"), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['M_show'], fill='tozeroy', line=dict(color='#1E88E5'), name="M"), row=2, col=1)
+    
+    fig.update_layout(height=500, showlegend=False, hovermode="x unified")
+    fig.update_yaxes(autorange="reversed", row=2, col=1) # Flip Moment
+    st.plotly_chart(fig, use_container_width=True)
+
+# ------------------------------------------
+# PART 3: DESIGN (แยกส่วนชัดเจน)
+# ------------------------------------------
+st.markdown("---")
+st.markdown('<div class="section-header">3️⃣ Part Design (ออกแบบหน้าตัดคอนกรีตเสริมเหล็ก)</div>', unsafe_allow_html=True)
+
+if st.session_state.get('analyzed', False):
+    
+    # Container for Design to make it distinct
+    with st.container():
+        st.markdown('<div class="input-card">', unsafe_allow_html=True)
         
-        html = generate_report_html(project_data, res_data)
-        b64 = base64.b64encode(html.encode()).decode()
-        st.markdown(f'<a href="data:text/html;base64,{b64}" target="_blank" style="text-decoration:none; color:white; background-color:#D32F2F; padding:10px; border-radius:5px; display:block; text-align:center;">🖨️ Print Report</a>', unsafe_allow_html=True)
+        # Design Inputs
+        c_d1, c_d2, c_d3 = st.columns([1, 1, 1.5])
         
+        with c_d1:
+            st.markdown("##### 🧱 Material")
+            fc = st.number_input("f'c (ksc)", value=240.0)
+            fy = st.number_input("fy (ksc)", value=4000.0)
+            
+        with c_d2:
+            st.markdown("##### 📏 Section Size")
+            b = st.number_input("Width b (cm)", value=25.0)
+            h = st.number_input("Depth h (cm)", value=50.0)
+            cov = st.number_input("Cover (cm)", value=3.0)
+            
+        with c_d3:
+            st.markdown("##### ⛓️ Rebar Spec")
+            main_bar = st.selectbox("Main Bar", ["DB12", "DB16", "DB20", "DB25"], index=2)
+            stirrup = st.selectbox("Stirrup", ["RB6", "RB9", "DB10"], index=1)
+            
+            bar_areas = {'DB12':1.13, 'DB16':2.01, 'DB20':3.14, 'DB25':4.91}
+            bar_dias = {'DB12':12, 'DB16':16, 'DB20':20, 'DB25':25}
+            stir_areas = {'RB6':0.28, 'RB9':0.64, 'DB10':0.78}
+            stir_dias = {'RB6':6, 'RB9':9, 'DB10':10}
+
         st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- CALCULATION ---
+        Mu_val = st.session_state['res_df']['M_show'].abs().max()
+        Vu_val = st.session_state['res_df']['V_show'].abs().max()
+        
+        # Convert all to kg, cm for calc
+        if "kN" in unit_sys:
+            Mu_calc = Mu_val * 101.97 * 100 # kN-m -> kg-cm
+            Vu_calc = Vu_val * 101.97       # kN -> kg
+        else:
+            Mu_calc = Mu_val * 100          # kg-m -> kg-cm
+            Vu_calc = Vu_val
+        
+        d = h - cov - 0.9 # est d
+        
+        # Flexure
+        if method == "SDM":
+            phi = 0.9
+            Rn = Mu_calc / (phi * b * d**2)
+            rho = (0.85*fc/fy) * (1 - np.sqrt(max(0, 1 - (2*Rn)/(0.85*fc))))
+            As_req = max(rho, 14/fy) * b * d
+        else:
+            # WSD simplified
+            As_req = Mu_calc / (0.875 * 0.5 * fy * d) # Allowable Stress approx
+            
+        nb = int(np.ceil(As_req / bar_areas[main_bar]))
+        nb = max(2, nb) # Min 2 bars
+        
+        # Shear
+        vc = 0.53 * np.sqrt(fc) * b * d
+        if method == "SDM": vc = 0.85 * vc # phi shear
+            
+        if Vu_calc > vc:
+            vs_req = Vu_calc - vc
+            av = 2 * stir_areas[stirrup]
+            s_req = (av * fy * d) / vs_req
+            s = int(5 * round(min(s_req, d/2, 30)/5))
+            if s == 0: s = 5
+            shear_res = f"@{s} cm"
+            shear_status = "⚠️ Shear Reinf. Req"
+        else:
+            s = int(d/2)
+            shear_res = f"@{s} cm (Min)"
+            shear_status = "✅ Conc. OK"
+
+        # --- OUTPUT DISPLAY ---
+        st.markdown('<div class="design-box">', unsafe_allow_html=True)
+        col_out1, col_out2 = st.columns([1, 1])
+        
+        with col_out1:
+            st.markdown("#### 🎯 Design Result")
+            st.write(f"**Main Steel:** {nb}-{main_bar} (As = {nb*bar_areas[main_bar]:.2f} cm²)")
+            st.write(f"**Stirrups:** {stirrup} {shear_res}")
+            st.caption(f"Status: {shear_status}")
+            
+            # Print Button Logic (Mock)
+            st.button("🖨️ Print Calculation Report")
+            
+        with col_out2:
+            st.markdown("#### 📐 Section View")
+            # วาดหน้าตัดด้วยฟังก์ชันใหม่
+            fig_sec = draw_section_view(b, h, cov, nb, bar_dias[main_bar], stir_dias[stirrup])
+            st.plotly_chart(fig_sec, use_container_width=True, config={'displayModeBar': False})
+            
+        st.markdown('</div>', unsafe_allow_html=True)
+
+else:
+    st.warning("⚠️ กรุณากดปุ่ม 'Calculate Analysis' ด้านบนก่อน เพื่อเริ่มการออกแบบ")
