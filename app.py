@@ -19,7 +19,7 @@ FACTOR_LL = 1.7
 def analyze_structure(spans_data, supports_data, loads_data):
     """
     วิเคราะห์คานโดยใช้ anaStruct (2D FEM)
-    พร้อมระบบป้องกัน Stability Error และ Node Indexing Fix
+    พร้อมระบบป้องกัน Stability Error
     """
     # สร้าง System Model
     ss = SystemElements(EA=15000, EI=5000) 
@@ -36,8 +36,7 @@ def analyze_structure(spans_data, supports_data, loads_data):
         node_id = i + 1  # Node เริ่มที่ 1
         
         # --- Stability Guard ---
-        # ถ้า Node แรกเป็น Roller ระบบจะคำนวณไม่ได้ (Unstable mechanism)
-        # ต้องบังคับให้เป็น Pin เพื่อล็อคแกน X (ไม่มีผลต่อ Moment)
+        # ถ้า Node แรกเป็น Roller ต้องเปลี่ยนเป็น Pin เพื่อล็อคแกน X (กันโครงสร้างไหล)
         if i == 0 and supp_type == 'Roller':
             supp_type = 'Pin' 
         # -----------------------
@@ -49,7 +48,7 @@ def analyze_structure(spans_data, supports_data, loads_data):
         elif supp_type == 'Roller':
             ss.add_support_roll(node_id=node_id, direction=1) 
 
-    # 3. ใส่ Loads (Apply Load Combination)
+    # 3. ใส่ Loads
     for load in loads_data:
         mag_dead = load['dl'] + load['sdl']
         mag_live = load['ll']
@@ -72,38 +71,39 @@ def analyze_structure(spans_data, supports_data, loads_data):
 
 def get_detailed_results(ss):
     """
-    ดึงค่า Shear/Moment โดยใช้ Node ID Lookup (แก้ไข .coordinates)
+    ดึงค่า Shear/Moment แบบ Robust (กัน Error เรื่องชื่อตัวแปร)
     """
     x_vals = []
     shear_vals = []
     moment_vals = []
     
-    # เรียง Element ตามพิกัด X ของ Node เริ่มต้น
-    # แก้: ใช้ .coordinates[0]
+    # Helper Function: ดึงค่า X จาก Vertex อย่างปลอดภัย
+    def get_x(vertex):
+        if hasattr(vertex, 'coordinates'): return vertex.coordinates[0]
+        if hasattr(vertex, 'loc'): return vertex.loc[0]
+        if hasattr(vertex, 'coords'): return vertex.coords[0]
+        return 0.0
+
+    # เรียง Element ตามพิกัด X
     sorted_elements = sorted(
         ss.element_map.values(), 
-        key=lambda e: ss.node_map[e.node_id1].coordinates[0]
+        key=lambda e: get_x(e.vertex_1)
     )
     
     for el in sorted_elements:
-        # ดึง Node Object
-        node1 = ss.node_map[el.node_id1]
-        node2 = ss.node_map[el.node_id2]
-        
-        # แก้: ดึงพิกัด X จาก .coordinates
-        x0 = node1.coordinates[0]
-        x1 = node2.coordinates[0]
+        x0 = get_x(el.vertex_1)
+        x1 = get_x(el.vertex_2)
         
         # ดึงค่า Force Array
         s_arr = np.array(el.shear).flatten()
         m_arr = np.array(el.moment).flatten()
         
         # สร้าง array ของระยะ x
-        x_arr = np.linspace(x0, x1, len(s_arr))
-        
-        x_vals.extend(x_arr)
-        shear_vals.extend(s_arr)
-        moment_vals.extend(m_arr)
+        if len(s_arr) > 0:
+            x_arr = np.linspace(x0, x1, len(s_arr))
+            x_vals.extend(x_arr)
+            shear_vals.extend(s_arr)
+            moment_vals.extend(m_arr)
         
     return pd.DataFrame({
         "x": x_vals,
@@ -143,6 +143,7 @@ def design_rc_beam(mu_kNm, vu_kN, b, h, cover, fc, fy):
     phi_b = 0.90
     phi_v = 0.85
     
+    # คำนวณเหล็กรับแรงดัด
     mn_req = (abs(mu_kNm) * 10**6) / phi_b 
     Rn = mn_req / (b * d**2)
     m = fy / (0.85 * fc)
@@ -159,6 +160,7 @@ def design_rc_beam(mu_kNm, vu_kN, b, h, cover, fc, fy):
     as_min = max((np.sqrt(fc)/(4*fy))*b*d, (1.4/fy)*b*d)
     As_final = max(As_req, as_min)
     
+    # คำนวณเหล็กปลอก
     Vc = 0.17 * np.sqrt(fc) * b * d
     phi_Vc = phi_v * Vc / 1000 
     
@@ -240,32 +242,37 @@ with tab2:
         ss = st.session_state['ss_model']
         st.header("📊 Interactive Results")
         
-        # Extract Data
         try:
+            # Extract Data using the new robust function
             df_res = get_detailed_results(ss)
-            max_m = df_res['moment'].abs().max()
-            max_v = df_res['shear'].abs().max()
             
-            c1, c2 = st.columns(2)
-            c1.metric("Max Moment (|Mu|)", f"{max_m:.2f} kN-m")
-            c2.metric("Max Shear (|Vu|)", f"{max_v:.2f} kN")
-            
-            # Plot Shear
-            st.subheader("Shear Force Diagram (SFD)")
-            fig_v = plot_interactive(df_res, 'shear', "Shear Force (kN)", "#FF4B4B", "Shear (kN)")
-            st.plotly_chart(fig_v, use_container_width=True)
-            
-            # Plot Moment
-            st.subheader("Bending Moment Diagram (BMD)")
-            fig_m = plot_interactive(df_res, 'moment', "Bending Moment (kN-m)", "#1f77b4", "Moment (kN-m)")
-            st.plotly_chart(fig_m, use_container_width=True)
-            
-            with st.expander("Show Raw Data Table"):
-                st.dataframe(df_res)
-            
-            st.session_state['max_moment'] = max_m
-            st.session_state['max_shear'] = max_v
-            
+            if not df_res.empty:
+                max_m = df_res['moment'].abs().max()
+                max_v = df_res['shear'].abs().max()
+                
+                c1, c2 = st.columns(2)
+                c1.metric("Max Moment (|Mu|)", f"{max_m:.2f} kN-m")
+                c2.metric("Max Shear (|Vu|)", f"{max_v:.2f} kN")
+                
+                # Plot Shear
+                st.subheader("Shear Force Diagram (SFD)")
+                fig_v = plot_interactive(df_res, 'shear', "Shear Force (kN)", "#FF4B4B", "Shear (kN)")
+                st.plotly_chart(fig_v, use_container_width=True)
+                
+                # Plot Moment
+                st.subheader("Bending Moment Diagram (BMD)")
+                fig_m = plot_interactive(df_res, 'moment', "Bending Moment (kN-m)", "#1f77b4", "Moment (kN-m)")
+                st.plotly_chart(fig_m, use_container_width=True)
+                
+                with st.expander("Show Raw Data Table"):
+                    st.dataframe(df_res)
+                
+                # Save results for design tab
+                st.session_state['max_moment'] = max_m
+                st.session_state['max_shear'] = max_v
+            else:
+                st.warning("No force results found. Please check structure stability.")
+
         except Exception as e:
             st.error(f"Error extracting results: {e}")
         
