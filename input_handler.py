@@ -4,7 +4,6 @@ def render_sidebar():
     st.sidebar.header("⚙️ Settings")
     code = st.sidebar.selectbox("Design Standard", ["EIT 1007 (WSD)", "EIT 1008 (SDM)", "ACI 318 (SDM)"], index=1)
     
-    # Import function helper เล็กน้อยเพื่อ Default ค่า
     def_dl = 1.0 if "WSD" in code else (1.2 if "ACI" in code else 1.4)
     def_ll = 1.0 if "WSD" in code else (1.6 if "ACI" in code else 1.7)
     method = "WSD" if "WSD" in code else "SDM"
@@ -21,7 +20,7 @@ def render_sidebar():
 
 def render_geometry_input():
     st.info("📍 Geometry")
-    n = st.number_input("Number of Spans", 1, 5, 2)
+    n = st.number_input("Number of Spans", 1, 5, 1)
     spans, supports = [], []
     c1, c2 = st.columns(2)
     sl = c1.selectbox("Left Sup", ["Pin", "Roller", "Fix"], key="SL")
@@ -29,7 +28,7 @@ def render_geometry_input():
     
     supports.append(sl)
     for i in range(n):
-        l = st.number_input(f"Span {i+1} (m)", 0.5, 20.0, 4.0, key=f"L{i}")
+        l = st.number_input(f"Span {i+1} (m)", 0.5, 20.0, 5.0, key=f"L{i}")
         spans.append(l)
         if i < n-1: supports.append("Roller")
     supports.append(sr)
@@ -40,8 +39,11 @@ def render_loads_input(n_span, spans, fdl, fll, unit_sys):
     loads = []
     tabs = st.tabs([f"Span {i+1}" for i in range(n_span)])
     
-    # Unit Helper
-    to_N = 1000.0 if "kN" in unit_sys else 9.80665
+    # Unit Helper: Input is user unit -> Convert to Newtons/kg for calculation if needed
+    # But our engine assumes standard consistent units. 
+    # Let's keep input as is, and label them as "User Unit"
+    
+    to_cal = 1000.0 if "kN" in unit_sys else 1.0 # Convert kN to N/kg base for display logic? No, keep simple.
     
     for i, tab in enumerate(tabs):
         with tab:
@@ -49,7 +51,9 @@ def render_loads_input(n_span, spans, fdl, fll, unit_sys):
             udl = c1.number_input(f"Uniform DL", 0.0, key=f"udl{i}")
             ull = c2.number_input(f"Uniform LL", 0.0, key=f"ull{i}")
             w = udl*fdl + ull*fll
-            if w > 0: loads.append({'span_idx': i, 'type': 'Uniform', 'total_w': w*to_N, 'display_val': udl+ull})
+            if w > 0: 
+                # Store total factored load
+                loads.append({'span_idx': i, 'type': 'Uniform', 'total_w': w, 'display_val': udl+ull})
             
             st.markdown("---")
             if st.checkbox("Add Point Load", key=f"chk{i}"):
@@ -58,7 +62,8 @@ def render_loads_input(n_span, spans, fdl, fll, unit_sys):
                 pll = c4.number_input("P LL", 0.0, key=f"pll{i}")
                 px = c5.number_input("Dist x", 0.0, spans[i], spans[i]/2, key=f"px{i}")
                 p = pdl*fdl + pll*fll
-                if p > 0: loads.append({'span_idx': i, 'type': 'Point', 'total_w': p*to_N, 'pos': px, 'display_val': pdl+pll})
+                if p > 0: 
+                    loads.append({'span_idx': i, 'type': 'Point', 'total_w': p, 'pos': px, 'display_val': pdl+pll})
     return loads
 
 def render_design_input(unit_sys):
