@@ -31,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT
+# CUSTOM LOAD INPUT (Standardized Data Structure)
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys):
     st.markdown("### 3️⃣ Applied Loads")
@@ -48,8 +48,18 @@ def render_custom_load_input(n_span, spans, unit_sys):
                 st.markdown(f"**Uniform Load (w)**")
                 w_dl = st.number_input(f"Dead Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_dl_{i}")
                 w_ll = st.number_input(f"Live Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_ll_{i}")
+                
+                # Logic: Add to list if not zero
                 if w_dl + w_ll != 0:
-                    loads.append({'span_idx': i, 'type': 'U', 'w_dl': w_dl, 'w_ll': w_ll, 'w': w_dl + w_ll})
+                    loads.append({
+                        'span_idx': i, 
+                        'type': 'U', 
+                        'w_dl': w_dl, 
+                        'w_ll': w_ll, 
+                        'w': w_dl + w_ll,
+                        # Safety Defaults for Backend Compatibility
+                        'P_dl': 0.0, 'P_ll': 0.0, 'P': 0.0, 'x': 0.0
+                    })
             
             with c2:
                 st.markdown(f"**Point Loads (P)**")
@@ -61,11 +71,20 @@ def render_custom_load_input(n_span, spans, unit_sys):
                     x_loc = cc3.number_input(f"x (m)", value=spans[i]/2, min_value=0.0, max_value=float(spans[i]), key=f"px_{i}_{j}")
                     
                     if p_dl + p_ll != 0:
-                        loads.append({'span_idx': i, 'type': 'P', 'P_dl': p_dl, 'P_ll': p_ll, 'P': p_dl + p_ll, 'x': x_loc})
+                        loads.append({
+                            'span_idx': i, 
+                            'type': 'P', 
+                            'P_dl': p_dl, 
+                            'P_ll': p_ll, 
+                            'P': p_dl + p_ll, 
+                            'x': x_loc,
+                            # Safety Defaults for Backend Compatibility
+                            'w_dl': 0.0, 'w_ll': 0.0, 'w': 0.0
+                        })
     return loads
 
 # ==========================================
-# ENGINEERING PLOTTING (PRESERVED BEAUTY)
+# ENGINEERING PLOTTING
 # ==========================================
 
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
@@ -95,7 +114,7 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1), row=1, col=1)
 
 def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
-    if not vis_spans: return go.Figure() # Safety for empty data
+    if not vis_spans: return go.Figure()
 
     cum_len = [0] + list(np.cumsum(vis_spans))
     total_len = cum_len[-1]
@@ -132,10 +151,8 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     for load in loads:
         span_idx = load.get('span_idx', 0)
         
-        # *** FIX START: SAFETY GUARD ***
-        if span_idx >= len(vis_spans): 
-            continue # Skip invalid loads to prevent crash
-        # *** FIX END ***
+        # Guard Clause: Prevent IndexError if span count reduced
+        if span_idx >= len(vis_spans): continue 
 
         x_start = cum_len[span_idx]
         x_end = cum_len[span_idx+1]
