@@ -13,9 +13,20 @@ except ImportError:
     st.stop()
 
 # ==========================================
+# 🛡️ 0. SESSION STATE INITIALIZATION (FIX BUG)
+# ==========================================
+# ป้องกัน Error เวลา Refesh หน้าจอ หรือ State หาย
+if 'analyzed' not in st.session_state:
+    st.session_state['analyzed'] = False
+if 'res_df' not in st.session_state:
+    st.session_state['res_df'] = None
+if 'inputs' not in st.session_state:
+    st.session_state['inputs'] = None
+
+# ==========================================
 # 🎨 1. SETTINGS & STYLES
 # ==========================================
-st.set_page_config(page_title="RC Beam Pro V.17", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="RC Beam Pro V.17.1", layout="wide", page_icon="🏗️")
 
 st.markdown("""
 <style>
@@ -27,7 +38,7 @@ st.markdown("""
     .report-card { background-color: #ffffff; border: 2px solid #e0e0e0; padding: 20px; border-radius: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
     .stMetric { background-color: #e3f2fd; padding: 10px; border-radius: 5px; border: 1px solid #90caf9; }
     
-    /* Make standard Streamlit dividers thicker */
+    /* Stronger Divider */
     hr { margin: 1.5rem 0; border-top: 2px solid #bbb; }
 </style>
 """, unsafe_allow_html=True)
@@ -154,7 +165,7 @@ def generate_report_html(project_data, res_data):
 # 🖥️ MAIN UI
 # ==========================================
 
-st.markdown('<div class="header-box"><h2>🏗️ RC Beam Pro V.17 (Print Edition)</h2></div>', unsafe_allow_html=True)
+st.markdown('<div class="header-box"><h2>🏗️ RC Beam Pro V.17.1 (Stable)</h2></div>', unsafe_allow_html=True)
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -235,15 +246,17 @@ if st.button("🚀 Analyze & Design (คำนวณ)", type="primary", use_cont
         st.session_state['res_df'] = df
         st.session_state['inputs'] = (spans, supports, loads_input)
         st.session_state['analyzed'] = True
+        st.rerun() # Force rerun to refresh state
 
 # ==========================================
-# 📊 3. DASHBOARD
+# 📊 3. DASHBOARD (Safety Checked)
 # ==========================================
-if st.session_state.get('analyzed', False):
+# เพิ่มการเช็ค: ต้องมี flag analyze และตัวแปร res_df ต้องไม่เป็น None
+if st.session_state.get('analyzed', False) and st.session_state.get('res_df') is not None:
     df = st.session_state['res_df']
     spans, supports, loads_input = st.session_state['inputs']
     
-    st.divider() # Stronger separator
+    st.divider()
     
     col_graph, col_design = st.columns([1.8, 1])
     
