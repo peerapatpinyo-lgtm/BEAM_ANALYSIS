@@ -116,12 +116,11 @@ class BeamAnalysisEngine:
                     fem_vec += np.array([r1, m1, r2, m2])
                     # Add point load location to critical points
                     critical_pts.append(l['x'])
-                    critical_pts.append(l['x'] - 0.001) # Pre-step
-                    critical_pts.append(l['x'] + 0.001) # Post-step
+                    critical_pts.append(l['x'] - 0.001) 
+                    critical_pts.append(l['x'] + 0.001) 
             
             # Sort and create evaluation points
             critical_pts = sorted(list(set(critical_pts)))
-            # Add intermediate points for smooth curves (UDL)
             fine_pts = np.linspace(0, L, 50)
             x_span = sorted(list(set(critical_pts + list(fine_pts))))
             
@@ -140,7 +139,7 @@ class BeamAnalysisEngine:
                             v_x -= w * x
                             m_x -= w * x**2 / 2
                     elif l['type'] == 'P':
-                        if x >= l['x']: # Applied
+                        if x >= l['x']: 
                             v_x -= l['P']
                             m_x -= l['P'] * (x - l['x'])
                 
