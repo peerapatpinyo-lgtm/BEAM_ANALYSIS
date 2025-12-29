@@ -5,15 +5,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # --- IMPORT MODULES ---
+# ตรวจสอบความพร้อมของ Module คำนวณ
 try:
     from beam_analysis import run_beam_analysis 
     import design_view 
 except ImportError as e:
-    st.error(f"⚠️ System Error: Missing calculation modules. {e}")
+    st.error(f"⚠️ Critical System Error: Missing calculation modules. Please ensure 'beam_analysis.py' and 'design_view.py' exist. ({e})")
     st.stop()
 
 # ==========================================
-# 1. SETUP & STYLES (Professional Theme)
+# 1. SETUP & STYLES (Professional Engineer Theme)
 # ==========================================
 st.set_page_config(page_title="Professional RC Beam Design", layout="wide", page_icon="🏗️")
 
@@ -26,7 +27,7 @@ st.markdown("""
     
     html, body, [class*="css"] { 
         font-family: 'Sarabun', sans-serif; 
-        font-size: 16px; 
+        font-size: 15px; 
     }
     
     /* Headers */
@@ -37,13 +38,13 @@ st.markdown("""
         border-radius: 8px; 
         text-align: center; 
         margin-bottom: 25px; 
-        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        box-shadow: 0 4px 6px rgba(0,0,0,0.15);
     }
     
     .section-header { 
         border-left: 6px solid #1565C0; 
         padding-left: 15px; 
-        font-size: 1.5rem; 
+        font-size: 1.4rem; 
         font-weight: 700; 
         margin-top: 30px; 
         margin-bottom: 20px; 
@@ -53,14 +54,14 @@ st.markdown("""
         color: #0D47A1; 
     }
     
-    /* Input & Calculation Display */
+    /* Calculation Display Box */
     .calc-display { 
         font-family: 'Courier New', monospace; 
         background-color: #F1F8E9; 
         border-left: 5px solid #2E7D32; 
         padding: 10px; 
         margin-top: 10px; 
-        font-size: 1rem; 
+        font-size: 0.95rem; 
         color: #1B5E20; 
         border-radius: 4px;
         font-weight: 600;
@@ -75,14 +76,30 @@ st.markdown("""
         border-radius: 6px; 
         font-weight: bold; 
         font-size: 1.1rem;
-        display: flex;
-        align-items: center;
+        margin-bottom: 10px;
     }
     
+    /* Input Fields Styling */
     .stNumberInput input { 
         font-weight: bold; 
         color: #0D47A1; 
-        font-size: 1.1rem; 
+    }
+    
+    /* Tab Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 50px;
+        white-space: pre-wrap;
+        background-color: #f0f2f6;
+        border-radius: 4px 4px 0 0;
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+    .stTabs [aria-selected="true"] {
+        background-color: #fff;
+        border-top: 3px solid #1565C0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -121,7 +138,7 @@ def check_structural_stability(supports_df):
     return True, "✅ Stable"
 
 # ==========================================
-# 3. INPUT SECTIONS
+# 3. INPUT SECTIONS (Refined Grid Layout)
 # ==========================================
 
 def render_sidebar():
@@ -148,24 +165,43 @@ def render_geometry_input():
     col_n, _ = st.columns([1, 2])
     n_span = col_n.number_input("Number of Spans", min_value=1, max_value=10, value=2)
     
+    # --- SPANS INPUT (Responsive Grid) ---
+    st.markdown("**Span Lengths (m)**")
     spans = []
-    cols = st.columns(n_span)
-    for i, col in enumerate(cols):
-        l = col.number_input(f"Span {i+1} (m)", min_value=1.0, value=5.0, step=0.5, key=f"span_{i}")
-        spans.append(l)
     
+    # Create grid for span inputs (Max 4 per row)
+    cols_per_row = 4
+    for i in range(0, n_span, cols_per_row):
+        end_idx = min(i + cols_per_row, n_span)
+        cols = st.columns(cols_per_row)
+        for j in range(i, end_idx):
+            col_idx = j - i
+            with cols[col_idx]:
+                l = st.number_input(f"L{j+1}", min_value=1.0, value=5.0, step=0.5, key=f"span_{j}")
+                spans.append(l)
+    
+    # --- SUPPORTS INPUT (Responsive Grid) ---
     st.markdown("#### Supports Configuration")
-    sup_cols = st.columns(n_span + 1)
     support_options = ["Pin", "Roller", "Fixed", "None"]
-    
     current_supports = []
-    for i, col in enumerate(sup_cols):
-        # Intelligent Default: Pin at start, Roller at others
-        default_idx = 0 if i == 0 else (1 if i <= n_span else 3)
-        if i > n_span: default_idx = 1 
-        
-        s_type = col.selectbox(f"Sup {i+1}", support_options, index=default_idx, key=f"sup_{i}")
-        current_supports.append(s_type)
+    
+    total_sups = n_span + 1
+    # Create grid for support inputs (Max 5 per row to avoid squeezing)
+    sup_cols_limit = 5
+    
+    for i in range(0, total_sups, sup_cols_limit):
+        end_idx = min(i + sup_cols_limit, total_sups)
+        cols = st.columns(sup_cols_limit)
+        for j in range(i, end_idx):
+            col_idx = j - i
+            with cols[col_idx]:
+                # Intelligent Default Logic
+                # First = Pin, Others = Roller, Last = Roller
+                default_idx = 0 if j == 0 else (1 if j <= n_span else 3)
+                if j > n_span: default_idx = 1
+                
+                s_type = st.selectbox(f"Sup {j+1}", support_options, index=default_idx, key=f"sup_{j}")
+                current_supports.append(s_type)
     
     x_coords = [0] + list(np.cumsum(spans))
     supports_df = pd.DataFrame({'x': x_coords, 'type': current_supports})
@@ -192,8 +228,8 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
             with col_main_1:
                 with st.container():
                     st.markdown("#### 🔹 Uniform Distributed Load")
-                    w_dl = st.number_input(f"Dead Load ($W_{{DL}}$)", value=0.0, step=100.0, format="%.2f", key=f"w_dl_{i}")
-                    w_ll = st.number_input(f"Live Load ($W_{{LL}}$)", value=0.0, step=100.0, format="%.2f", key=f"w_ll_{i}")
+                    w_dl = st.number_input(f"Dead Load (DL)", value=0.0, step=100.0, format="%.2f", key=f"w_dl_{i}")
+                    w_ll = st.number_input(f"Live Load (LL)", value=0.0, step=100.0, format="%.2f", key=f"w_ll_{i}")
                     
                     w_u = (w_dl * f_dl) + (w_ll * f_ll)
                     
@@ -201,7 +237,7 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                         loads.append({'span_idx': i, 'type': 'U', 'w': w_u, 'source': 'Total UDL'})
                         st.markdown(f"""
                         <div class="calc-display">
-                        $W_u$ Calculation:<br>
+                        Wu Calculation:<br>
                         = {f_dl:.2f}({w_dl}) + {f_ll:.2f}({w_ll})<br>
                         = <b>{w_u:,.2f}</b>
                         </div>
@@ -216,13 +252,13 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                     if num_p > 0:
                         for j in range(num_p):
                             st.markdown(f"**Point Load #{j+1}**")
-                            c1, c2, c3 = st.columns([1, 1, 1.2])
+                            c1, c2, c3 = st.columns([0.8, 0.8, 1.2])
                             
-                            p_dl = c1.number_input(f"$P_{{DL}}$", value=0.0, step=100.0, key=f"p_dl_{i}_{j}")
-                            p_ll = c2.number_input(f"$P_{{LL}}$", value=0.0, step=100.0, key=f"p_ll_{i}_{j}")
+                            p_dl = c1.number_input(f"P(DL)", value=0.0, step=100.0, key=f"p_dl_{i}_{j}")
+                            p_ll = c2.number_input(f"P(LL)", value=0.0, step=100.0, key=f"p_ll_{i}_{j}")
                             
                             x_max = float(spans[i])
-                            x_loc = c3.number_input(f"Dist x (0-{x_max})", min_value=0.0, max_value=x_max, value=x_max/2, step=0.1, key=f"p_x_{i}_{j}")
+                            x_loc = c3.number_input(f"Distance x (0-{x_max})", min_value=0.0, max_value=x_max, value=x_max/2, step=0.1, key=f"p_x_{i}_{j}")
                             
                             p_total = (p_dl * f_dl) + (p_ll * f_ll)
                             
@@ -235,8 +271,8 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                                     'source': 'Total P'
                                 })
                                 st.markdown(f"""
-                                <div class="calc-display" style="padding:5px; font-size:0.9rem;">
-                                $P_u$ = {f_dl}({p_dl}) + {f_ll}({p_ll}) = <b>{p_total:,.2f}</b>
+                                <div class="calc-display" style="padding:5px; font-size:0.85rem;">
+                                Pu = {f_dl}({p_dl}) + {f_ll}({p_ll}) = <b>{p_total:,.2f}</b>
                                 </div>
                                 <hr style="margin:5px 0;">
                                 """, unsafe_allow_html=True)
@@ -255,6 +291,7 @@ def draw_support(fig, x, y, sup_type, size=1.0):
     if sup_type == "Pin":
         fig.add_shape(type="path", path=f"M {x},{y} L {x-s/2},{y-s} L {x+s/2},{y-s} Z", fillcolor=fill_col, line_color=line_col, line_width=2, row=1, col=1)
         fig.add_shape(type="line", x0=x-s, y0=y-s, x1=x+s, y1=y-s, line=dict(color=line_col, width=3), row=1, col=1)
+        # Hatching
         for hx in np.linspace(x-s, x+s, 5):
             fig.add_shape(type="line", x0=hx, y0=y-s, x1=hx-s/3, y1=y-s*1.3, line=dict(color=line_col, width=1), row=1, col=1)
 
@@ -270,19 +307,21 @@ def draw_support(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x+direction*s/2, y1=hy-s/2, line=dict(color=line_col, width=1), row=1, col=1)
 
 def add_value_label(fig, x, y, val, unit, color, row, position="top"):
-    """ High visibility label for peaks """
-    yshift = 30 if position == "top" else -30
-    text = f"<b>{val:,.2f} {unit}</b><br><span style='font-size:12px; color:#555'>at {x:.2f} m</span>"
+    """ Clean, Smaller Label for peaks to avoid overlapping """
+    yshift = 20 if position == "top" else -20
+    
+    # Removed LaTeX code ($) to prevent display issues
+    text = f"<b>{val:,.2f}</b>"
     
     fig.add_annotation(
         x=x, y=y,
         text=text,
         showarrow=False,
-        font=dict(color=color, size=14, family="Arial"),
-        bgcolor="rgba(255, 255, 255, 0.95)",
+        font=dict(color=color, size=11, family="Arial"), # Reduced Font Size
+        bgcolor="rgba(255, 255, 255, 0.8)",
         bordercolor=color,
-        borderwidth=2,
-        borderpad=6,
+        borderwidth=1,
+        borderpad=3,
         yshift=yshift,
         row=row, col=1
     )
@@ -299,9 +338,9 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
     dist_unit = "m"
     f_dl, f_ll = factors
     
-    # 1. Determine Max Scale
+    # 1. Determine Max Scale (for visuals)
     all_magnitudes = []
-    # Temporarily aggregate to find max P for scaling
+    # Temporary aggregation for scaling
     temp_p_map = {}
     for l in loads:
         if l['type'] == 'U': all_magnitudes.append(abs(l.get('w', 0)))
@@ -311,28 +350,31 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
              temp_p_map[k] = temp_p_map.get(k, 0) + l.get('P', 0)
     for p_val in temp_p_map.values(): all_magnitudes.append(abs(p_val))
     
-    global_max = max(all_magnitudes) if all_magnitudes else 1.0
-    target_h = 1.5 
+    global_max = max(all_magnitudes) if all_magnitudes else 100.0
+    if global_max == 0: global_max = 100
     
-    # 2. Setup Subplots - ADJUSTED PROPORTIONS HERE
-    # Giving more space to Loading (0.4) and reducing SFD/BMD to (0.3)
+    # Scale Height relative to Beam Length (Proportional)
+    target_h = max(1.0, total_len * 0.15) 
+    
+    # 2. Setup Subplots
+    # Adjusted Row Heights as requested: Loading bigger, others smaller
     fig = make_subplots(
         rows=3, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.06,
+        vertical_spacing=0.08,
         subplot_titles=(
-            f"<b>1. FACTORED LOAD DIAGRAM ($P_u$)</b>", 
-            f"<b>2. SHEAR FORCE DIAGRAM (SFD)</b>", 
-            f"<b>3. BENDING MOMENT DIAGRAM (BMD)</b>"
+            "<b>1. FACTORED LOAD DIAGRAM</b>", 
+            "<b>2. SHEAR FORCE DIAGRAM (SFD)</b>", 
+            "<b>3. BENDING MOMENT DIAGRAM (BMD)</b>"
         ),
-        row_heights=[0.40, 0.30, 0.30] 
+        row_heights=[0.35, 0.325, 0.325] 
     )
     
     # --- ROW 1: LOADING ---
-    fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=5), row=1, col=1)
+    fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
     # Supports
-    sup_size = target_h * 0.25
+    sup_size = target_h * 0.3
     for i, x in enumerate(cum_len):
         if i < len(vis_supports):
             stype = vis_supports.iloc[i]['type']
@@ -346,48 +388,58 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
         x_start = cum_len[span_idx]
         x_end = cum_len[span_idx+1]
         
-        # UDL: Draw immediately (UDLs usually don't need point-aggregation)
+        # UDL: Draw immediately
         if load['type'] == 'U' and load['w'] != 0:
             w = load['w']
-            h = (0.2 + 0.8 * (abs(w)/global_max)) * target_h
+            h = (0.2 + 0.6 * (abs(w)/global_max)) * target_h
             
             fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(239, 108, 0, 0.15)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#E65100', width=3), showlegend=False, hoverinfo='text'), row=1, col=1)
-            fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"<b>$W_u$ = {w:,.0f}</b>", showarrow=False, yshift=15, font=dict(color="#E65100", size=14, weight="bold"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#E65100', width=2), showlegend=False, hoverinfo='text'), row=1, col=1)
+            
+            # Clean Label (Wu)
+            fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"<b>Wu = {w:,.0f}</b>", showarrow=False, yshift=12, font=dict(color="#E65100", size=11, weight="bold"), row=1, col=1)
 
         # Point Load: Aggregate first
         elif load['type'] == 'P' and load['P'] != 0:
             local_x = load['x']
             abs_x = x_start + local_x
-            key_x = round(abs_x, 3) # Round to avoid float errors
+            key_x = round(abs_x, 3) 
             point_load_aggregator[key_x] = point_load_aggregator.get(key_x, 0) + load['P']
 
-    # Draw Aggregated Point Loads
+    # Draw Aggregated Point Loads (Fixing the multiple arrows issue)
     for px, p_val in point_load_aggregator.items():
         if p_val != 0:
-            h = (0.2 + 0.8 * (abs(p_val)/global_max)) * target_h
+            h = (0.2 + 0.6 * (abs(p_val)/global_max)) * target_h
             p_color = "#212121"
             
+            # Single Arrow for Total Load
             fig.add_annotation(
                 x=px, y=0,
                 ax=px, ay=h,
                 xref="x1", yref="y1", axref="x1", ayref="y1",
-                showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=3, arrowcolor=p_color,
-                text=f"<b>$P_u$={p_val:,.0f}</b>",
-                font=dict(size=14, color=p_color, weight="bold"),
-                yshift=15,
+                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2, arrowcolor=p_color,
+                text=f"<b>Pu={p_val:,.0f}</b>", # Clean Label (Pu)
+                font=dict(size=11, color=p_color, weight="bold"),
+                yshift=12,
                 row=1, col=1
             )
             
-    fig.update_yaxes(visible=False, range=[-0.5, target_h*1.8], row=1, col=1)
+    fig.update_yaxes(visible=False, range=[-0.5, target_h*1.6], row=1, col=1)
 
     # --- ROW 2 & 3: SFD / BMD ---
     plot_x, plot_v, plot_m = [], [], []
     current_offset = 0.0
+    
+    # Reconstruct Global Coordinates for Plotting
     for i in range(len(vis_spans)):
         span_data = df[df['span_id'] == i].copy()
         if not span_data.empty:
-            gx = span_data['x'] + current_offset if (i > 0 and span_data['x'].min() < 0.1) else span_data['x']
+            # Shift x to global
+            if i > 0 and span_data['x'].min() < 0.1: 
+                 gx = span_data['x'] + current_offset
+            else: 
+                 gx = span_data['x']
+            
             plot_x.extend(gx.tolist())
             plot_v.extend(span_data['shear'].tolist())
             plot_m.extend((-span_data['moment']).tolist()) 
@@ -395,50 +447,54 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
 
     np_x, np_v, np_m = np.array(plot_x), np.array(plot_v), np.array(plot_m)
 
-    # SFD
+    # SFD Plot
     col_shear = '#D32F2F'
-    fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=col_shear, width=2.5), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear"), row=2, col=1)
+    fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=col_shear, width=2), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear"), row=2, col=1)
+    
     if len(np_v) > 0:
         v_max, v_min = np_v.max(), np_v.min()
         idx_max, idx_min = np.argmax(np_v), np.argmin(np_v)
+        # Add labels only for significant values
         if abs(v_max) > 1: add_value_label(fig, np_x[idx_max], v_max, v_max, force_unit, col_shear, 2, "top" if v_max > 0 else "bottom")
         if abs(v_min) > 1: add_value_label(fig, np_x[idx_min], v_min, v_min, force_unit, col_shear, 2, "bottom" if v_min < 0 else "top")
         
-        # Add Padding to Y-Axis to make graph look "smaller" vertically
+        # Add Padding (Reduce visual size)
         range_v = v_max - v_min
-        pad_v = range_v * 0.2 if range_v > 0 else 1.0
+        pad_v = range_v * 0.25 if range_v > 0 else 1.0
         fig.update_yaxes(range=[v_min - pad_v, v_max + pad_v], row=2, col=1)
 
-    # BMD
+    # BMD Plot
     col_moment = '#1565C0'
-    fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=col_moment, width=2.5), fill='tozeroy', fillcolor='rgba(21, 101, 192, 0.1)', name="Moment"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=col_moment, width=2), fill='tozeroy', fillcolor='rgba(21, 101, 192, 0.1)', name="Moment"), row=3, col=1)
+    
     if len(np_m) > 0:
         m_max, m_min = np_m.max(), np_m.min()
         idx_max, idx_min = np.argmax(np_m), np.argmin(np_m)
         if abs(m_max) > 1: add_value_label(fig, np_x[idx_max], m_max, m_max, moment_unit, col_moment, 3, "top" if m_max > 0 else "bottom")
         if abs(m_min) > 1: add_value_label(fig, np_x[idx_min], m_min, m_min, moment_unit, col_moment, 3, "bottom" if m_min < 0 else "top")
         
-        # Add Padding to Y-Axis
+        # Add Padding
         range_m = m_max - m_min
-        pad_m = range_m * 0.2 if range_m > 0 else 1.0
+        pad_m = range_m * 0.25 if range_m > 0 else 1.0
         fig.update_yaxes(range=[m_min - pad_m, m_max + pad_m], row=3, col=1)
 
     # --- LAYOUT POLISH ---
-    font_style = dict(family="Arial, sans-serif", size=14, color="black")
+    font_style = dict(family="Arial, sans-serif", size=12, color="black")
     
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#ECEFF1', title_font=font_style, tickfont=dict(size=12))
-    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#ECEFF1', title_font=font_style, tickfont=dict(size=12))
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#ECEFF1', title_font=font_style, tickfont=dict(size=11))
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#ECEFF1', title_font=font_style, tickfont=dict(size=11))
     
     fig.update_yaxes(title_text=f"Shear ({force_unit})", row=2, col=1)
     fig.update_yaxes(title_text=f"Moment ({moment_unit})", row=3, col=1)
     fig.update_xaxes(title_text=f"Distance ({dist_unit})", row=3, col=1)
     
+    # Dashed Grid Lines for Supports
     for r in [2, 3]:
         for sx in cum_len:
-            fig.add_vline(x=sx, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, row=r, col=1)
+            fig.add_vline(x=sx, line_width=1, line_dash="dash", line_color="gray", opacity=0.4, row=r, col=1)
 
-    fig.update_annotations(font_size=16) 
-    fig.update_layout(height=1100, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=80, l=80, r=40, b=50))
+    fig.update_annotations(font_size=14) 
+    fig.update_layout(height=1000, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=60, l=60, r=30, b=40))
     
     return fig
 
@@ -477,6 +533,7 @@ if st.button("🚀 Run Analysis & Design", type="primary", disabled=not is_stabl
             
         except Exception as e:
             st.error(f"Calculation Error: {e}")
+            st.warning("Please check if your 'beam_analysis.py' returns the expected DataFrame format.")
 
 # 3. Results Visualization
 if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
