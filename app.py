@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT (FIXED & IMPROVED UI)
+# CUSTOM LOAD INPUT (Same as Fixed Version)
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     st.markdown("### 3️⃣ Applied Loads (Service Loads)")
@@ -42,7 +42,6 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     dist_unit = "m"
     loads = []
     
-    # สร้าง Tab แยกแต่ละ Span ให้ชัดเจน
     tabs = st.tabs([f"📍 Span {i+1} (L={spans[i]}m)" for i in range(n_span)])
     
     for i, tab in enumerate(tabs):
@@ -60,25 +59,20 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                     loads.append({'span_idx': i, 'type': 'U', 'w_dl': w_dl, 'w_ll': w_ll, 'w': w_u, 'val': w_u})
                     st.success(f"Added UDL: {w_u:.2f} (Factored)")
 
-            # --- 2. Point Load Section (Fixed Logic) ---
+            # --- 2. Point Load Section ---
             with col_main_2:
                 st.warning(f"**Point Loads (Span {i+1})**")
-                
-                # Input จำนวน Point Load
                 num_p = st.number_input(f"Add Point Loads (Qty)", min_value=0, max_value=5, value=0, key=f"num_p_qty_{i}")
 
                 if num_p > 0:
                     for j in range(num_p):
-                        # ใช้ container และ css class เพื่อจัดกลุ่มให้ดูง่าย
                         with st.container():
                             st.markdown(f"""<div class="load-box"><b>Point Load #{j+1}</b></div>""", unsafe_allow_html=True)
                             c1, c2, c3 = st.columns([1, 1, 1.2])
                             
-                            # Input Values (DL, LL)
                             p_dl = c1.number_input(f"P_DL ({force_unit})", value=0.0, step=100.0, key=f"p_dl_{i}_{j}")
                             p_ll = c2.number_input(f"P_LL ({force_unit})", value=0.0, step=100.0, key=f"p_ll_{i}_{j}")
                             
-                            # Input Position (x) - ล็อกค่าไม่ให้เกินความยาวคาน
                             x_max = float(spans[i])
                             x_loc = c3.number_input(
                                 f"x from Left (0-{x_max}m)", 
@@ -91,25 +85,19 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                             
                             p_u = (p_dl * f_dl) + (p_ll * f_ll)
                             if p_u != 0:
-                                # **CRITICAL FIX**: Explicitly use 'i' for span_idx to prevent loop leakage
                                 loads.append({
                                     'span_idx': i, 
                                     'type': 'P', 
-                                    'P_dl': p_dl, 
-                                    'P_ll': p_ll, 
-                                    'P': p_u, 
-                                    'p': p_u, 
-                                    'val': p_u, 
-                                    'x': x_loc, 
-                                    'location': x_loc
+                                    'P_dl': p_dl, 'P_ll': p_ll, 
+                                    'P': p_u, 'p': p_u, 'val': p_u, 
+                                    'x': x_loc, 'location': x_loc
                                 })
                 else:
                     st.caption("No point loads on this span.")
-
     return loads
 
 # ==========================================
-# VISUALIZATION FUNCTIONS (Analysis Only)
+# VISUALIZATION FUNCTIONS (IMPROVED SCALING)
 # ==========================================
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
     s = size * 0.9 
@@ -140,14 +128,10 @@ def add_peak_annotation(fig, x, y, text, color, row, anchor="bottom"):
     fig.add_annotation(
         x=x, y=y,
         text=f"<b>{text}</b>",
-        showarrow=True,
-        arrowhead=2, arrowsize=1, arrowwidth=1.5,
-        arrowcolor=color,
-        ax=0, ay=-25 if anchor=="bottom" else 25, 
-        font=dict(color=color, size=11),
-        bgcolor="rgba(255,255,255,0.7)",
-        bordercolor=color, borderwidth=1, borderpad=3,
-        row=row, col=1
+        showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1.5,
+        arrowcolor=color, ax=0, ay=-25 if anchor=="bottom" else 25, 
+        font=dict(color=color, size=11), bgcolor="rgba(255,255,255,0.7)",
+        bordercolor=color, borderwidth=1, borderpad=3, row=row, col=1
     )
 
 def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
@@ -160,12 +144,19 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     dist_unit = "m"
     
-    # Scaling for load diagram
+    # --- SCALING LOGIC (Visual Balance) ---
+    # Find max values to normalize heights proportionally
     w_vals = [abs(l.get('w',0)) for l in loads if l.get('type')=='U']
     p_vals = [abs(l.get('P',0)) for l in loads if l.get('type')=='P']
-    max_w = max(w_vals) if w_vals else 1.0
-    max_p = max(p_vals) if p_vals else 1.0
-    target_h = 1.0 
+    
+    # Use 1.0 if list empty to avoid divide by zero
+    max_w = max(w_vals) if w_vals and max(w_vals) > 0 else 1.0
+    max_p = max(p_vals) if p_vals and max(p_vals) > 0 else 1.0
+    
+    # Visual Constants
+    target_h = 1.0        # Baseline height for plotting
+    min_vis_ratio = 0.2   # Smallest load will still have 20% height
+    vis_range = 0.8       # Variable range (0.2 to 1.0)
     
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
@@ -173,7 +164,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         row_heights=[0.25, 0.375, 0.375]
     )
 
-    # --- ROW 1: LOADING ---
+    # --- ROW 1: LOADING DIAGRAM ---
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
     sup_size = target_h * 0.3
@@ -188,21 +179,49 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         x_start = cum_len[span_idx]
         x_end = cum_len[span_idx+1]
         
+        # Draw Uniform Load (Proportional Height)
         if load.get('type') == 'U' and load.get('w', 0) != 0:
             w = load['w']
             ratio = abs(w) / max_w
-            h = (0.3 + 0.7 * ratio) * target_h 
-            fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
+            # Height = 20% base + 80% proportional to load magnitude
+            h = (min_vis_ratio + (vis_range * ratio)) * target_h 
+            
+            fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.25)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
             fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w:.1f}"), row=1, col=1)
             fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"w={w:.0f}", showarrow=False, yshift=10, font=dict(color="#EF6C00", size=10), row=1, col=1)
 
+        # Draw Point Load (Proportional Arrow Length)
         elif load.get('type') == 'P' and load.get('P', 0) != 0:
             P = load['P']
             load_x = load['x'] + x_start
             ratio = abs(P) / max_p
-            h = (0.3 + 0.7 * ratio) * target_h
-            fig.add_annotation(x=load_x, y=0, ax=load_x, ay=h, xref="x1", yref="y1", axref="x1", ayref="y1", showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=3, arrowcolor="#D32F2F", row=1, col=1)
-            fig.add_annotation(x=load_x, y=h, text=f"P={P:.0f}", showarrow=False, yshift=15, font=dict(color="#D32F2F", size=11, weight="bold"), row=1, col=1)
+            # Height = 20% base + 80% proportional to load magnitude
+            h = (min_vis_ratio + (vis_range * ratio)) * target_h
+            
+            # Arrow drawing (ay is offset from y=0)
+            fig.add_annotation(
+                x=load_x, y=0, 
+                ax=0, ay=h*80, # Scale annotation pixel offset
+                axref="x1", ayref="y1", # Use pixel offset for arrow length visual
+                xref="x1", yref="y1",
+                text=f"P={P:.0f}",
+                showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2.5, arrowcolor="#D32F2F",
+                yshift=h*80 + 10, # Push text above arrow tail
+                font=dict(color="#D32F2F", size=11, weight="bold"), 
+                row=1, col=1
+            )
+            # Use a simpler drawing method for consistent arrow length in plot units if preferred, 
+            # but annotation is standard. Adjusted to use 'ay' as pixel offset doesn't work well with responsive.
+            # Let's switch to data coordinates for arrow to be truly proportional.
+            
+            fig.add_annotation(
+                x=load_x, y=0,
+                ax=load_x, ay=h, 
+                xref="x1", yref="y1", axref="x1", ayref="y1",
+                text=f"P={P:.0f}",
+                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=3, arrowcolor="#D32F2F",
+                row=1, col=1
+            )
 
     fig.update_yaxes(range=[-target_h*0.5, target_h*1.8], visible=False, row=1, col=1)
 
