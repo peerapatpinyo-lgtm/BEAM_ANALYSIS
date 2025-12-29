@@ -32,7 +32,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT (Same as Fixed Version)
+# CUSTOM LOAD INPUT
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     st.markdown("### 3️⃣ Applied Loads (Service Loads)")
@@ -97,7 +97,7 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     return loads
 
 # ==========================================
-# VISUALIZATION FUNCTIONS (IMPROVED SCALING)
+# VISUALIZATION FUNCTIONS (CORRECTED SCALING)
 # ==========================================
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
     s = size * 0.9 
@@ -144,19 +144,16 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     dist_unit = "m"
     
-    # --- SCALING LOGIC (Visual Balance) ---
-    # Find max values to normalize heights proportionally
+    # --- SCALING LOGIC ---
     w_vals = [abs(l.get('w',0)) for l in loads if l.get('type')=='U']
     p_vals = [abs(l.get('P',0)) for l in loads if l.get('type')=='P']
     
-    # Use 1.0 if list empty to avoid divide by zero
     max_w = max(w_vals) if w_vals and max(w_vals) > 0 else 1.0
     max_p = max(p_vals) if p_vals and max(p_vals) > 0 else 1.0
     
-    # Visual Constants
-    target_h = 1.0        # Baseline height for plotting
-    min_vis_ratio = 0.2   # Smallest load will still have 20% height
-    vis_range = 0.8       # Variable range (0.2 to 1.0)
+    target_h = 1.0        
+    min_vis_ratio = 0.25   
+    vis_range = 0.75       
     
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
@@ -165,67 +162,71 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     )
 
     # --- ROW 1: LOADING DIAGRAM ---
+    # Beam Line
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
+    # Supports
     sup_size = target_h * 0.3
     for i, x in enumerate(cum_len):
         if i < len(vis_supports):
             stype = vis_supports.iloc[i]['type']
             if stype != "None": draw_support_shape(fig, x, 0, stype, size=sup_size)
 
+    # Loads
     for load in loads:
         span_idx = load.get('span_idx', 0)
         if span_idx >= len(vis_spans): continue 
         x_start = cum_len[span_idx]
         x_end = cum_len[span_idx+1]
         
-        # Draw Uniform Load (Proportional Height)
+        # --- UDL ---
         if load.get('type') == 'U' and load.get('w', 0) != 0:
             w = load['w']
             ratio = abs(w) / max_w
-            # Height = 20% base + 80% proportional to load magnitude
             h = (min_vis_ratio + (vis_range * ratio)) * target_h 
             
             fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.25)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
             fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w:.1f}"), row=1, col=1)
             fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"w={w:.0f}", showarrow=False, yshift=10, font=dict(color="#EF6C00", size=10), row=1, col=1)
 
-        # Draw Point Load (Proportional Arrow Length)
+        # --- POINT LOAD (FIXED) ---
         elif load.get('type') == 'P' and load.get('P', 0) != 0:
             P = load['P']
             load_x = load['x'] + x_start
             ratio = abs(P) / max_p
-            # Height = 20% base + 80% proportional to load magnitude
             h = (min_vis_ratio + (vis_range * ratio)) * target_h
             
-            # Arrow drawing (ay is offset from y=0)
+            # 1. DRAW ARROW
+            # Head (x, y) = (load_x, 0) -> Touching the beam
+            # Tail (ax, ay) = (load_x, h) -> Above the beam
+            # Use data coordinates for both (axref="x1", ayref="y1")
             fig.add_annotation(
-                x=load_x, y=0, 
-                ax=0, ay=h*80, # Scale annotation pixel offset
-                axref="x1", ayref="y1", # Use pixel offset for arrow length visual
+                x=load_x, y=0,           # Head
+                ax=load_x, ay=h,         # Tail (positive y means up in graph coords)
                 xref="x1", yref="y1",
-                text=f"P={P:.0f}",
-                showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2.5, arrowcolor="#D32F2F",
-                yshift=h*80 + 10, # Push text above arrow tail
-                font=dict(color="#D32F2F", size=11, weight="bold"), 
+                axref="x1", ayref="y1",
+                text="",                 # No text on the arrow itself
+                showarrow=True, 
+                arrowhead=2, 
+                arrowsize=1.2, 
+                arrowwidth=2.5, 
+                arrowcolor="#D32F2F",
                 row=1, col=1
             )
-            # Use a simpler drawing method for consistent arrow length in plot units if preferred, 
-            # but annotation is standard. Adjusted to use 'ay' as pixel offset doesn't work well with responsive.
-            # Let's switch to data coordinates for arrow to be truly proportional.
             
+            # 2. DRAW LABEL (Above the arrow tail)
             fig.add_annotation(
-                x=load_x, y=0,
-                ax=load_x, ay=h, 
-                xref="x1", yref="y1", axref="x1", ayref="y1",
+                x=load_x, y=h,
                 text=f"P={P:.0f}",
-                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=3, arrowcolor="#D32F2F",
+                showarrow=False,
+                yshift=10, # Shift text slightly up from the tail
+                font=dict(color="#D32F2F", size=11, weight="bold"),
                 row=1, col=1
             )
 
     fig.update_yaxes(range=[-target_h*0.5, target_h*1.8], visible=False, row=1, col=1)
 
-    # --- DATA PREP ---
+    # --- DATA PREP FOR SFD/BMD ---
     plot_x, plot_v, plot_m = [], [], []
     current_offset = 0.0
     for i in range(len(vis_spans)):
