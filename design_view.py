@@ -24,7 +24,7 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     fig.add_trace(go.Scatter(x=[0, L_total], y=[0, 0], mode='lines', 
                              line=dict(color='black', width=5), hoverinfo='none'), row=1, col=1)
 
-    # Supports (Engineering Style)
+    # Supports
     for i, x in enumerate(cum_len):
         stype = supports.iloc[i]['type']
         if stype == "Pin":
@@ -49,12 +49,12 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
             h = (abs(l['w'])/max_load) * (viz_h * 0.5)
             fig.add_trace(go.Scatter(x=[x1, x2, x2, x1], y=[0, 0, h, h], fill="toself", fillcolor="rgba(33, 150, 243, 0.3)", line_width=0, showlegend=False), row=1, col=1)
             fig.add_trace(go.Scatter(x=[x1, x2], y=[h, h], mode='lines', line=dict(color="#1976D2", width=2), showlegend=False), row=1, col=1)
-            fig.add_annotation(x=(x1+x2)/2, y=h, text=f"<b>w={l['w']:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#0D47A1"), row=1, col=1)
+            fig.add_annotation(x=(x1+x2)/2, y=h, text=f"<b>w = {l['w']:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#0D47A1"), row=1, col=1)
         elif l['type'] == 'P':
             px = cum_len[l['span_idx']] + l['x']
             h = (abs(l['P'])/max_load) * (viz_h * 0.5)
             fig.add_annotation(x=px, y=0, ax=px, ay=h if h>0 else 10, arrowcolor="#D32F2F", arrowhead=2, arrowwidth=2, row=1, col=1)
-            fig.add_annotation(x=px, y=h if h>0 else 10, text=f"<b>P={l['P']:.0f}</b>", showarrow=False, yshift=10, font=dict(color="#D32F2F"), row=1, col=1)
+            fig.add_annotation(x=px, y=h if h>0 else 10, text=f"<b>P = {l['P']:.0f}</b>", showarrow=False, yshift=10, font=dict(color="#D32F2F"), row=1, col=1)
             
     fig.update_yaxes(visible=False, range=[-sup_sz*1.5, viz_h*1.2], row=1, col=1)
     
@@ -62,7 +62,7 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#D32F2F', width=2), fillcolor='rgba(211, 47, 47, 0.1)', name="Shear"), row=2, col=1)
     fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1565C0', width=2), fillcolor='rgba(21, 101, 192, 0.1)', name="Moment"), row=3, col=1)
     
-    # Max/Min Labels (Restored)
+    # Max/Min Labels
     for col, row, color, unit in [('shear', 2, '#D32F2F', u_force), ('moment', 3, '#1565C0', f"{u_force}-{u_len}")]:
         arr = df[col].to_numpy()
         mx, mn = np.max(arr), np.min(arr)
@@ -139,6 +139,7 @@ def render_design_results(df, params):
                 <p>Req. As: <b>{res_pos['As_req']:,.2f} cm²</b></p>
                 <p style="color:{'red' if 'Over' in res_pos['Status'] else 'green'}"><b>{res_pos['Status']}</b></p>
                 <div style="background:#E3F2FD; padding:8px; border-radius:5px;"><b>Use:</b> {res_pos['Bars']}</div>
+                <small style="color:gray">Logs: {', '.join(res_pos.get('Logs',[]))}</small>
             </div>
             """, unsafe_allow_html=True)
             if "Over" not in res_pos['Status']:
@@ -153,6 +154,7 @@ def render_design_results(df, params):
                 <p>Req. As: <b>{res_neg['As_req']:,.2f} cm²</b></p>
                 <p style="color:{'red' if 'Over' in res_neg['Status'] else 'green'}"><b>{res_neg['Status']}</b></p>
                 <div style="background:#FFEBEE; padding:8px; border-radius:5px;"><b>Use:</b> {res_neg['Bars']}</div>
+                <small style="color:gray">Logs: {', '.join(res_neg.get('Logs',[]))}</small>
             </div>
             """, unsafe_allow_html=True)
             if "Over" not in res_neg['Status']:
