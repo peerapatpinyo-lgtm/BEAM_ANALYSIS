@@ -1,95 +1,89 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
 
-def check_stability(supports_df):
-    if supports_df.empty: return False, "No supports defined."
-    types = supports_df[supports_df['type'] != 'None']['type'].tolist()
-    if not types: return False, "No active supports."
-    if len(types) < 2 and "Fixed" not in types: return False, "Unstable Structure (Mechanism)."
-    return True, "Stable"
+import streamlit as st
 
 def render_sidebar():
-    with st.sidebar:
-        st.markdown("### ⚙️ Project Settings")
-        unit_sys = st.radio("Unit System", ["Metric (kg, m)", "SI (kN, m)"])
-        u_force = "kg" if "Metric" in unit_sys else "kN"
-        u_stress = "ksc" if "Metric" in unit_sys else "MPa"
-        
-        st.markdown("### 🧱 Material Properties")
-        with st.expander("Concrete & Steel", expanded=True):
-            fc = st.number_input(f"fc' ({u_stress})", value=240.0)
-            fy = st.number_input(f"fy Main ({u_stress})", value=4000.0)
-            fys = st.number_input(f"fy Stirrup ({u_stress})", value=2400.0)
-        
-        with st.expander("Section Size", expanded=True):
-            b = st.number_input("Width b (cm)", value=25.0)
-            h = st.number_input("Depth h (cm)", value=50.0)
-            cover = st.number_input("Covering (cm)", value=3.0)
-            
-        st.markdown("### ⚖️ Design Factors")
-        method = st.radio("Method", ["SDM (Strength)", "WSD (Working)"], index=0)
-        if "SDM" in method:
-            c1, c2 = st.columns(2)
-            fdl = c1.number_input("DL Factor", value=1.4)
-            fll = c2.number_input("LL Factor", value=1.7)
-        else:
-            fdl, fll = 1.0, 1.0
-            
-        return {'fc':fc, 'fy':fy, 'fys':fys, 'b':b, 'h':h, 'cv':cover, 
-                'fdl':fdl, 'fll':fll, 'method':method, 'unit':unit_sys, 
-                'u_force': u_force, 'u_len': 'm'}
+    st.sidebar.header("⚙️ Design Code & Safety")
+    
+    design_code = st.sidebar.selectbox("Design Code", ["EIT Standard (WSD)", "ACI 318 (SDM)"])
+    method = "SDM" if "ACI" in design_code else "WSD"
+    
+    st.sidebar.markdown("### 🛡️ Load Factors")
+    default_dl = 1.4 if method == "SDM" else 1.0
+    default_ll = 1.7 if method == "SDM" else 1.0
+    
+    fact_dl = st.sidebar.number_input("Dead Load Factor (DL)", value=default_dl, step=0.1)
+    fact_ll = st.sidebar.number_input("Live Load Factor (LL)", value=default_ll, step=0.1)
 
-def render_geometry():
-    st.markdown('<div class="section-header">1️⃣ Geometry & Supports</div>', unsafe_allow_html=True)
-    n = st.number_input("Number of Spans", 1, 10, 2)
-    
-    spans = []
-    st.markdown("**Span Lengths (m)**")
-    cols = st.columns(4)
-    for i in range(n):
-        with cols[i%4]:
-            spans.append(st.number_input(f"L{i+1}", 1.0, 50.0, 5.0, key=f"s{i}"))
-            
-    st.markdown("**Support Types**")
-    sups = []
-    sup_opts = ["Pin", "Roller", "Fixed", "None"]
-    cols = st.columns(5)
-    for i in range(n+1):
-        with cols[i%5]:
-            def_idx = 0 if i==0 else (1 if i<n else 1)
-            sups.append(st.selectbox(f"Node {i+1}", sup_opts, index=def_idx, key=f"sup{i}"))
-            
-    df_sup = pd.DataFrame({'x': [0]+list(np.cumsum(spans)), 'type': sups})
-    ok, msg = check_stability(df_sup)
-    if not ok: st.error(msg)
-    return n, spans, df_sup, ok
+    if method == "WSD":
+        st.sidebar.caption("Note: Standard WSD uses factor 1.0")
 
-def render_loads(n, spans, p):
-    st.markdown('<div class="section-header">2️⃣ Loading Conditions</div>', unsafe_allow_html=True)
-    loads = []
-    tabs = st.tabs([f"Span {i+1}" for i in range(n)])
-    
-    u_load = "kg/m" if "Metric" in p['unit'] else "kN/m"
-    u_point = "kg" if "Metric" in p['unit'] else "kN"
-    
-    for i, tab in enumerate(tabs):
-        with tab:
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown(f"#### Uniform Load ({u_load})")
-                wdl = st.number_input("DL", 0.0, key=f"wdl{i}")
-                wll = st.number_input("LL", 0.0, key=f"wll{i}")
-                wu = wdl*p['fdl'] + wll*p['fll']
-                if wu!=0: loads.append({'span_idx':i, 'type':'U', 'w':wu})
-            with c2:
-                st.markdown(f"#### Point Load ({u_point})")
-                qty = st.number_input("Qty", 0, 5, 0, key=f"q{i}")
-                for j in range(qty):
-                    cc1, cc2, cc3 = st.columns(3)
-                    pd_val = cc1.number_input(f"P_DL {j+1}", key=f"pd{i}{j}")
-                    pl_val = cc2.number_input(f"P_LL {j+1}", key=f"pl{i}{j}")
-                    px = cc3.number_input(f"x (m)", 0.0, spans[i], spans[i]/2.0, key=f"px{i}{j}")
-                    pu = pd_val*p['fdl'] + pl_val*p['fll']
-                    if pu!=0: loads.append({'span_idx':i, 'type':'P', 'P':pu, 'x':px})
-    return loads
+    unit_sys = st.sidebar.selectbox("Unit System", ["Metric (kg, m)", "SI (kN, m)"])
+    return design_code, method, fact_dl, fact_ll, unit_sys
+
+def render_geometry_input():
+    st.markdown("### 📐 Beam Geometry")
+    n_span = st.number_input("Number of Spans", min_value=1, max_value=5, value=2)
+    
+    c1, c2 = st.columns([1.5, 1])
+    spans = []
+    supports = []
+    
+    with c1:
+        st.write(" **Span Lengths (m)**")
+        for i in range(n_span):
+            l = st.number_input(f"Span {i+1} Length (m)", min_value=1.0, value=4.0, key=f"L{i}")
+            spans.append(l)
+            
+    with c2:
+        st.write("**Support Types** (Left -> Right)")
+        for i in range(n_span + 1):
+            def_idx = 0 if i == 0 else 1 
+            s = st.selectbox(f"Support {i+1}", ["Pin", "Roller", "Fixed", "None"], index=def_idx, key=f"sup{i}")
+            supports.append(s)
+    
+    return n_span, spans, supports
+
+def render_loads_input(n_span, spans, f_dl, f_ll, unit_sys):
+    st.markdown("### 🧱 Loads Input")
+    u_load = "kN/m" if "kN" in unit_sys else "kg/m"
+    
+    loads = []
+    for i in range(n_span):
+        with st.expander(f"Loads on Span {i+1}", expanded=True):
+            col_dl, col_ll = st.columns(2)
+            wd = col_dl.number_input(f"DL ({u_load}) - Span {i+1}", value=1000.0)
+            wl = col_ll.number_input(f"LL ({u_load}) - Span {i+1}", value=500.0)
+            
+            w_total = (wd * f_dl) + (wl * f_ll)
+            loads.append({'type': 'uniform', 'span_idx': i, 'w': w_total})
+            
+    return loads
+
+def render_design_input(unit_sys):
+    st.markdown("### 🏗️ Design Parameters")
+    
+    c1, c2 = st.columns(2)
+    u_str = "MPa" if "kN" in unit_sys else "ksc"
+    fc = c1.number_input(f"Concrete f'c ({u_str})", value=240)
+    fy = c2.number_input(f"Steel fy ({u_str})", value=4000)
+    
+    st.markdown("---")
+    c3, c4, c5 = st.columns(3)
+    b_mm = c3.number_input("Width b (mm)", value=250, step=50)
+    h_mm = c4.number_input("Depth h (mm)", value=500, step=50)
+    cov_mm = c5.number_input("Covering (mm)", value=25, step=5)
+    
+    st.markdown("---")
+    c6, c7, c8 = st.columns(3)
+    main_bar = c6.selectbox("Main Bar Size", ["DB12", "DB16", "DB20", "DB25", "DB28"], index=1)
+    stir_bar = c7.selectbox("Stirrup Size", ["RB6", "RB9", "DB10", "DB12"], index=0)
+    
+    # Input mm -> Convert to cm for calculation
+    manual_s_mm = c8.number_input("Manual Stirrup Spacing (mm) [0=Auto]", value=0, help="ใส่ 0 เพื่อให้คำนวณอัตโนมัติ")
+    manual_s_cm = manual_s_mm / 10.0
+
+    b_cm = b_mm / 10.0
+    h_cm = h_mm / 10.0
+    cov_cm = cov_mm / 10.0
+    
+    return fc, fy, b_cm, h_cm, cov_cm, main_bar, stir_bar, manual_s_cm
