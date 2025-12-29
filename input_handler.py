@@ -22,10 +22,14 @@ def render_sidebar():
             fy = st.number_input(f"fy Main ({u_stress})", value=4000.0)
             fys = st.number_input(f"fy Stirrup ({u_stress})", value=2400.0)
         
-        with st.expander("Section Size", expanded=True):
+        with st.expander("Section & Rebar Selection", expanded=True):
             b = st.number_input("Width b (cm)", value=25.0)
             h = st.number_input("Depth h (cm)", value=50.0)
             cover = st.number_input("Covering (cm)", value=3.0)
+            # --- เอากลับมาตามคำขอ ---
+            st.markdown("**Preferred Bar Sizes:**")
+            db_main = st.selectbox("Main Bar (mm)", [12, 16, 20, 25, 28, 32], index=1)
+            db_stirrup = st.selectbox("Stirrup (mm)", [6, 9, 12], index=0)
             
         st.markdown("### ⚖️ Design Factors")
         method = st.radio("Method", ["SDM (Strength)", "WSD (Working)"], index=0)
@@ -37,6 +41,7 @@ def render_sidebar():
             fdl, fll = 1.0, 1.0
             
         return {'fc':fc, 'fy':fy, 'fys':fys, 'b':b, 'h':h, 'cv':cover, 
+                'db_main': db_main, 'db_stirrup': db_stirrup,
                 'fdl':fdl, 'fll':fll, 'method':method, 'unit':unit_sys, 
                 'u_force': u_force, 'u_len': 'm'}
 
@@ -82,12 +87,9 @@ def render_loads(n, spans, p):
                 wll = st.number_input("LL", 0.0, key=f"wll{i}")
                 wu = wdl*p['fdl'] + wll*p['fll']
                 
-                # Show Calculation Item
                 if wu != 0:
-                    st.info(f"**Calc:** $W_u = ({wdl} \\times {p['fdl']}) + ({wll} \\times {p['fll']}) = {wu:.2f}$")
+                    st.info(f"**Calc:** $W_u = {wu:.2f}$")
                     loads.append({'span_idx':i, 'type':'U', 'w':wu})
-                else:
-                    st.caption("No Uniform Load")
 
             with c2:
                 st.markdown(f"#### Point Load ({u_point})")
@@ -99,9 +101,7 @@ def render_loads(n, spans, p):
                     px = cc3.number_input(f"x (m)", 0.0, spans[i], spans[i]/2.0, key=f"px{i}{j}")
                     
                     pu = pd_val*p['fdl'] + pl_val*p['fll']
-                    
-                    # Show Calculation Item
                     if pu != 0:
-                        st.info(f"**Calc:** $P_u = ({pd_val} \\times {p['fdl']}) + ({pl_val} \\times {p['fll']}) = {pu:.2f}$")
+                        st.info(f"**Calc:** $P_u = {pu:.2f}$")
                         loads.append({'span_idx':i, 'type':'P', 'P':pu, 'x':px})
     return loads
