@@ -8,7 +8,6 @@ from plotly.subplots import make_subplots
 try:
     from beam_analysis import run_beam_analysis 
     import input_handler as ui
-    # เรียกไฟล์ Design ใหม่เข้ามา
     import design_view 
 except ImportError as e:
     st.error(f"⚠️ Error: Missing required files. {e}")
@@ -27,48 +26,86 @@ st.markdown("""
     html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
     .header-box { background: linear-gradient(90deg, #1565C0 0%, #0D47A1 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
     .sub-header { border-left: 5px solid #1565C0; padding-left: 15px; font-size: 1.25rem; font-weight: 600; margin-top: 30px; margin-bottom: 15px; background: #E3F2FD; padding: 10px; border-radius: 0 8px 8px 0; color: #0D47A1; }
+    .load-box { border: 1px solid #E0E0E0; padding: 15px; border-radius: 8px; background-color: #FAFAFA; margin-bottom: 10px; }
     .stNumberInput input { font-weight: bold; color: #1565C0; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT
+# CUSTOM LOAD INPUT (FIXED & IMPROVED UI)
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     st.markdown("### 3️⃣ Applied Loads (Service Loads)")
-    st.caption(f"Note: Factors DL={f_dl:.1f}, LL={f_ll:.1f} will be applied for analysis.")
+    st.caption(f"Note: Factors DL={f_dl:.1f}, LL={f_ll:.1f} will be applied automatically.")
+    
     force_unit = "kg" if "Metric" in unit_sys else "kN"
     dist_unit = "m"
     loads = []
     
-    tabs = st.tabs([f"Span {i+1}" for i in range(n_span)])
+    # สร้าง Tab แยกแต่ละ Span ให้ชัดเจน
+    tabs = st.tabs([f"📍 Span {i+1} (L={spans[i]}m)" for i in range(n_span)])
     
     for i, tab in enumerate(tabs):
         with tab:
-            c1, c2 = st.columns(2)
-            # --- Uniform Load ---
-            with c1:
-                st.markdown(f"**Uniform Load (w)**")
-                w_dl = st.number_input(f"Dead Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_dl_{i}")
-                w_ll = st.number_input(f"Live Load w ({force_unit}/{dist_unit})", value=0.0, key=f"w_ll_{i}")
+            col_main_1, col_main_2 = st.columns([1, 1.2])
+            
+            # --- 1. Uniform Load Section ---
+            with col_main_1:
+                st.info(f"**Uniform Load (Span {i+1})**")
+                w_dl = st.number_input(f"Dead Load (w_dl)", value=0.0, step=100.0, format="%.2f", key=f"w_dl_{i}", help=f"Unit: {force_unit}/{dist_unit}")
+                w_ll = st.number_input(f"Live Load (w_ll)", value=0.0, step=100.0, format="%.2f", key=f"w_ll_{i}", help=f"Unit: {force_unit}/{dist_unit}")
                 
                 w_u = (w_dl * f_dl) + (w_ll * f_ll)
                 if w_u != 0:
                     loads.append({'span_idx': i, 'type': 'U', 'w_dl': w_dl, 'w_ll': w_ll, 'w': w_u, 'val': w_u})
-            
-            # --- Point Load ---
-            with c2:
-                st.markdown(f"**Point Loads (P)**")
-                num_p = st.number_input(f"Qty Point Load", min_value=0, max_value=5, value=0, key=f"num_p_{i}")
-                for j in range(num_p):
-                    cc1, cc2, cc3 = st.columns([1, 1, 1])
-                    p_dl = cc1.number_input(f"P{j+1} DL", value=0.0, key=f"p_dl_{i}_{j}")
-                    p_ll = cc2.number_input(f"P{j+1} LL", value=0.0, key=f"p_ll_{i}_{j}")
-                    x_loc = cc3.number_input(f"x (m)", value=spans[i]/2, min_value=0.0, max_value=float(spans[i]), key=f"px_{i}_{j}")
-                    
-                    p_u = (p_dl * f_dl) + (p_ll * f_ll)
-                    if p_u != 0:
-                        loads.append({'span_idx': i, 'type': 'P', 'P_dl': p_dl, 'P_ll': p_ll, 'P': p_u, 'p': p_u, 'val': p_u, 'x': x_loc, 'location': x_loc})
+                    st.success(f"Added UDL: {w_u:.2f} (Factored)")
+
+            # --- 2. Point Load Section (Fixed Logic) ---
+            with col_main_2:
+                st.warning(f"**Point Loads (Span {i+1})**")
+                
+                # Input จำนวน Point Load
+                num_p = st.number_input(f"Add Point Loads (Qty)", min_value=0, max_value=5, value=0, key=f"num_p_qty_{i}")
+
+                if num_p > 0:
+                    for j in range(num_p):
+                        # ใช้ container และ css class เพื่อจัดกลุ่มให้ดูง่าย
+                        with st.container():
+                            st.markdown(f"""<div class="load-box"><b>Point Load #{j+1}</b></div>""", unsafe_allow_html=True)
+                            c1, c2, c3 = st.columns([1, 1, 1.2])
+                            
+                            # Input Values (DL, LL)
+                            p_dl = c1.number_input(f"P_DL ({force_unit})", value=0.0, step=100.0, key=f"p_dl_{i}_{j}")
+                            p_ll = c2.number_input(f"P_LL ({force_unit})", value=0.0, step=100.0, key=f"p_ll_{i}_{j}")
+                            
+                            # Input Position (x) - ล็อกค่าไม่ให้เกินความยาวคาน
+                            x_max = float(spans[i])
+                            x_loc = c3.number_input(
+                                f"x from Left (0-{x_max}m)", 
+                                min_value=0.0, 
+                                max_value=x_max, 
+                                value=x_max/2, 
+                                step=0.1,
+                                key=f"p_x_{i}_{j}"
+                            )
+                            
+                            p_u = (p_dl * f_dl) + (p_ll * f_ll)
+                            if p_u != 0:
+                                # **CRITICAL FIX**: Explicitly use 'i' for span_idx to prevent loop leakage
+                                loads.append({
+                                    'span_idx': i, 
+                                    'type': 'P', 
+                                    'P_dl': p_dl, 
+                                    'P_ll': p_ll, 
+                                    'P': p_u, 
+                                    'p': p_u, 
+                                    'val': p_u, 
+                                    'x': x_loc, 
+                                    'location': x_loc
+                                })
+                else:
+                    st.caption("No point loads on this span.")
+
     return loads
 
 # ==========================================
@@ -256,5 +293,4 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     st.plotly_chart(create_engineering_plots(df, vis_spans, vis_supports_df, loads, unit_sys), use_container_width=True, key="eng_plot")
 
     # 3.2 CALL DESIGN MODULE (Design View)
-    # ส่งต่อ Logic ทั้งหมดไปให้ design_view.py จัดการ
     design_view.render_design_section(df, vis_spans, unit_sys, method)
