@@ -22,22 +22,25 @@ def calculate_flexure_sdm(Mu, type_str, params):
     phi_b = 0.90
     beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*(fc-280)/70)
     
+    # Unit Consistency
     if 'Metric' in params['unit']:
-        M_design = abs(Mu) * 100 
+        M_design = abs(Mu) * 100 # kg-m -> kg-cm
         fc_calc, fy_calc = fc, fy
         b_calc, d_calc = b, d
         rho_min = max(14/fy_calc, 0.25*np.sqrt(fc_calc)/fy_calc) 
         bal_const = 6120
     else: 
-        M_design = abs(Mu) * 1e6 
+        M_design = abs(Mu) * 1e6 # kN-m -> N-mm
         fc_calc, fy_calc = fc, fy
         b_calc, d_calc = b*10, d*10
         rho_min = max(1.4/fy_calc, 0.25*np.sqrt(fc_calc)/fy_calc)
         bal_const = 6000
 
     Rn = M_design / (phi_b * b_calc * d_calc**2)
-    rho_bal = 0.85 * beta1 * (fc_calc/fy_calc) * (bal_const/(bal_const+fy_calc))
-    rho_max = 0.75 * rho_bal 
+    
+    calc_logs = []
+    calc_logs.append(f"Mu = {M_design:.0f} (converted)")
+    calc_logs.append(f"Rn = {Rn:.4f}")
     
     try:
         term = 1 - 2*Rn/(0.85*fc_calc)
@@ -45,9 +48,13 @@ def calculate_flexure_sdm(Mu, type_str, params):
             rho = 999 
         else:
             rho = (0.85 * fc_calc / fy_calc) * (1 - np.sqrt(term))
+            calc_logs.append(f"rho_req = {rho:.5f}")
     except:
         rho = 999
         
+    rho_bal = 0.85 * beta1 * (fc_calc/fy_calc) * (bal_const/(bal_const+fy_calc))
+    rho_max = 0.75 * rho_bal 
+    
     As_req = rho * b_calc * d_calc
     As_min = rho_min * b_calc * d_calc
     
@@ -61,7 +68,8 @@ def calculate_flexure_sdm(Mu, type_str, params):
         final_As = As_req
     elif rho < rho_min:
         final_As = As_min
-        status = "⚠️ Min Steel"
+        status = "⚠️ Min Steel Governs"
+        calc_logs.append(f"rho < rho_min ({rho_min:.5f})")
     else:
         final_As = As_req
         status = "✅ OK"
@@ -85,7 +93,8 @@ def calculate_flexure_sdm(Mu, type_str, params):
         "Mu": abs(Mu),
         "As_req": return_As, 
         "Status": status,
-        "Bars": select_str
+        "Bars": select_str,
+        "Logs": calc_logs
     }
 
 def calculate_shear_capacity(Vu, params):
@@ -98,8 +107,8 @@ def calculate_shear_capacity(Vu, params):
         phi_vc = 0.85 * vc 
         vu_val = abs(Vu) 
     else:
-        vc = 0.17 * np.sqrt(fc) * b*10 * d*10 
-        phi_vc = 0.75 * (vc / 1000) 
+        vc = 0.17 * np.sqrt(fc) * b*10 * d*10 # N
+        phi_vc = 0.75 * (vc / 1000) # kN
         vu_val = abs(Vu) 
         
     return vu_val, phi_vc
