@@ -76,35 +76,27 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
 
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
     """Draws ENHANCED Engineering Supports"""
-    s = size * 0.9 # Slightly larger
-    # Sharper colors for engineering look
+    s = size * 0.9 
     line_col, fill_col = "#263238", "#B0BEC5" 
     
     if sup_type == "Pin":
-        # Triangle
         fig.add_shape(type="path", path=f"M {x},{y} L {x-s/2},{y-s} L {x+s/2},{y-s} Z", fillcolor=fill_col, line_color=line_col, line_width=2, row=1, col=1)
-        # Base line with hatch
         fig.add_shape(type="line", x0=x-s*0.8, y0=y-s, x1=x+s*0.8, y1=y-s, line=dict(color=line_col, width=3), row=1, col=1)
         for hx in np.linspace(x-s*0.8, x+s*0.8, 6): 
             fig.add_shape(type="line", x0=hx, y0=y-s, x1=hx-s/3, y1=y-s*1.4, line=dict(color=line_col, width=1), row=1, col=1)
 
     elif sup_type == "Roller":
-        # Triangle
         fig.add_shape(type="path", path=f"M {x},{y} L {x-s/2},{y-s*0.7} L {x+s/2},{y-s*0.7} Z", fillcolor=fill_col, line_color=line_col, line_width=2, row=1, col=1)
-        # Wheels
         r_wheel = s * 0.15
         fig.add_shape(type="circle", x0=x-s/3, y0=y-s*0.7-2*r_wheel, x1=x-s/3+2*r_wheel, y1=y-s*0.7, line_color=line_col, fillcolor=fill_col, row=1, col=1)
         fig.add_shape(type="circle", x0=x+s/3-2*r_wheel, y0=y-s*0.7-2*r_wheel, x1=x+s/3, y1=y-s*0.7, line_color=line_col, fillcolor=fill_col, row=1, col=1)
-        # Base line
         base_y = y - s*0.7 - 2*r_wheel
         fig.add_shape(type="line", x0=x-s*0.8, y0=base_y, x1=x+s*0.8, y1=base_y, line=dict(color=line_col, width=2), row=1, col=1)
 
     elif sup_type == "Fixed":
         h_wall = s * 1.6
-        # Wall line
         fig.add_shape(type="line", x0=x, y0=y-h_wall/2, x1=x, y1=y+h_wall/2, line=dict(color=line_col, width=5), row=1, col=1)
-        # Hatch lines
-        direction = -1 if x <= 0.1 else 1 # Hatch direction depends on side
+        direction = -1 if x <= 0.1 else 1 
         for hy in np.linspace(y-h_wall/2, y+h_wall/2, 8):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1.5), row=1, col=1)
 
@@ -116,9 +108,9 @@ def add_peak_annotation(fig, x, y, text, color, row, anchor="bottom"):
         showarrow=True,
         arrowhead=2, arrowsize=1, arrowwidth=1.5,
         arrowcolor=color,
-        ax=0, ay=-25 if anchor=="bottom" else 25, # Offset text
+        ax=0, ay=-25 if anchor=="bottom" else 25, 
         font=dict(color=color, size=11),
-        bgcolor="rgba(255,255,255,0.7)", # Background for readability
+        bgcolor="rgba(255,255,255,0.7)",
         bordercolor=color, borderwidth=1, borderpad=3,
         row=row, col=1
     )
@@ -131,6 +123,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     
     force_unit = "kg" if "Metric" in unit_sys else "kN"
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
+    dist_unit = "m"  # <--- FIX: Added missing variable here
     
     # Scaling for load diagram
     w_vals = [abs(l.get('w',0)) for l in loads if l.get('type')=='U']
@@ -148,14 +141,12 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     # --- ROW 1: LOADING ---
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
-    # Supports (Enhanced)
     sup_size = target_h * 0.3
     for i, x in enumerate(cum_len):
         if i < len(vis_supports):
             stype = vis_supports.iloc[i]['type']
             if stype != "None": draw_support_shape(fig, x, 0, stype, size=sup_size)
 
-    # Loads
     for load in loads:
         span_idx = load.get('span_idx', 0)
         if span_idx >= len(vis_spans): continue 
@@ -193,14 +184,12 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         plot_m.extend((-span_data['moment']).tolist()) 
         current_offset += vis_spans[i]
     
-    # Convert to numpy for easier indexing
     np_x, np_v, np_m = np.array(plot_x), np.array(plot_v), np.array(plot_m)
 
-    # --- ROW 2: SFD (Shear - Reddish) ---
+    # --- ROW 2: SFD ---
     shear_color = '#D32F2F'
     fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=shear_color, width=2.5), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="V: %{y:.2f}"), row=2, col=1)
     
-    # Find and Annotate Max/Min Shear
     v_max, v_min = np_v.max(), np_v.min()
     if abs(v_max) > 0.1:
         idx_max = np.argmax(np_v)
@@ -209,25 +198,20 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         idx_min = np.argmin(np_v)
         add_peak_annotation(fig, np_x[idx_min], v_min, f"Min: {v_min:.1f}", shear_color, 2, "top")
 
-
-    # --- ROW 3: BMD (Moment - Bluish) ---
+    # --- ROW 3: BMD ---
     moment_color = '#1976D2'
     fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=moment_color, width=2.5), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="M: %{y:.2f} (Tension Side)"), row=3, col=1)
 
-    # Find and Annotate Max/Min Moment
     m_max, m_min = np_m.max(), np_m.min()
-    # Max Positive (Sagging)
     if m_max > 0.1:
         idx_max = np.argmax(np_m)
         add_peak_annotation(fig, np_x[idx_max], m_max, f"+M max: {m_max:.1f}", moment_color, 3, "bottom")
-    # Max Negative (Hogging)
     if m_min < -0.1:
         idx_min = np.argmin(np_m)
         add_peak_annotation(fig, np_x[idx_min], m_min, f"-M max: {m_min:.1f}", moment_color, 3, "top")
     
-    # --- Final Aesthetics ---
     for r in [2, 3]:
-        fig.add_hline(y=0, line_width=1.5, line_color="#37474F", row=r, col=1) # Thicker zero line
+        fig.add_hline(y=0, line_width=1.5, line_color="#37474F", row=r, col=1) 
         fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', zeroline=False, row=r, col=1)
         fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', row=r, col=1)
         for x in cum_len: fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="#90A4AE", opacity=0.7, row=r, col=1)
@@ -237,7 +221,6 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
 
     return fig
 
-# ... (ส่วน draw_reinforcement_profile และ draw_section_real เหมือนเดิม) ...
 def draw_reinforcement_profile(spans, design_results, m_bar, s_bar):
     total_len = sum(spans)
     cum_len = [0] + list(np.cumsum(spans))
