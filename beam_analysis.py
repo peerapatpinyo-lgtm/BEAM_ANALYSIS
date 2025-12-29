@@ -18,14 +18,12 @@ class BeamAnalysisEngine:
         
         for i, L in enumerate(self.spans):
             k = self.E * self.I / L**3
-            # Local K matrix
             K_elem = np.array([
                 [12*k,      6*k*L,    -12*k,     6*k*L],
                 [6*k*L,     4*k*L**2, -6*k*L,    2*k*L**2],
                 [-12*k,    -6*k*L,     12*k,    -6*k*L],
                 [6*k*L,     2*k*L**2, -6*k*L,    4*k*L**2]
             ])
-            
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             for r in range(4):
                 for c in range(4):
@@ -65,10 +63,6 @@ class BeamAnalysisEngine:
         
         # 4. Solve
         free_dof = [i for i in range(self.dof) if i not in constrained_dof]
-        
-        if not free_dof:
-            return None, None # Unstable
-
         K_reduced = K_global[np.ix_(free_dof, free_dof)]
         F_reduced = F_global[free_dof]
         
@@ -87,12 +81,12 @@ class BeamAnalysisEngine:
         # Internal Forces Integration
         curr_x = 0
         all_x, all_v, all_m = [], [], []
-        points_per_span = 100 
         
         for i, L in enumerate(self.spans):
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             d_local = D_total[idx]
             
+            # Stiffness Forces
             k = self.E * self.I / L**3
             K_el = np.array([
                 [12*k,      6*k*L,    -12*k,     6*k*L],
@@ -102,9 +96,12 @@ class BeamAnalysisEngine:
             ])
             f_member = np.dot(K_el, d_local)
             
-            # Add FEM back
+            # FEM Back-calculation
             fem_vec = np.zeros(4)
             span_loads = [l for l in self.loads if l['span_idx'] == i]
+            
+            # Critical Points for this span (Start, End, Point Loads)
+            critical_pts = [0, L]
             
             for l in span_loads:
                 if l['type'] == 'U':
@@ -117,13 +114,22 @@ class BeamAnalysisEngine:
                     r2 = (P*a**2*(a+3*b))/L**3
                     m2 = -(P*a**2*b)/L**2
                     fem_vec += np.array([r1, m1, r2, m2])
+                    # Add point load location to critical points
+                    critical_pts.append(l['x'])
+                    critical_pts.append(l['x'] - 0.001) # Pre-step
+                    critical_pts.append(l['x'] + 0.001) # Post-step
+            
+            # Sort and create evaluation points
+            critical_pts = sorted(list(set(critical_pts)))
+            # Add intermediate points for smooth curves (UDL)
+            fine_pts = np.linspace(0, L, 50)
+            x_span = sorted(list(set(critical_pts + list(fine_pts))))
             
             f_final = f_member + fem_vec
             V_start, M_start = f_final[0], f_final[1]
             
-            x_span = np.linspace(0, L, points_per_span)
-            
             for x in x_span:
+                if x < 0 or x > L: continue
                 v_x = V_start
                 m_x = -M_start + V_start * x 
                 
@@ -134,7 +140,7 @@ class BeamAnalysisEngine:
                             v_x -= w * x
                             m_x -= w * x**2 / 2
                     elif l['type'] == 'P':
-                        if x >= l['x']:
+                        if x >= l['x']: # Applied
                             v_x -= l['P']
                             m_x -= l['P'] * (x - l['x'])
                 
