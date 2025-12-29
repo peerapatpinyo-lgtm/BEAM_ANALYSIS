@@ -5,7 +5,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # --- IMPORT MODULES ---
-# หมายเหตุ: ต้องมีไฟล์ beam_analysis.py และ design_view.py อยู่ใน folder เดียวกัน
 try:
     from beam_analysis import run_beam_analysis 
     import design_view 
@@ -32,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. INPUT SECTIONS (RESTORED)
+# 2. INPUT SECTIONS (RESTORED COMPLETELY)
 # ==========================================
 
 def render_sidebar():
@@ -72,7 +71,6 @@ def render_geometry_input():
     
     # Init Data
     spans = []
-    supports_data = [] # List of dicts
     
     # Create columns for spans
     cols = st.columns(n_span)
@@ -92,7 +90,6 @@ def render_geometry_input():
         s_type = col.selectbox(f"Sup {i+1}", support_options, index=default_idx, key=f"sup_{i}")
         current_supports.append(s_type)
     
-    # Convert supports to dataframe-like structure or list for backend
     # Mapping supports to x coordinates
     x_coords = [0] + list(np.cumsum(spans))
     
@@ -110,8 +107,6 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     st.markdown("### 2️⃣ Applied Loads (Service Loads)")
     st.caption(f"Note: Factors DL={f_dl:.1f}, LL={f_ll:.1f} will be applied automatically.")
     
-    force_unit = "kg" if "Metric" in unit_sys else "kN"
-    dist_unit = "m"
     loads = []
     
     tabs = st.tabs([f"📍 Span {i+1} (L={spans[i]}m)" for i in range(n_span)])
@@ -161,7 +156,7 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     return loads
 
 # ==========================================
-# 4. VISUALIZATION FUNCTIONS (CORRECTED)
+# 4. VISUALIZATION FUNCTIONS (PROFESSIONAL FIX)
 # ==========================================
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
     s = size * 0.9 
@@ -208,26 +203,34 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     dist_unit = "m"
     
-    # --- SCALING LOGIC ---
-    w_vals = [abs(l.get('w',0)) for l in loads if l.get('type')=='U']
-    p_vals = [abs(l.get('P',0)) for l in loads if l.get('type')=='P']
+    # --- GLOBAL SCALING LOGIC (FIXED) ---
+    # Find the maximum magnitude across ALL loads (both UDL and Point) to scale them relative to each other.
+    all_magnitudes = []
+    for l in loads:
+        if l['type'] == 'U': all_magnitudes.append(abs(l.get('w', 0)))
+        if l['type'] == 'P': all_magnitudes.append(abs(l.get('P', 0)))
     
-    max_w = max(w_vals) if w_vals and max(w_vals) > 0 else 1.0
-    max_p = max(p_vals) if p_vals and max(p_vals) > 0 else 1.0
+    # Global Max Load Value used for 100% height reference
+    global_max = max(all_magnitudes) if all_magnitudes and max(all_magnitudes) > 0 else 1.0
     
-    target_h = 1.0 
+    # Base height for max load in the drawing
+    target_h = 1.2 
     
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-        subplot_titles=("<b>1. Loading Diagram (Factored)</b>", f"<b>2. Shear Force Diagram (SFD) [{force_unit}]</b>", f"<b>3. Bending Moment Diagram (BMD) [{moment_unit}]</b>"),
-        row_heights=[0.25, 0.375, 0.375]
+        subplot_titles=(
+            "<b>1. Loading Diagram (Free Body Diagram)</b>", 
+            f"<b>2. Shear Force Diagram (SFD)</b>", 
+            f"<b>3. Bending Moment Diagram (BMD)</b>"
+        ),
+        row_heights=[0.3, 0.35, 0.35]
     )
 
     # --- 1. Loading Diagram ---
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
     # Supports
-    sup_size = target_h * 0.3
+    sup_size = target_h * 0.25
     for i, x in enumerate(cum_len):
         if i < len(vis_supports):
             stype = vis_supports.iloc[i]['type']
@@ -243,22 +246,23 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         # --- UDL ---
         if load.get('type') == 'U' and load.get('w', 0) != 0:
             w = load['w']
-            ratio = abs(w) / max_w
-            h = (0.2 + 0.8 * ratio) * target_h 
+            # Scale relative to global max
+            ratio = abs(w) / global_max
+            # Minimum visibility of 15% + Proportional height
+            h = (0.15 + 0.85 * ratio) * target_h 
             
             fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.25)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
             fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w:.1f}"), row=1, col=1)
             fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"w={w:.0f}", showarrow=False, yshift=10, font=dict(color="#EF6C00", size=10), row=1, col=1)
 
-        # --- POINT LOAD (FIXED ARROW) ---
+        # --- POINT LOAD ---
         elif load.get('type') == 'P' and load.get('P', 0) != 0:
             P = load['P']
             load_x = load['x'] + x_start
-            ratio = abs(P) / max_p
-            h = (0.25 + 0.75 * ratio) * target_h
+            # Scale relative to global max
+            ratio = abs(P) / global_max
+            h = (0.15 + 0.85 * ratio) * target_h
             
-            # Draw Arrow: Head at beam (0), Tail at height (h)
-            # KEY FIX: Using axref='x1', ayref='y1' to match subplot coordinates
             fig.add_annotation(
                 x=load_x, y=0,              # Head (Beam)
                 ax=load_x, ay=h,            # Tail (Height)
@@ -275,7 +279,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
                 row=1, col=1
             )
 
-    fig.update_yaxes(range=[-target_h*0.5, target_h*1.8], visible=False, row=1, col=1)
+    fig.update_yaxes(range=[-target_h*0.5, target_h*1.5], visible=False, row=1, col=1)
 
     # --- 2. SFD & 3. BMD Data Prep ---
     plot_x, plot_v, plot_m = [], [], []
@@ -297,26 +301,33 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=shear_color, width=2.5), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="V: %{y:.2f}"), row=2, col=1)
     if len(np_v) > 0:
         v_max, v_min = np_v.max(), np_v.min()
-        if abs(v_max) > 0.1: add_peak_annotation(fig, np_x[np.argmax(np_v)], v_max, f"Max: {v_max:.1f}", shear_color, 2, "bottom")
-        if abs(v_min) > 0.1: add_peak_annotation(fig, np_x[np.argmin(np_v)], v_min, f"Min: {v_min:.1f}", shear_color, 2, "top")
+        if abs(v_max) > 0.1: add_peak_annotation(fig, np_x[np.argmax(np_v)], v_max, f"{v_max:.1f}", shear_color, 2, "bottom")
+        if abs(v_min) > 0.1: add_peak_annotation(fig, np_x[np.argmin(np_v)], v_min, f"{v_min:.1f}", shear_color, 2, "top")
 
     # Plot BMD
     moment_color = '#1976D2'
     fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=moment_color, width=2.5), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="M: %{y:.2f}"), row=3, col=1)
     if len(np_m) > 0:
         m_max, m_min = np_m.max(), np_m.min()
-        if m_max > 0.1: add_peak_annotation(fig, np_x[np.argmax(np_m)], m_max, f"+M: {m_max:.1f}", moment_color, 3, "bottom")
-        if m_min < -0.1: add_peak_annotation(fig, np_x[np.argmin(np_m)], m_min, f"-M: {m_min:.1f}", moment_color, 3, "top")
+        if m_max > 0.1: add_peak_annotation(fig, np_x[np.argmax(np_m)], m_max, f"{m_max:.1f}", moment_color, 3, "bottom")
+        if m_min < -0.1: add_peak_annotation(fig, np_x[np.argmin(np_m)], m_min, f"{m_min:.1f}", moment_color, 3, "top")
     
+    # --- PROFESSIONAL LAYOUT SETTINGS ---
+    # Row 2: SFD Layout
+    fig.update_yaxes(title_text=f"Shear V ({force_unit})", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinewidth=2, zerolinecolor='#37474F', row=2, col=1)
+    # Row 3: BMD Layout
+    fig.update_yaxes(title_text=f"Moment M ({moment_unit})", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinewidth=2, zerolinecolor='#37474F', row=3, col=1)
+    
+    # Common X-axis
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', row=2, col=1)
+    fig.update_xaxes(title_text=f"Position ({dist_unit})", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', row=3, col=1)
+    
+    # Grid lines for Spans
     for r in [2, 3]:
-        fig.add_hline(y=0, line_width=1.5, line_color="#37474F", row=r, col=1) 
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', zeroline=False, row=r, col=1)
-        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', row=r, col=1)
         for x in cum_len: fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="#90A4AE", opacity=0.7, row=r, col=1)
 
-    fig.update_layout(height=900, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=60, b=40, l=80, r=40))
-    fig.update_xaxes(title_text=f"Position ({dist_unit})", row=3, col=1)
-
+    fig.update_layout(height=1000, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=60, b=40, l=80, r=40))
+    
     return fig
 
 # ==========================================
@@ -334,7 +345,7 @@ with c_geo:
     n_span, spans, supports = render_geometry_input()
 
 with c_load:
-    # Use the restored/fixed function
+    # Use the restored function
     loads_input = render_custom_load_input(n_span, spans, unit_sys, fact_dl, fact_ll)
 
 # --- 2. Calculation ---
@@ -361,5 +372,5 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     st.markdown('<div class="sub-header">1️⃣ Analysis Results</div>', unsafe_allow_html=True)
     st.plotly_chart(create_engineering_plots(df, vis_spans, vis_supports_df, loads, unit_sys), use_container_width=True, key="eng_plot")
 
-    # B. Design (Assuming design_view handles its own internal logic based on results)
+    # B. Design
     design_view.render_design_section(df, vis_spans, unit_sys, method)
