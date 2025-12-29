@@ -23,6 +23,7 @@ def calculate_flexure_sdm(Mu, type_str, params):
     phi_b = 0.90
     beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*(fc-280)/70)
     
+    # Unit conversion
     if 'Metric' in params['unit']:
         M_design = abs(Mu) * 100 
         fc_calc, fy_calc = fc, fy
@@ -34,13 +35,15 @@ def calculate_flexure_sdm(Mu, type_str, params):
         b_calc, d_calc = b*10, d*10
         rho_min = max(1.4/fy_calc, 0.25*np.sqrt(fc_calc)/fy_calc)
 
+    # Design
+    rho = 999
     try:
         Rn = M_design / (phi_b * b_calc * d_calc**2)
         term = 1 - 2*Rn/(0.85*fc_calc)
-        if term < 0: rho = 999 
-        else: rho = (0.85 * fc_calc / fy_calc) * (1 - np.sqrt(term))
+        if term >= 0:
+            rho = (0.85 * fc_calc / fy_calc) * (1 - np.sqrt(term))
     except:
-        rho = 999
+        pass
         
     bal_const = 6120 if 'Metric' in params['unit'] else 6000
     rho_bal = 0.85 * beta1 * (fc_calc/fy_calc) * (bal_const/(bal_const+fy_calc))
@@ -62,7 +65,10 @@ def calculate_flexure_sdm(Mu, type_str, params):
     if "Over" not in status:
         unit_area = 3.1416 * (db_select/10)**2 / 4 if 'Metric' in params['unit'] else 3.1416 * db_select**2 / 4
         num = math.ceil(final_As / unit_area)
-        if num > max(b/3.0, 15):
+        
+        # Check excessive bars
+        limit_bars = max(b/3.0, 15)
+        if num > limit_bars: 
             select_str = f"Too many DB{db_select}"
             status = "⚠️ Section Too Small"
         else:
@@ -77,7 +83,7 @@ def calculate_shear_capacity(Vu, params):
     b = params['b']
     d = params['h'] - params['cv']
     db_stir = params['db_stirrup']
-    step = params.get('s_step', 2.5) # User Requested: Use Spacing Step
+    step = params.get('s_step', 2.5) 
     
     spacing_txt = ""
     
@@ -93,11 +99,13 @@ def calculate_shear_capacity(Vu, params):
             s_max = d/2
             s_use = min(s_req, s_max, 30.0)
             
-            # Logic: Round Down to nearest Step
+            # Rounding logic
             s_use = math.floor(s_use / step) * step
             
-            if s_use < 5.0: spacing_txt = f"RB{db_stir} - Increase Section"
-            else: spacing_txt = f"RB{db_stir}@{s_use:.0f}cm"
+            if s_use < 5.0: 
+                spacing_txt = f"RB{db_stir} - Increase Section"
+            else: 
+                spacing_txt = f"RB{db_stir}@{s_use:.0f}cm"
             
         elif vu_val > phi_vc/2:
             s_max = d/2
@@ -106,11 +114,12 @@ def calculate_shear_capacity(Vu, params):
             spacing_txt = f"RB{db_stir}@{s_use:.0f}cm (Min)"
         else:
             spacing_txt = "None Req."
+            
     else:
-        # Simplified for SI in this snippet
-        spacing_txt = "RB6@200mm (Example)"
+        # SI Unit (Simplified)
         vc = 0.17 * np.sqrt(fc) * b*10 * d*10 
         phi_vc = 0.75 * (vc / 1000) 
-        vu_val = abs(Vu) 
+        vu_val = abs(Vu)
+        spacing_txt = "Check SI Manual" # Placeholder
         
     return vu_val, phi_vc, spacing_txt
