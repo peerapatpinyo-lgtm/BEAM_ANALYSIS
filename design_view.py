@@ -8,83 +8,114 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     cum_len = [0] + list(np.cumsum(spans))
     L_total = cum_len[-1]
     
+    # คำนวณ Scale สำหรับวาดกราฟ
     val_list = [abs(l['w']) for l in loads if l['type']=='U'] + [abs(l['P']) for l in loads if l['type']=='P']
-    max_load = max(val_list) if val_list else 100
+    max_load_val = max(val_list) if val_list else 100
     
-    viz_h = max_load * 1.5
-    sup_sz = max(0.2, L_total * 0.025) 
-    
+    # Scale ความสูงของกราฟ Load Diagram
+    # ให้ Support สูงประมาณ 15% ของพื้นที่กราฟ, Load สูงสุด 50%
+    viz_h = max_load_val * 1.5 
+    sup_h = viz_h * 0.15  # ปรับขนาด Support ตามแกน Y (Load) เพื่อความสวยงาม
+    sup_w = L_total * 0.02 # ปรับความกว้าง Support ตามแกน X (Length)
+
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=(f"<b>Loading Diagram</b>", 
                                         f"<b>Shear Force ({u_force})</b>", 
                                         f"<b>Bending Moment ({u_force}-{u_len})</b>"),
                         row_heights=[0.3, 0.35, 0.35])
     
-    # 1. Loading Diagram (Beam Line Added)
+    # --- 1. Loading Diagram ---
+    # เส้นคาน
     fig.add_trace(go.Scatter(x=[0, L_total], y=[0, 0], mode='lines', 
-                             line=dict(color='black', width=5), hoverinfo='none'), row=1, col=1)
+                             line=dict(color='black', width=4), hoverinfo='none'), row=1, col=1)
 
-    # Supports
+    # วาด Supports (ปรับสเกลใหม่)
     for i, x in enumerate(cum_len):
         stype = supports.iloc[i]['type']
         if stype == "Pin":
-            fig.add_trace(go.Scatter(x=[x, x-sup_sz/2, x+sup_sz/2, x], 
-                                     y=[0, -sup_sz, -sup_sz, 0], 
-                                     fill="toself", fillcolor="#90A4AE", line_color="black", showlegend=False, hoverinfo='text', text="Pin"), row=1, col=1)
+            # สามเหลี่ยม
+            fig.add_trace(go.Scatter(x=[x, x-sup_w, x+sup_w, x], 
+                                     y=[0, -sup_h, -sup_h, 0], 
+                                     fill="toself", fillcolor="#90A4AE", line_color="black", mode='lines', showlegend=False, hoverinfo='text', text="Pin"), row=1, col=1)
         elif stype == "Roller":
-            fig.add_trace(go.Scatter(x=[x], y=[-sup_sz/2], mode="markers", 
-                                     marker=dict(size=14, color="white", line=dict(color="black", width=2)), 
+            # วงกลม + ฐาน
+            fig.add_trace(go.Scatter(x=[x], y=[-sup_h/2], mode="markers", 
+                                     marker=dict(size=10, color="white", line=dict(color="black", width=2)), 
                                      showlegend=False, hoverinfo='text', text="Roller"), row=1, col=1)
-            fig.add_trace(go.Scatter(x=[x-sup_sz/2, x+sup_sz/2], y=[-sup_sz, -sup_sz], mode="lines", 
+            fig.add_trace(go.Scatter(x=[x-sup_w, x+sup_w], y=[-sup_h, -sup_h], mode="lines", 
                                      line=dict(color="black", width=2), showlegend=False), row=1, col=1)
         elif stype == "Fixed":
-            fig.add_shape(type="line", x0=x, y0=-sup_sz, x1=x, y1=sup_sz, line=dict(color="black", width=4), row=1, col=1)
-            for h in np.linspace(-sup_sz, sup_sz, 5):
-                fig.add_shape(type="line", x0=x, y0=h, x1=x-sup_sz/3, y1=h-sup_sz/4, line=dict(color="black", width=1), row=1, col=1)
+            # ขีดแนวตั้ง + แรเงา
+            fig.add_shape(type="line", x0=x, y0=-sup_h, x1=x, y1=sup_h, line=dict(color="black", width=4), row=1, col=1)
+            for h_line in np.linspace(-sup_h, sup_h, 5):
+                dir_sign = -1 if x==0 else 1 # หันลายแรเงาออกด้านนอก
+                fig.add_shape(type="line", x0=x, y0=h_line, x1=x + (sup_w*0.5*dir_sign), y1=h_line - (sup_h*0.2), line=dict(color="black", width=1), row=1, col=1)
             
-    # Loads
+    # วาด Loads (ใส่ลูกศร + ป้ายชื่อ Wu/Pu)
     for l in loads:
         if l['type'] == 'U':
             x1, x2 = cum_len[l['span_idx']], cum_len[l['span_idx']+1]
-            h = (abs(l['w'])/max_load) * (viz_h * 0.5)
+            h = (abs(l['w'])/max_load_val) * (viz_h * 0.6)
+            # Area Load
             fig.add_trace(go.Scatter(x=[x1, x2, x2, x1], y=[0, 0, h, h], fill="toself", fillcolor="rgba(33, 150, 243, 0.3)", line_width=0, showlegend=False), row=1, col=1)
+            # Top Line
             fig.add_trace(go.Scatter(x=[x1, x2], y=[h, h], mode='lines', line=dict(color="#1976D2", width=2), showlegend=False), row=1, col=1)
-            fig.add_annotation(x=(x1+x2)/2, y=h, text=f"<b>w = {l['w']:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#0D47A1"), row=1, col=1)
+            # Label Wu
+            fig.add_annotation(x=(x1+x2)/2, y=h, text=f"<b>Wu={l['w']:.0f}</b>", showarrow=False, yshift=15, font=dict(color="#0D47A1", size=12), row=1, col=1)
+            
         elif l['type'] == 'P':
             px = cum_len[l['span_idx']] + l['x']
-            h = (abs(l['P'])/max_load) * (viz_h * 0.5)
-            fig.add_annotation(x=px, y=0, ax=px, ay=h if h>0 else 10, arrowcolor="#D32F2F", arrowhead=2, arrowwidth=2, row=1, col=1)
-            fig.add_annotation(x=px, y=h if h>0 else 10, text=f"<b>P = {l['P']:.0f}</b>", showarrow=False, yshift=10, font=dict(color="#D32F2F"), row=1, col=1)
+            h = (abs(l['P'])/max_load_val) * (viz_h * 0.6)
+            if h == 0: h = viz_h * 0.2
             
-    fig.update_yaxes(visible=False, range=[-sup_sz*1.5, viz_h*1.2], row=1, col=1)
+            # Arrow & Label Pu
+            fig.add_annotation(
+                x=px, y=0,  # หัวลูกศรชี้ที่คาน
+                ax=0, ay=-40, # หางลูกศรอยู่ข้างบน (pixels)
+                text=f"<b>Pu={l['P']:.0f}</b>",
+                arrowhead=2, arrowsize=1.5, arrowwidth=2, arrowcolor="#D32F2F",
+                font=dict(color="#D32F2F", size=12),
+                row=1, col=1
+            )
+            
+    fig.update_yaxes(visible=False, range=[-sup_h*1.5, viz_h*1.2], row=1, col=1)
     
-    # SFD & BMD
+    # --- 2 & 3. SFD & BMD (ใส่ Label ระยะ x กลับมา) ---
+    # Shear
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#D32F2F', width=2), fillcolor='rgba(211, 47, 47, 0.1)', name="Shear"), row=2, col=1)
+    # Moment
     fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1565C0', width=2), fillcolor='rgba(21, 101, 192, 0.1)', name="Moment"), row=3, col=1)
     
-    # Max/Min Labels
+    # Label Logic (Max/Min with Distance)
     for col, row, color, unit in [('shear', 2, '#D32F2F', u_force), ('moment', 3, '#1565C0', f"{u_force}-{u_len}")]:
         arr = df[col].to_numpy()
         mx, mn = np.max(arr), np.min(arr)
         imx, imn = np.argmax(arr), np.argmin(arr)
         
+        # Loop annotate ทั้งค่า Max และ Min
         for val, idx, pos in [(mx, imx, "top"), (mn, imn, "bottom")]:
-            if abs(val) > 1e-3: 
-                ys = 15 if pos=="top" else -15
+            if abs(val) > 1e-3: # ไม่โชว์ถ้าเป็น 0
+                ys = 25 if pos=="top" else -25
+                x_pos = df['x'].iloc[idx]
+                
+                # HTML Label: Value บน, Location ล่าง
+                label_txt = f"<b>{val:,.2f}</b><br><span style='font-size:10px'>@ {x_pos:.2f} m</span>"
+                
                 fig.add_annotation(
-                    x=df['x'].iloc[idx], y=val, 
-                    text=f"<b>{val:,.2f}</b>", 
+                    x=x_pos, y=val, 
+                    text=label_txt, 
                     showarrow=False, 
-                    bgcolor="rgba(255,255,255,0.9)", bordercolor=color, borderwidth=1, borderpad=2,
-                    font=dict(color=color, size=10), yshift=ys, row=row, col=1
+                    bgcolor="rgba(255,255,255,0.85)", bordercolor=color, borderwidth=1, borderpad=3,
+                    font=dict(color=color, size=11), yshift=ys, row=row, col=1
                 )
         
+        # ปรับ Scale แกน Y ให้ label ไม่ล้น
         rng = mx - mn
         if rng == 0: rng = 10
-        pad = rng * 0.25
+        pad = rng * 0.3
         fig.update_yaxes(range=[mn-pad, mx+pad], row=row, col=1)
 
-    fig.update_layout(height=850, template="plotly_white", margin=dict(t=40, b=40, l=50, r=40), showlegend=False)
+    fig.update_layout(height=900, template="plotly_white", margin=dict(t=30, b=30, l=50, r=30), showlegend=False)
     fig.update_xaxes(showgrid=True, gridcolor='#ECEFF1', title=f"Distance ({u_len})", row=3, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
