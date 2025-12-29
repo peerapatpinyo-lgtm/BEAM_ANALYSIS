@@ -9,8 +9,9 @@ import input_handler
 # --- Page Config ---
 st.set_page_config(page_title="RC Beam Master", page_icon="🏗️", layout="wide")
 
-# --- 1. SIDEBAR & INPUTS ---
-# เรียกใช้ UI จาก input_handler
+# ==========================
+# 1. SIDEBAR & INPUTS
+# ==========================
 design_code, method, f_dl, f_ll, unit_sys = input_handler.render_sidebar()
 
 st.title("🏗️ RC Beam Analysis & Design")
@@ -31,16 +32,18 @@ bar_db = {
     'DB10': 0.79, 'DB12': 1.13, 'DB16': 2.01, 
     'DB20': 3.14, 'DB25': 4.91, 'DB28': 6.16
 }
-m_area = bar_db.get(m_bar, 1.13) # Default DB12
-s_area = bar_db.get(s_bar, 0.28) # Default RB6
+m_area = bar_db.get(m_bar, 1.13)
+s_area = bar_db.get(s_bar, 0.28)
 
-# --- 2. ACTION BUTTON ---
+# ==========================
+# 2. ACTION BUTTON
+# ==========================
 st.markdown("---")
 if st.button("🚀 Run Analysis & Design", type="primary"):
     
-    # ==========================
-    # A. ANALYSIS ENGINE
-    # ==========================
+    # ----------------------------------------
+    # A. ANALYSIS ENGINE (ห้ามแตะต้อง Logic นี้)
+    # ----------------------------------------
     try:
         # ส่งค่าไปคำนวณที่ beam_analysis.py
         df_res, df_sup = beam_analysis.run_beam_analysis(spans, supports, loads)
@@ -48,23 +51,23 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
         st.error(f"Analysis Error: {e}")
         st.stop()
         
-   # ==========================
-    # B. VISUALIZATION (SFD & BMD)
-    # ==========================
+    # ----------------------------------------
+    # B. VISUALIZATION (แก้ไขกราฟให้ไม่เพี้ยน)
+    # ----------------------------------------
     st.header("📊 Analysis Results")
     
-    # Checkbox สำหรับกลับด้านกราฟ Moment
+    # Checkbox กลับด้านโมเมนต์
     invert_moment = st.checkbox("Invert Moment Diagram (กลับด้านโมเมนต์)", value=False)
     
-    # ตั้งค่ากราฟ
+    # เตรียมพื้นที่กราฟ
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     
-    # กำหนดตัวแปรสำหรับขยับแกน X
+    # ตัวแปรช่วยขยับแกน X ให้ต่อเนื่อง (Offset)
     current_x_offset = 0.0
     
-    # วนลูปพล็อตทีละช่วงคาน
+    # วนลูปพล็อตทีละช่วงคาน (แก้ปัญหากราฟลากเส้นมั่ว/Zig-Zag)
     for i in range(n_span):
-        # ดึงข้อมูลเฉพาะ Span นั้น
+        # ดึงข้อมูลเฉพาะ Span นี้
         span_data = df_res[df_res['span_id'] == i].copy()
         
         if span_data.empty:
@@ -72,37 +75,36 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
 
         local_x = span_data['x']
         
-        # Logic: ถ้า x เป็น Local coordinates (เริ่ม 0 ใหม่ทุก Span) ให้บวก Offset
+        # Logic: ถ้า x เริ่มที่ 0 ใหม่ทุก Span (Local) ให้บวก Offset
+        # แต่ถ้า x เป็น Global (ต่อเนื่องมาแล้ว) ก็ใช้ค่าเดิม
         if i > 0 and local_x.min() < 0.1: 
              plot_x = local_x + current_x_offset
         else:
              plot_x = local_x
 
-        # SFD Data
+        # ข้อมูล Shear และ Moment
         v = span_data['shear']
-        
-        # BMD Data
         m = span_data['moment']
         if invert_moment:
             m = -m
 
-        # 1. Plot SFD
+        # Plot SFD (Shear) - สีน้ำเงิน
         ax1.plot(plot_x, v, color='#1f77b4', linewidth=2)
         ax1.fill_between(plot_x, v, 0, alpha=0.3, color='#1f77b4')
         
-        # 2. Plot BMD
+        # Plot BMD (Moment) - สีแดง
         ax2.plot(plot_x, m, color='#d62728', linewidth=2)
         ax2.fill_between(plot_x, m, 0, alpha=0.3, color='#d62728')
         
         # อัปเดตระยะสะสม
         current_x_offset += spans[i]
 
-    # ตกแต่งกราฟ (Shear)
+    # ตกแต่งกราฟ Shear
     ax1.set_ylabel(f"Shear ({'kN' if 'kN' in unit_sys else 'kg'})")
     ax1.set_title("Shear Force Diagram (SFD)")
     ax1.grid(True, linestyle='--', alpha=0.6)
     
-    # ตกแต่งกราฟ (Moment)
+    # ตกแต่งกราฟ Moment
     ax2.set_ylabel(f"Moment ({'kN-m' if 'kN' in unit_sys else 'kg-m'})")
     ax2.set_xlabel("Distance (m)")
     ax2.set_title("Bending Moment Diagram (BMD)")
@@ -120,12 +122,11 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
 
     st.pyplot(fig)
 
-    # ==========================
-    # C. DESIGN RESULTS (RC)
-    # ==========================
+    # ----------------------------------------
+    # C. DESIGN RESULTS (RC) - แยกบน/ล่าง
+    # ----------------------------------------
     st.header("🧱 Design Results")
     
-    # สร้างคอลัมน์ตามจำนวนช่วงคาน (Span)
     cols = st.columns(n_span)
     
     for i in range(n_span):
@@ -136,63 +137,57 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
             span_res = df_res[df_res['span_id'] == i]
             
             if span_res.empty:
-                st.warning("No data for this span")
+                st.warning("No data")
                 continue
             
-            # --- 1. หาค่าแรงวิกฤต (Critical Forces) ---
-            m_max_pos = span_res['moment'].max()      # โมเมนต์บวกสูงสุด (Mid-span) -> เหล็กล่าง
-            m_max_neg = span_res['moment'].min()      # โมเมนต์ลบต่ำสุด (Supports) -> เหล็กบน
-            v_max = span_res['shear'].abs().max()     # แรงเฉือนสูงสุด (Supports) -> เหล็กปลอก
+            # หาค่าแรงวิกฤต
+            m_max_pos = span_res['moment'].max()  # +M (เหล็กล่าง)
+            m_max_neg = span_res['moment'].min()  # -M (เหล็กบน)
+            v_max = span_res['shear'].abs().max() # V (เหล็กปลอก)
             
-            # --- 2. ออกแบบเหล็กล่าง (Bottom Steel) รับ +M ---
+            # --- 1. เหล็กล่าง (Bottom Steel) ---
             st.markdown("**👇 Bottom Steel (+M):**")
-            if m_max_pos > 0.01: # ถ้ามีโมเมนต์บวก
+            if m_max_pos > 0.01:
                 res_bot = rc_design.calculate_rc_design(
                     m_max_pos, v_max, fc, fy, b, h, cov, 
                     method, unit_sys, m_area, s_area, manual_s
                 )
-                status_icon = "✅" if "OK" in res_bot.get('msg_flex', '') else "❌"
-                st.info(f"{status_icon} **{res_bot['nb']} - {m_bar}**\n\n($M_u$={m_max_pos:.2f})")
+                icon = "✅" if "OK" in res_bot.get('msg_flex', '') else "❌"
+                st.info(f"{icon} **{res_bot['nb']} - {m_bar}**\n\n(Mu={m_max_pos:.2f})")
             else:
                 st.caption("Min. Reinf (No +M)")
-                # กรณีโมเมนต์เป็นลบทั้งช่วง (เช่น Cantilever) ก็คำนวณ Min Steel ได้
-                # แต่ในที่นี้ละไว้เพื่อให้ UI สะอาด
                 
-            # --- 3. ออกแบบเหล็กบน (Top Steel) รับ -M ---
+            # --- 2. เหล็กบน (Top Steel) ---
             st.markdown("**👆 Top Steel (-M):**")
-            if m_max_neg < -0.01: # ถ้ามีโมเมนต์ลบ
+            if m_max_neg < -0.01:
                 res_top = rc_design.calculate_rc_design(
                     abs(m_max_neg), v_max, fc, fy, b, h, cov, 
                     method, unit_sys, m_area, s_area, manual_s
                 )
-                status_icon = "✅" if "OK" in res_top.get('msg_flex', '') else "❌"
-                st.warning(f"{status_icon} **{res_top['nb']} - {m_bar}**\n\n($M_u$={m_max_neg:.2f})")
+                icon = "✅" if "OK" in res_top.get('msg_flex', '') else "❌"
+                st.warning(f"{icon} **{res_top['nb']} - {m_bar}**\n\n(Mu={m_max_neg:.2f})")
             else:
                 st.caption("Min. Reinf (No -M)")
 
-            # --- 4. ออกแบบเหล็กปลอก (Stirrups) รับ V ---
-            st.markdown("**⛓️ Stirrups (Shear):**")
-            # ใช้ V_max คำนวณ (Mu ใส่ค่าไหนก็ได้ เพราะ Shear ไม่ขึ้นกับ M โดยตรงในสูตรนี้)
+            # --- 3. เหล็กปลอก (Stirrups) ---
+            st.markdown("**⛓️ Stirrups:**")
+            # ใช้ Vmax ออกแบบ
             res_shear = rc_design.calculate_rc_design(
                 max(abs(m_max_pos), abs(m_max_neg)), v_max, 
                 fc, fy, b, h, cov, method, unit_sys, m_area, s_area, manual_s
             )
-            st.success(f"**{s_bar} {res_shear.get('stirrup_text', '@Err')}**")
-            st.caption(f"$V_u$ max = {v_max:.2f}")
+            st.success(f"**{s_bar} {res_shear.get('stirrup_text', 'Err')}**")
+            st.caption(f"Vu max = {v_max:.2f}")
 
-            # --- 5. Logs (ซ่อนไว้) ---
+            # Logs
             with st.expander("📝 Calc Logs"):
                 if m_max_pos > 0.01:
-                    st.markdown("**Bottom Design:**")
-                    for log in locals().get('res_bot', {}).get('logs', []): st.write(log)
+                    st.markdown("**Bottom:**")
+                    for l in locals().get('res_bot', {}).get('logs', []): st.write(l)
                 if m_max_neg < -0.01:
-                    st.markdown("---")
-                    st.markdown("**Top Design:**")
-                    for log in locals().get('res_top', {}).get('logs', []): st.write(log)
+                    st.markdown("**Top:**")
+                    for l in locals().get('res_top', {}).get('logs', []): st.write(l)
                     
             st.markdown("---")
 
-    # แสดง Section Details ภาพรวม
     st.info(f"ℹ️ **Section Used:** {b*10:.0f}x{h*10:.0f} cm | **Cover:** {cov*10:.0f} mm")
-
-
