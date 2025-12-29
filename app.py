@@ -21,23 +21,30 @@ if 'analyzed' not in st.session_state: st.session_state['analyzed'] = False
 
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600&display=swap');
-    html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; }
-    .header-box { background: linear-gradient(90deg, #1565C0 0%, #0D47A1 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-    .sub-header { border-left: 5px solid #1565C0; padding-left: 15px; font-size: 1.25rem; font-weight: 600; margin-top: 30px; margin-bottom: 15px; background: #E3F2FD; padding: 10px; border-radius: 0 8px 8px 0; color: #0D47A1; }
-    .load-box { border: 1px solid #E0E0E0; padding: 15px; border-radius: 8px; background-color: #FAFAFA; margin-bottom: 10px; }
+    @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap');
+    html, body, [class*="css"] { font-family: 'Sarabun', sans-serif; font-size: 16px; }
+    
+    .header-box { background: linear-gradient(90deg, #1A237E 0%, #283593 100%); color: white; padding: 25px; border-radius: 8px; text-align: center; margin-bottom: 25px; box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
+    
+    .sub-header { border-left: 6px solid #1A237E; padding-left: 15px; font-size: 1.4rem; font-weight: 700; margin-top: 30px; margin-bottom: 20px; background: #E8EAF6; padding: 12px; border-radius: 0 8px 8px 0; color: #1A237E; }
+    
+    .load-box { border: 1px solid #BDBDBD; padding: 15px; border-radius: 8px; background-color: #FAFAFA; margin-bottom: 15px; }
+    
     .calc-box { 
         font-family: 'Courier New', monospace; 
         background-color: #F1F8E9; 
-        border-left: 4px solid #33691E; 
-        padding: 8px; 
-        margin-top: 5px; 
-        font-size: 0.9rem; 
+        border-left: 5px solid #33691E; 
+        padding: 12px; 
+        margin-top: 8px; 
+        font-size: 1rem; 
         color: #1B5E20; 
         border-radius: 4px;
+        font-weight: 600;
     }
-    .stNumberInput input { font-weight: bold; color: #1565C0; }
-    .error-box { background-color: #FFEBEE; border: 1px solid #FFCDD2; color: #C62828; padding: 10px; border-radius: 5px; margin: 10px 0; font-weight: bold; }
+    
+    .error-box { background-color: #FFEBEE; border: 2px solid #D32F2F; color: #B71C1C; padding: 15px; border-radius: 8px; margin: 15px 0; font-weight: bold; font-size: 1.1rem; }
+    
+    .stNumberInput input { font-weight: bold; color: #0D47A1; font-size: 1.1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -47,34 +54,35 @@ st.markdown("""
 
 def check_structural_stability(supports_df):
     """
-    Checks if the beam is statically stable before calculation.
-    Returns: (is_stable: bool, message: str)
+    Engineering Stability Check:
+    1. Must have supports.
+    2. Single support must be Fixed (Cantilever).
+    3. Cannot have only Rollers (Horizontal instability).
+    4. 3+ parallel rollers without horizontal restraint is technically unstable in X, but permitted in simple beam theory if vertical load only. 
+       However, strictly speaking, we need at least one Pin or Fixed.
     """
     if supports_df.empty:
-        return False, "❌ No supports defined."
+        return False, "❌ CRITICAL ERROR: No supports defined."
 
-    # Filter only active supports
     active_sups = supports_df[supports_df['type'] != 'None']
     types = active_sups['type'].tolist()
-    
     num_sup = len(types)
     
-    # 1. Check Number of Supports
+    # 1. No Supports
     if num_sup == 0:
-        return False, "❌ Structure is Unstable: No supports found. (Free falling)"
+        return False, "❌ UNSTABLE: Structure is a Mechanism (Free Falling)."
     
-    # 2. Check Single Support Stability
+    # 2. Single Support
     if num_sup == 1:
         s_type = types[0]
         if s_type == "Fixed":
             return True, "✅ Stable (Cantilever)"
         else:
-            return False, f"❌ Structure is Unstable: A single '{s_type}' cannot support a beam (Mechanism). Needs a Fixed support."
+            return False, f"❌ UNSTABLE: Single '{s_type}' support cannot provide stability (Rotation/Translation)."
 
-    # 3. Check Multiple Supports (Check for sliding mechanism)
-    # If all supports are Rollers -> Unstable horizontally (Conceptually)
+    # 3. All Rollers (Horizontal Instability)
     if all(t == "Roller" for t in types):
-        return False, "❌ Structure is Unstable: All supports are Rollers. The beam is unstable horizontally."
+        return False, "❌ UNSTABLE: All supports are Rollers. Structure is unstable horizontally."
 
     return True, "✅ Stable"
 
@@ -124,7 +132,7 @@ def render_geometry_input():
     x_coords = [0] + list(np.cumsum(spans))
     supports_df = pd.DataFrame({'x': x_coords, 'type': current_supports})
     
-    # Live Stability Feedback
+    # Live Stability Check
     is_stable, msg = check_structural_stability(supports_df)
     if not is_stable:
         st.markdown(f'<div class="error-box">{msg}</div>', unsafe_allow_html=True)
@@ -132,8 +140,8 @@ def render_geometry_input():
     return n_span, spans, supports_df, is_stable
 
 def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
-    st.markdown("### 2️⃣ Applied Loads (Total = DL + LL)")
-    st.caption(f"Inputs will be combined: **Total Load = ({f_dl} × DL) + ({f_ll} × LL)**")
+    st.markdown("### 2️⃣ Applied Loads (Combined DL + LL)")
+    st.caption(f"**Engineering Note:** Loads will be combined using $U = {f_dl}DL + {f_ll}LL$")
     
     loads = []
     tabs = st.tabs([f"📍 Span {i+1} (L={spans[i]}m)" for i in range(n_span)])
@@ -151,10 +159,9 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                 w_u = (w_dl * f_dl) + (w_ll * f_ll)
                 if w_u != 0:
                     loads.append({'span_idx': i, 'type': 'U', 'w': w_u, 'source': 'Total UDL'})
-                    # Explicit Calculation Breakdown
                     st.markdown(f"""
                     <div class="calc-box">
-                    📝 <b>Calculation (Total UDL):</b><br>
+                    CALCULATION (Wu):<br>
                     = ({f_dl} × {w_dl}) + ({f_ll} × {w_ll})<br>
                     = <b>{w_u:,.2f}</b>
                     </div>
@@ -177,40 +184,40 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                             x_max = float(spans[i])
                             x_loc = c3.number_input(f"x (0-{x_max}m)", min_value=0.0, max_value=x_max, value=x_max/2, step=0.1, key=f"p_x_{i}_{j}")
                             
+                            # COMBINE LOADS HERE (AS REQUESTED)
                             p_total_factored = (p_dl * f_dl) + (p_ll * f_ll)
                             
                             if p_total_factored != 0:
-                                # Logic: We store them separately for plotting distinction (colors), 
-                                # but mathematically they are handled. 
-                                # For the user request "Change to DL+LL", we will show the CALCULATION clearly.
-                                
-                                # Add components for coloring
-                                if p_dl != 0:
-                                    loads.append({'span_idx': i, 'type': 'P', 'P': p_dl * f_dl, 'raw': p_dl, 'x': x_loc, 'source': 'DL'})
-                                if p_ll != 0:
-                                    loads.append({'span_idx': i, 'type': 'P', 'P': p_ll * f_ll, 'raw': p_ll, 'x': x_loc, 'source': 'LL'})
+                                # Append ONE combined load
+                                loads.append({
+                                    'span_idx': i, 
+                                    'type': 'P', 
+                                    'P': p_total_factored, # Combined Value
+                                    'x': x_loc, 
+                                    'source': 'Total Point'
+                                })
                                 
                                 st.markdown(f"""
                                 <div class="calc-box">
-                                📝 <b>Calculation (Total P #{j+1}):</b><br>
+                                CALCULATION (Pu):<br>
                                 = ({f_dl} × {p_dl}) + ({f_ll} × {p_ll})<br>
                                 = <b>{p_total_factored:,.2f}</b>
                                 </div>
                                 """, unsafe_allow_html=True)
-
     return loads
 
 # ==========================================
-# 4. VISUALIZATION ENGINE
+# 4. VISUALIZATION ENGINE (BIG FONTS & CLEANER)
 # ==========================================
 
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
     s = size * 0.9 
-    line_col, fill_col = "#263238", "#B0BEC5" 
+    line_col, fill_col = "#263238", "#CFD8DC"
     
     if sup_type == "Pin":
         fig.add_shape(type="path", path=f"M {x},{y} L {x-s/2},{y-s} L {x+s/2},{y-s} Z", fillcolor=fill_col, line_color=line_col, line_width=2, row=1, col=1)
         fig.add_shape(type="line", x0=x-s*0.8, y0=y-s, x1=x+s*0.8, y1=y-s, line=dict(color=line_col, width=3), row=1, col=1)
+        # Ground hatching
         for hx in np.linspace(x-s*0.8, x+s*0.8, 6): 
             fig.add_shape(type="line", x0=hx, y0=y-s, x1=hx-s/3, y1=y-s*1.4, line=dict(color=line_col, width=1), row=1, col=1)
 
@@ -230,20 +237,21 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1.5), row=1, col=1)
 
 def add_peak_box(fig, x, y, val, unit, color, row, position="top"):
-    """ Adds professional box annotation with UNITS """
-    yshift = 25 if position == "top" else -25
-    label_text = f"<b>{val:,.2f} {unit}</b><br><span style='font-size:10px; color:#444'>@ {x:.2f} m</span>"
+    """ Box with Larger Font and clear border """
+    yshift = 30 if position == "top" else -30
+    
+    label_text = f"<b>{val:,.2f} {unit}</b><br><span style='font-size:12px; color:#37474F'>@ {x:.2f} m</span>"
     
     fig.add_annotation(
         x=x, y=y,
         text=label_text,
         showarrow=False,
-        font=dict(color=color, size=11),
+        font=dict(color=color, size=14, family="Arial Black"), # Increased Font
         align="center",
-        bgcolor="rgba(255, 255, 255, 0.95)",
+        bgcolor="rgba(255, 255, 255, 1.0)",
         bordercolor=color,
-        borderwidth=1.5,
-        borderpad=5,
+        borderwidth=2,
+        borderpad=6,
         yshift=yshift,
         row=row, col=1
     )
@@ -268,17 +276,17 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
     target_h = 1.5 
     
     fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
         subplot_titles=(
-            f"<b>1. Factored Load Diagram (Total Load = {f_dl}DL + {f_ll}LL)</b>", 
-            f"<b>2. Shear Force Diagram (SFD)</b>", 
-            f"<b>3. Bending Moment Diagram (BMD)</b>"
+            f"<b>1. FACTORED LOADING DIAGRAM (Total Load = {f_dl}DL + {f_ll}LL)</b>", 
+            f"<b>2. SHEAR FORCE DIAGRAM (SFD)</b>", 
+            f"<b>3. BENDING MOMENT DIAGRAM (BMD)</b>"
         ),
         row_heights=[0.3, 0.35, 0.35]
     )
 
     # --- ROW 1: LOADING ---
-    fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
+    fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=5), row=1, col=1)
     
     # Supports
     sup_size = target_h * 0.2
@@ -287,9 +295,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
             stype = vis_supports.iloc[i]['type']
             if stype != "None": draw_support_shape(fig, x, 0, stype, size=sup_size)
 
-    # Point Load Offset Tracker
-    point_load_tracker = {}
-
+    # Loads
     for load in loads:
         span_idx = load.get('span_idx', 0)
         if span_idx >= len(vis_spans): continue 
@@ -302,51 +308,33 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
             ratio = abs(w) / global_max
             h = (0.15 + 0.85 * ratio) * target_h 
             
-            fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"Total w: {w:,.1f}"), row=1, col=1)
-            fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"w={w:,.0f}", showarrow=False, yshift=10, font=dict(color="#EF6C00", size=10), row=1, col=1)
+            # Fill Area
+            fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 111, 0, 0.15)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
+            # Top Line
+            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#E65100', width=3), showlegend=False, hoverinfo='text', text=f"Total w: {w:,.1f}"), row=1, col=1)
+            # Label
+            fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"<b>Wu = {w:,.0f}</b>", showarrow=False, yshift=15, font=dict(color="#E65100", size=14, weight="bold"), row=1, col=1)
 
-        # --- POINT LOAD ---
+        # --- POINT LOAD (COMBINED) ---
         elif load.get('type') == 'P' and load.get('P', 0) != 0:
             P = load['P']
             local_x = load['x']
-            raw_x = local_x + x_start
-            
-            # Offset Logic (Prevent Overlap)
-            tracker_key = round(raw_x, 2)
-            if tracker_key in point_load_tracker:
-                point_load_tracker[tracker_key] += 1
-                offset_count = point_load_tracker[tracker_key]
-            else:
-                offset_count = 0
-                point_load_tracker[tracker_key] = 0
-            
-            vis_x_shift = offset_count * (total_len * 0.02)
-            vis_x = raw_x + vis_x_shift
+            vis_x = local_x + x_start
             
             ratio = abs(P) / global_max
             h = (0.15 + 0.85 * ratio) * target_h
             
-            # Styling based on Source
-            source = load.get('source', '')
-            if source == 'DL':
-                p_color = "#1565C0" 
-                label_text = f"P_DL"
-            elif source == 'LL':
-                p_color = "#C62828" 
-                label_text = f"P_LL"
-            else:
-                p_color = "#333333"
-                label_text = f"P"
-
+            # Use a Dark color for Combined Point Load
+            p_color = "#3E2723" # Dark Brown/Black
+            
             fig.add_annotation(
                 x=vis_x, y=0,              
                 ax=vis_x, ay=h,            
                 xref='x1', yref='y1', axref='x1', ayref='y1',     
-                text=f"<b>{label_text}={P:,.0f}</b>",          
-                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2.5, arrowcolor=p_color,
-                yshift=10,
-                font=dict(color=p_color, size=9, weight="bold"),
+                text=f"<b>Pu = {P:,.0f}</b>",          
+                showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=3, arrowcolor=p_color,
+                yshift=15,
+                font=dict(color=p_color, size=14, weight="bold"),
                 row=1, col=1
             )
 
@@ -368,8 +356,8 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
     np_x, np_v, np_m = np.array(plot_x), np.array(plot_v), np.array(plot_m)
 
     # SFD
-    shear_color = '#D32F2F'
-    fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=shear_color, width=2.5), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="V: %{y:.2f}"), row=2, col=1)
+    shear_color = '#C62828'
+    fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=shear_color, width=3), fill='tozeroy', fillcolor='rgba(198, 40, 40, 0.1)', name="Shear", hovertemplate="V: %{y:.2f}"), row=2, col=1)
     if len(np_v) > 0:
         v_max, v_min = np_v.max(), np_v.min()
         idx_max, idx_min = np.argmax(np_v), np.argmin(np_v)
@@ -377,23 +365,28 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys, facto
         if abs(v_min) > 0.1: add_peak_box(fig, np_x[idx_min], v_min, v_min, force_unit, shear_color, 2, "bottom" if v_min < 0 else "top")
 
     # BMD
-    moment_color = '#1976D2'
-    fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=moment_color, width=2.5), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="M: %{y:.2f}"), row=3, col=1)
+    moment_color = '#1565C0'
+    fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=moment_color, width=3), fill='tozeroy', fillcolor='rgba(21, 101, 192, 0.1)', name="Moment", hovertemplate="M: %{y:.2f}"), row=3, col=1)
     if len(np_m) > 0:
         m_max, m_min = np_m.max(), np_m.min()
         idx_max, idx_min = np.argmax(np_m), np.argmin(np_m)
         if abs(m_max) > 0.1: add_peak_box(fig, np_x[idx_max], m_max, m_max, moment_unit, moment_color, 3, "top" if m_max > 0 else "bottom")
         if abs(m_min) > 0.1: add_peak_box(fig, np_x[idx_min], m_min, m_min, moment_unit, moment_color, 3, "bottom" if m_min < 0 else "top")
     
-    fig.update_yaxes(title_text=f"Shear V ({force_unit})", showgrid=True, gridwidth=1, gridcolor='#ECEFF1', zeroline=True, zerolinewidth=1.5, zerolinecolor='#546E7A', row=2, col=1)
-    fig.update_yaxes(title_text=f"Moment M ({moment_unit})", showgrid=True, gridwidth=1, gridcolor='#ECEFF1', zeroline=True, zerolinewidth=1.5, zerolinecolor='#546E7A', row=3, col=1)
+    # Layout Config (Big Fonts)
+    axis_font_size = 16
+    fig.update_yaxes(title_text=f"<b>Shear V ({force_unit})</b>", title_font=dict(size=axis_font_size), tickfont=dict(size=12), showgrid=True, gridwidth=1, gridcolor='#ECEFF1', zeroline=True, zerolinewidth=2, zerolinecolor='#546E7A', row=2, col=1)
+    fig.update_yaxes(title_text=f"<b>Moment M ({moment_unit})</b>", title_font=dict(size=axis_font_size), tickfont=dict(size=12), showgrid=True, gridwidth=1, gridcolor='#ECEFF1', zeroline=True, zerolinewidth=2, zerolinecolor='#546E7A', row=3, col=1)
     fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#ECEFF1', row=2, col=1)
-    fig.update_xaxes(title_text=f"Position ({dist_unit})", showgrid=True, gridwidth=1, gridcolor='#ECEFF1', row=3, col=1)
+    fig.update_xaxes(title_text=f"<b>Position ({dist_unit})</b>", title_font=dict(size=axis_font_size), tickfont=dict(size=12), showgrid=True, gridwidth=1, gridcolor='#ECEFF1', row=3, col=1)
     
     for r in [2, 3]:
         for x in cum_len: fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="#90A4AE", opacity=0.7, row=r, col=1)
 
-    fig.update_layout(height=1000, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=60, b=50, l=80, r=40))
+    # Increase Subplot Title Font
+    fig.update_annotations(font_size=16)
+
+    fig.update_layout(height=1100, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=80, b=50, l=100, r=40))
     return fig
 
 # ==========================================
@@ -414,11 +407,10 @@ with c_load:
 # 2. Calculation
 if st.button("🚀 Calculate Analysis & Design", type="primary"):
     if not is_stable:
-        st.error("⛔ Cannot Calculate: The structure is unstable. Please fix the supports.")
+        st.error("⛔ Cannot Calculate: Structure is Unstable. Please check supports.")
     else:
         try:
             st.session_state['loads_input'] = loads_input
-            # Filter only valid dicts
             clean_loads = [l for l in loads_input if isinstance(l, dict)]
             
             vis_spans_df, vis_supports_df = run_beam_analysis(spans, supports, clean_loads)
