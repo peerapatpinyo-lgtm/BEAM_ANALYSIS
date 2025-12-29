@@ -1,89 +1,96 @@
 import numpy as np
 
-def calculate_rc_design(max_M, max_V, fc, fy, b, h, cov, method, unit_sys, main_bar_area, stirrup_area, manual_s=0):
+def calculate_rc_design(mu_input, vu_input, fc, fy, b, h, cov, method, unit_sys, main_bar_area, stirrup_area, manual_s=0):
+    """
+    mu_input: Moment in System Units (kg-m or kN-m)
+    vu_input: Shear in System Units (kg or kN)
+    """
     logs = []
+    result = {}
     
-    stress_unit = "MPa" if "kN" in unit_sys else "ksc"
-    logs.append("### 1. Design Parameters")
-    logs.append(f"- **Material:** $f'_c = {fc}$ {stress_unit}, $f_y = {fy}$ {stress_unit}")
-    logs.append(f"- **Section:** $b={b*10:.0f}$ mm, $h={h*10:.0f}$ mm") 
+    # ส่งค่า Input กลับไปให้ app.py แสดงผล (แก้ KeyError ตรงนี้)
+    result['Mu'] = mu_input
+    result['Vu'] = vu_input
 
-    # Convert to kg, cm for internal calculation
+    # 1. แปลงหน่วยเข้าสูตร (kg, cm)
+    # Metric: Input kg-m -> *100 -> kg-cm
+    # SI: Input kN-m -> *1000(N)*100(cm)/9.81(g) -> kg-cm (approx)
     if "kN" in unit_sys:
-        Mu_calc = max_M * 1000 * 100 / 9.80665
-        Vu_calc = max_V * 1000 / 9.80665
-        fc_c = fc * 10.197 
-        fy_c = fy * 10.197
+        # 1 kN-m = 1000 N-m = 100,000 N-cm. 1 kgf ~= 9.81 N
+        # conversion factor: 1000 * 100 / 9.806
+        k_moment = 1000 * 100 / 9.80665
+        k_shear = 1000 / 9.80665
+        k_stress = 10.197 # MPa to ksc
+        
+        Mu_calc = abs(mu_input) * k_moment
+        Vu_calc = abs(vu_input) * k_shear
+        fc_c = fc * k_stress 
+        fy_c = fy * k_stress
     else:
-        Mu_calc = max_M * 100
-        Vu_calc = max_V
+        # Metric (kg, m)
+        Mu_calc = abs(mu_input) * 100.0 # kg-m to kg-cm
+        Vu_calc = abs(vu_input)         # kg
         fc_c, fy_c = fc, fy
     
-    d = h - cov - 0.9 
-    logs.append(f"- **Effective Depth ($d$):** {d*10:.0f} mm")
+    d = h - cov - 0.9 # Effective depth estimate
     
-    result = {}
-
-    # --- Flexural ---
-    logs.append("### 2. Flexural Design")
+    # --- Flexural Design (M) ---
     if method == "SDM":
         phi_b = 0.9
         Rn = Mu_calc / (phi_b * b * d**2)
         term = 1 - (2*Rn)/(0.85*fc_c)
+        
         if term < 0:
-            result.update({'As_req': 9999, 'nb': 0, 'msg_flex': "Fail"})
-            logs.append(f"❌ **Fail:** Section too small.")
+            result.update({'As_req': 9999, 'nb': 0, 'msg_flex': "❌ Fail (Sec. Small)"})
+            logs.append("Section too small for Moment!")
         else:
             rho = (0.85*fc_c/fy_c) * (1 - np.sqrt(term))
             min_rho = 14/fy_c
             rho_design = max(rho, min_rho)
             As_req = rho_design * b * d
-            result.update({'As_req': As_req, 'msg_flex': "OK"})
-            logs.append(f"- $A_{{s,req}} = {As_req:.2f}$ cm²")
+            result.update({'As_req': As_req, 'msg_flex': "✅ OK"})
     else: # WSD
-        j = 0.875 
-        As_req = Mu_calc / (0.5 * fy_c * j * d)
-        result.update({'As_req': As_req, 'msg_flex': "OK (WSD)"})
-        logs.append(f"- $A_{{s,req}} = {As_req:.2f}$ cm²")
+        n = 135 / np.sqrt(fc_c) # Modular ratio approx
+        k = n / (n + (fy_c/2) / (0.45*fc_c)) # k approx
+        j = 1 - k/3
+        As_req = Mu_calc / (0.5 * fy_c * j * d) # Simple WSD
+        result.update({'As_req': As_req, 'msg_flex': "✅ OK (WSD)"})
 
-    if result.get('As_req', 0) == 9999:
+    # คำนวณจำนวนเส้น
+    if result['As_req'] == 9999:
         result['nb'] = 0
     else:
-        nb_calc = result['As_req'] / main_bar_area
-        nb_use = max(2, int(np.ceil(nb_calc)))
-        result['nb'] = nb_use
-        logs.append(f"- **Use:** {nb_use} Bars ($A_s={nb_use*main_bar_area:.2f}$ cm²)")
+        nb = max(2, int(np.ceil(result['As_req'] / main_bar_area)))
+        result['nb'] = nb
 
-    # --- Shear ---
-    logs.append("### 3. Shear Design")
+    # --- Shear Design (V) ---
     if method == "SDM": 
-        Vc = 0.85 * 0.53 * np.sqrt(fc_c) * b * d 
-        stress = fy_c
+        Vc = 0.53 * np.sqrt(fc_c) * b * d # ACI simplified
+        phi_v = 0.85
+        Vc_allow = phi_v * Vc
+        stress_s = fy_c
     else:
         Vc = 0.29 * np.sqrt(fc_c) * b * d
-        stress = 0.5 * fy_c
+        Vc_allow = Vc
+        stress_s = 0.5 * fy_c
 
-    if Vu_calc > Vc:
-        Vs_req = Vu_calc - Vc
+    if Vu_calc > Vc_allow:
+        Vs = (Vu_calc - Vc_allow)/0.85 if method=="SDM" else (Vu_calc - Vc_allow)
         Av = 2 * stirrup_area 
-        if Vs_req <= 0: s_req_cm = 999
-        else: s_req_cm = (Av * stress * d) / Vs_req
+        s_req = (Av * stress_s * d) / Vs
         
-        logs.append(f"- $V_u > V_c$: Need Stirrups")
-        if manual_s > 0:
-            s_use_cm = manual_s
-        else:
-            limit_s = min(s_req_cm, d/2, 60)
-            if limit_s < 2.5: limit_s = 2.5
-            s_use_cm = int(5 * round(limit_s/5)) 
-            if s_use_cm == 0: s_use_cm = 5
-            if s_use_cm > limit_s: s_use_cm = int(limit_s)
+        limit_s = d/2
+        if manual_s > 0: s_final = manual_s
+        else: s_final = min(s_req, limit_s, 30.0) # Cap at 30cm
     else:
-        logs.append(f"- $V_u < V_c$: Min Stirrups")
-        s_use_cm = manual_s if manual_s > 0 else int(d/2)
+        # Min Stirrup
+        s_final = manual_s if manual_s > 0 else d/2
 
-    s_use_mm = int(s_use_cm * 10)
-    result['stirrup_text'] = f"@{s_use_mm} mm"
-    result['s_value_mm'] = s_use_mm
+    # Round spacing to nearest 2.5cm
+    s_use = int(2.5 * np.floor(s_final / 2.5))
+    if s_use < 5: s_use = 5
+    
+    result['stirrup_text'] = f"@{s_use*10} mm"
     result['logs'] = logs
+    
     return result
