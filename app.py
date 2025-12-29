@@ -53,16 +53,16 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
     # ==========================
     st.header("📊 Analysis Results")
     
-    # Checkbox สำหรับกลับด้านกราฟ Moment (เผื่อวิศวกรถนัดดูแบบ Positive Down)
+    # Checkbox สำหรับกลับด้านกราฟ Moment
     invert_moment = st.checkbox("Invert Moment Diagram (กลับด้านโมเมนต์)", value=False)
     
     # ตั้งค่ากราฟ
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
     
-    # กำหนดตัวแปรสำหรับขยับแกน X (Cumulative Distance)
+    # กำหนดตัวแปรสำหรับขยับแกน X
     current_x_offset = 0.0
     
-    # วนลูปพล็อตทีละช่วงคาน (แก้ปัญหากราฟวิ่งย้อน)
+    # วนลูปพล็อตทีละช่วงคาน
     for i in range(n_span):
         # ดึงข้อมูลเฉพาะ Span นั้น
         span_data = df_res[df_res['span_id'] == i].copy()
@@ -70,35 +70,31 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
         if span_data.empty:
             continue
 
-        # ตรวจสอบว่า x ใน data เป็น Local (เริ่มที่ 0) หรือ Global
-        # ถ้าค่า x ตัวแรกของ span นี้ น้อยกว่า x ตัวสุดท้ายของ span ก่อนหน้า -> แสดงว่าเป็น Local -> ต้องบวก Offset
         local_x = span_data['x']
         
-        # ป้องกัน Error ถ้าข้อมูลไม่เรียง: ให้พล็อตตามค่า x ที่แท้จริงบวก offset สะสม
-        # (เราสมมติว่าถ้า x มัน reset เป็น 0 แสดงว่าเป็น Local coordinate)
+        # Logic: ถ้า x เป็น Local coordinates (เริ่ม 0 ใหม่ทุก Span) ให้บวก Offset
         if i > 0 and local_x.min() < 0.1: 
              plot_x = local_x + current_x_offset
         else:
-             # ถ้า x มันต่อเนื่องอยู่แล้ว (Global) ก็ใช้ค่าเดิม
              plot_x = local_x
 
         # SFD Data
         v = span_data['shear']
         
-        # BMD Data (จัดการ Invert ตาม user เลือก)
+        # BMD Data
         m = span_data['moment']
         if invert_moment:
             m = -m
 
-        # 1. Plot SFD (Shear)
+        # 1. Plot SFD
         ax1.plot(plot_x, v, color='#1f77b4', linewidth=2)
         ax1.fill_between(plot_x, v, 0, alpha=0.3, color='#1f77b4')
         
-        # 2. Plot BMD (Moment)
+        # 2. Plot BMD
         ax2.plot(plot_x, m, color='#d62728', linewidth=2)
         ax2.fill_between(plot_x, m, 0, alpha=0.3, color='#d62728')
         
-        # อัปเดตระยะสะสม (สำหรับ Span ถัดไป)
+        # อัปเดตระยะสะสม
         current_x_offset += spans[i]
 
     # ตกแต่งกราฟ (Shear)
@@ -106,24 +102,15 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
     ax1.set_title("Shear Force Diagram (SFD)")
     ax1.grid(True, linestyle='--', alpha=0.6)
     
-
-[Image of shear force diagram]
-
-    
     # ตกแต่งกราฟ (Moment)
     ax2.set_ylabel(f"Moment ({'kN-m' if 'kN' in unit_sys else 'kg-m'})")
     ax2.set_xlabel("Distance (m)")
     ax2.set_title("Bending Moment Diagram (BMD)")
     ax2.grid(True, linestyle='--', alpha=0.6)
     if invert_moment:
-        ax2.invert_yaxis() # กลับแกน Y ให้เหมือน convention ไทยบางที่
-    
+        ax2.invert_yaxis()
 
-[Image of bending moment diagram]
-
-
-    # วาดเส้นตำแหน่ง Support (Vertical Lines)
-    # ใช้ current_x_offset ไม่ได้ ต้องคำนวณตำแหน่ง Support ใหม่ให้ชัวร์
+    # วาดเส้นตำแหน่ง Support
     sup_x_accum = 0
     for i in range(n_span + 1):
         ax1.axvline(sup_x_accum, color='black', linestyle=':', alpha=0.5)
@@ -207,4 +194,5 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
 
     # แสดง Section Details ภาพรวม
     st.info(f"ℹ️ **Section Used:** {b*10:.0f}x{h*10:.0f} cm | **Cover:** {cov*10:.0f} mm")
+
 
