@@ -81,7 +81,14 @@ def render_loads(n, spans, p):
                 wdl = st.number_input("DL", 0.0, key=f"wdl{i}")
                 wll = st.number_input("LL", 0.0, key=f"wll{i}")
                 wu = wdl*p['fdl'] + wll*p['fll']
-                if wu!=0: loads.append({'span_idx':i, 'type':'U', 'w':wu})
+                
+                # Show Calculation Item
+                if wu != 0:
+                    st.info(f"**Calc:** $W_u = ({wdl} \\times {p['fdl']}) + ({wll} \\times {p['fll']}) = {wu:.2f}$")
+                    loads.append({'span_idx':i, 'type':'U', 'w':wu})
+                else:
+                    st.caption("No Uniform Load")
+
             with c2:
                 st.markdown(f"#### Point Load ({u_point})")
                 qty = st.number_input("Qty", 0, 5, 0, key=f"q{i}")
@@ -90,6 +97,11 @@ def render_loads(n, spans, p):
                     pd_val = cc1.number_input(f"P_DL {j+1}", key=f"pd{i}{j}")
                     pl_val = cc2.number_input(f"P_LL {j+1}", key=f"pl{i}{j}")
                     px = cc3.number_input(f"x (m)", 0.0, spans[i], spans[i]/2.0, key=f"px{i}{j}")
+                    
                     pu = pd_val*p['fdl'] + pl_val*p['fll']
-                    if pu!=0: loads.append({'span_idx':i, 'type':'P', 'P':pu, 'x':px})
+                    
+                    # Show Calculation Item
+                    if pu != 0:
+                        st.info(f"**Calc:** $P_u = ({pd_val} \\times {p['fdl']}) + ({pl_val} \\times {p['fll']}) = {pu:.2f}$")
+                        loads.append({'span_idx':i, 'type':'P', 'P':pu, 'x':px})
     return loads
