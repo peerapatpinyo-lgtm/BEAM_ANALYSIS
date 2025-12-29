@@ -80,7 +80,9 @@ def main():
                     st.info(f"Max Moment: **{df_res['moment'].abs().max():,.2f} {params['u_force']}-{params['u_len']}**")
 
                 design_view.draw_diagrams(df_res, spans, sup_df, loads, params['u_force'], params['u_len'])
-                design_view.render_design_results(df_res, params)
+                
+                # ส่ง spans และ sup_df ไปให้ฟังก์ชัน design results เพื่อวาดรูปเหล็กตามยาว
+                design_view.render_design_results(df_res, params, spans, sup_df)
                 
         except Exception as e:
             st.error(f"System Error: {e}")
