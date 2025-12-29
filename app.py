@@ -48,7 +48,7 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
         with tab:
             col_main_1, col_main_2 = st.columns([1, 1.2])
             
-            # --- 1. Uniform Load Section ---
+            # --- 1. Uniform Load ---
             with col_main_1:
                 st.info(f"**Uniform Load (Span {i+1})**")
                 w_dl = st.number_input(f"Dead Load (w_dl)", value=0.0, step=100.0, format="%.2f", key=f"w_dl_{i}", help=f"Unit: {force_unit}/{dist_unit}")
@@ -56,13 +56,13 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                 
                 w_u = (w_dl * f_dl) + (w_ll * f_ll)
                 if w_u != 0:
-                    loads.append({'span_idx': i, 'type': 'U', 'w_dl': w_dl, 'w_ll': w_ll, 'w': w_u, 'val': w_u})
-                    st.success(f"Added UDL: {w_u:.2f} (Factored)")
+                    loads.append({'span_idx': i, 'type': 'U', 'w': w_u})
+                    st.success(f"Added UDL: {w_u:.2f}")
 
-            # --- 2. Point Load Section ---
+            # --- 2. Point Load ---
             with col_main_2:
                 st.warning(f"**Point Loads (Span {i+1})**")
-                num_p = st.number_input(f"Add Point Loads (Qty)", min_value=0, max_value=5, value=0, key=f"num_p_qty_{i}")
+                num_p = st.number_input(f"Add Point Loads (Qty)", min_value=0, max_value=5, value=0, key=f"qty_p_{i}")
 
                 if num_p > 0:
                     for j in range(num_p):
@@ -70,36 +70,29 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                             st.markdown(f"""<div class="load-box"><b>Point Load #{j+1}</b></div>""", unsafe_allow_html=True)
                             c1, c2, c3 = st.columns([1, 1, 1.2])
                             
-                            p_dl = c1.number_input(f"P_DL ({force_unit})", value=0.0, step=100.0, key=f"p_dl_{i}_{j}")
-                            p_ll = c2.number_input(f"P_LL ({force_unit})", value=0.0, step=100.0, key=f"p_ll_{i}_{j}")
+                            p_dl = c1.number_input(f"P_DL", value=0.0, step=100.0, key=f"p_dl_{i}_{j}")
+                            p_ll = c2.number_input(f"P_LL", value=0.0, step=100.0, key=f"p_ll_{i}_{j}")
                             
                             x_max = float(spans[i])
-                            x_loc = c3.number_input(
-                                f"x from Left (0-{x_max}m)", 
-                                min_value=0.0, 
-                                max_value=x_max, 
-                                value=x_max/2, 
-                                step=0.1,
-                                key=f"p_x_{i}_{j}"
-                            )
+                            x_loc = c3.number_input(f"x (0-{x_max}m)", min_value=0.0, max_value=x_max, value=x_max/2, step=0.1, key=f"p_x_{i}_{j}")
                             
                             p_u = (p_dl * f_dl) + (p_ll * f_ll)
                             if p_u != 0:
                                 loads.append({
                                     'span_idx': i, 
                                     'type': 'P', 
-                                    'P_dl': p_dl, 'P_ll': p_ll, 
-                                    'P': p_u, 'p': p_u, 'val': p_u, 
-                                    'x': x_loc, 'location': x_loc
+                                    'P': p_u, 
+                                    'x': x_loc
                                 })
                 else:
                     st.caption("No point loads on this span.")
     return loads
 
 # ==========================================
-# VISUALIZATION FUNCTIONS (CORRECTED SCALING)
+# VISUALIZATION FUNCTIONS
 # ==========================================
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
+    """Draws ENHANCED Engineering Supports"""
     s = size * 0.9 
     line_col, fill_col = "#263238", "#B0BEC5" 
     
@@ -125,6 +118,7 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1.5), row=1, col=1)
 
 def add_peak_annotation(fig, x, y, text, color, row, anchor="bottom"):
+    """Helper to add clean peak annotations"""
     fig.add_annotation(
         x=x, y=y,
         text=f"<b>{text}</b>",
@@ -144,16 +138,14 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     dist_unit = "m"
     
-    # --- SCALING LOGIC ---
+    # --- SCALING ---
     w_vals = [abs(l.get('w',0)) for l in loads if l.get('type')=='U']
     p_vals = [abs(l.get('P',0)) for l in loads if l.get('type')=='P']
     
     max_w = max(w_vals) if w_vals and max(w_vals) > 0 else 1.0
     max_p = max(p_vals) if p_vals and max(p_vals) > 0 else 1.0
     
-    target_h = 1.0        
-    min_vis_ratio = 0.25   
-    vis_range = 0.75       
+    target_h = 1.0 
     
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
@@ -161,8 +153,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         row_heights=[0.25, 0.375, 0.375]
     )
 
-    # --- ROW 1: LOADING DIAGRAM ---
-    # Beam Line
+    # --- 1. Loading Diagram ---
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
     # Supports
@@ -183,7 +174,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         if load.get('type') == 'U' and load.get('w', 0) != 0:
             w = load['w']
             ratio = abs(w) / max_w
-            h = (min_vis_ratio + (vis_range * ratio)) * target_h 
+            h = (0.2 + 0.8 * ratio) * target_h 
             
             fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.25)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
             fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w:.1f}"), row=1, col=1)
@@ -194,39 +185,29 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
             P = load['P']
             load_x = load['x'] + x_start
             ratio = abs(P) / max_p
-            h = (min_vis_ratio + (vis_range * ratio)) * target_h
+            h = (0.25 + 0.75 * ratio) * target_h
             
-            # 1. DRAW ARROW
-            # Head (x, y) = (load_x, 0) -> Touching the beam
-            # Tail (ax, ay) = (load_x, h) -> Above the beam
-            # Use data coordinates for both (axref="x1", ayref="y1")
+            # Correct Arrow Drawing: Head(x, 0) <- Tail(ax, ay)
+            # Use 'x1' and 'y1' refs to ensure we are plotting in the correct subplot coordinates
             fig.add_annotation(
-                x=load_x, y=0,           # Head
-                ax=load_x, ay=h,         # Tail (positive y means up in graph coords)
-                xref="x1", yref="y1",
-                axref="x1", ayref="y1",
-                text="",                 # No text on the arrow itself
-                showarrow=True, 
-                arrowhead=2, 
-                arrowsize=1.2, 
-                arrowwidth=2.5, 
+                x=load_x, y=0,              # Head position (on beam)
+                ax=load_x, ay=h,            # Tail position (height h)
+                xref='x1', yref='y1',       # Data coordinates for Head
+                axref='x1', ayref='y1',     # Data coordinates for Tail
+                text=f"P={P:.0f}",          # Label on the arrow tail
+                showarrow=True,
+                arrowhead=2,                
+                arrowsize=1.2,
+                arrowwidth=2.5,
                 arrowcolor="#D32F2F",
-                row=1, col=1
-            )
-            
-            # 2. DRAW LABEL (Above the arrow tail)
-            fig.add_annotation(
-                x=load_x, y=h,
-                text=f"P={P:.0f}",
-                showarrow=False,
-                yshift=10, # Shift text slightly up from the tail
+                yshift=10,                  
                 font=dict(color="#D32F2F", size=11, weight="bold"),
                 row=1, col=1
             )
 
     fig.update_yaxes(range=[-target_h*0.5, target_h*1.8], visible=False, row=1, col=1)
 
-    # --- DATA PREP FOR SFD/BMD ---
+    # --- 2. SFD & 3. BMD Data Prep ---
     plot_x, plot_v, plot_m = [], [], []
     current_offset = 0.0
     for i in range(len(vis_spans)):
@@ -241,29 +222,21 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     
     np_x, np_v, np_m = np.array(plot_x), np.array(plot_v), np.array(plot_m)
 
-    # --- ROW 2: SFD ---
+    # Plot SFD
     shear_color = '#D32F2F'
     fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=shear_color, width=2.5), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="V: %{y:.2f}"), row=2, col=1)
-    
-    v_max, v_min = np_v.max(), np_v.min()
-    if abs(v_max) > 0.1:
-        idx_max = np.argmax(np_v)
-        add_peak_annotation(fig, np_x[idx_max], v_max, f"Max: {v_max:.1f}", shear_color, 2, "bottom")
-    if abs(v_min) > 0.1:
-        idx_min = np.argmin(np_v)
-        add_peak_annotation(fig, np_x[idx_min], v_min, f"Min: {v_min:.1f}", shear_color, 2, "top")
+    if len(np_v) > 0:
+        v_max, v_min = np_v.max(), np_v.min()
+        if abs(v_max) > 0.1: add_peak_annotation(fig, np_x[np.argmax(np_v)], v_max, f"Max: {v_max:.1f}", shear_color, 2, "bottom")
+        if abs(v_min) > 0.1: add_peak_annotation(fig, np_x[np.argmin(np_v)], v_min, f"Min: {v_min:.1f}", shear_color, 2, "top")
 
-    # --- ROW 3: BMD ---
+    # Plot BMD
     moment_color = '#1976D2'
-    fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=moment_color, width=2.5), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="M: %{y:.2f} (Tension Side)"), row=3, col=1)
-
-    m_max, m_min = np_m.max(), np_m.min()
-    if m_max > 0.1:
-        idx_max = np.argmax(np_m)
-        add_peak_annotation(fig, np_x[idx_max], m_max, f"+M max: {m_max:.1f}", moment_color, 3, "bottom")
-    if m_min < -0.1:
-        idx_min = np.argmin(np_m)
-        add_peak_annotation(fig, np_x[idx_min], m_min, f"-M max: {m_min:.1f}", moment_color, 3, "top")
+    fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=moment_color, width=2.5), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="M: %{y:.2f}"), row=3, col=1)
+    if len(np_m) > 0:
+        m_max, m_min = np_m.max(), np_m.min()
+        if m_max > 0.1: add_peak_annotation(fig, np_x[np.argmax(np_m)], m_max, f"+M: {m_max:.1f}", moment_color, 3, "bottom")
+        if m_min < -0.1: add_peak_annotation(fig, np_x[np.argmin(np_m)], m_min, f"-M: {m_min:.1f}", moment_color, 3, "top")
     
     for r in [2, 3]:
         fig.add_hline(y=0, line_width=1.5, line_color="#37474F", row=r, col=1) 
@@ -288,10 +261,11 @@ with c_geo: n_span, spans, supports = ui.render_geometry_input()
 
 with c_load: loads_input = render_custom_load_input(n_span, spans, unit_sys, fact_dl, fact_ll)
 
-# 2. Calculation (Analysis Phase)
+# 2. Calculation
 if st.button("🚀 Calculate Analysis & Design", type="primary"):
     try:
         st.session_state['loads_input'] = loads_input
+        # กรองข้อมูลให้เหลือแต่ dict ที่ถูกต้องก่อนส่งเข้าคำนวณ
         clean_loads = [l for l in loads_input if isinstance(l, dict)]
         
         # A. Analysis
@@ -308,9 +282,8 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     vis_spans, vis_supports_df = st.session_state['vis_data']
     loads = st.session_state['loads_input']
     
-    # 3.1 PLOT ANALYSIS (Analysis View)
     st.markdown('<div class="sub-header">1️⃣ Analysis Results</div>', unsafe_allow_html=True)
     st.plotly_chart(create_engineering_plots(df, vis_spans, vis_supports_df, loads, unit_sys), use_container_width=True, key="eng_plot")
 
-    # 3.2 CALL DESIGN MODULE (Design View)
+    # เรียกใช้ไฟล์ design_view ที่แยกออกไป
     design_view.render_design_section(df, vis_spans, unit_sys, method)
