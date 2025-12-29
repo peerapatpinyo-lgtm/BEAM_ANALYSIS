@@ -5,16 +5,16 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 # --- IMPORT MODULES ---
+# หมายเหตุ: ต้องมีไฟล์ beam_analysis.py และ design_view.py อยู่ใน folder เดียวกัน
 try:
     from beam_analysis import run_beam_analysis 
-    import input_handler as ui
     import design_view 
 except ImportError as e:
-    st.error(f"⚠️ Error: Missing required files. {e}")
+    st.error(f"⚠️ Error: Missing required files (beam_analysis.py or design_view.py). {e}")
     st.stop()
 
 # ==========================================
-# SETUP & STYLES
+# 1. SETUP & STYLES
 # ==========================================
 st.set_page_config(page_title="RC Beam Pro Ultimate", layout="wide", page_icon="🏗️")
 
@@ -32,10 +32,82 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# CUSTOM LOAD INPUT
+# 2. INPUT SECTIONS (RESTORED)
+# ==========================================
+
+def render_sidebar():
+    """Render Sidebar Inputs for Code, Materials, and Factors"""
+    with st.sidebar:
+        st.header("⚙️ Design Parameters")
+        
+        # Unit System
+        unit_sys = st.radio("Unit System", ["Metric (kg, m)", "SI (kN, m)"])
+        
+        st.markdown("---")
+        
+        # Design Code & Method
+        design_code = st.selectbox("Design Code", ["ACI 318-19", "EIT 1007-34", "EIT 1008-38"])
+        method = st.radio("Design Method", ["WSD", "SDM"], index=1)
+        
+        st.markdown("---")
+        
+        # Load Factors
+        st.subheader("Load Factors")
+        if method == "SDM":
+            col_f1, col_f2 = st.columns(2)
+            f_dl = col_f1.number_input("DL Factor", value=1.4, step=0.1)
+            f_ll = col_f2.number_input("LL Factor", value=1.7, step=0.1)
+        else:
+            f_dl, f_ll = 1.0, 1.0
+            st.info("WSD uses Service Loads (Factor = 1.0)")
+            
+        return design_code, method, f_dl, f_ll, unit_sys
+
+def render_geometry_input():
+    """Render Geometry Inputs (Spans & Supports)"""
+    st.markdown("### 1️⃣ Geometry & Supports")
+    
+    col_n, col_dummy = st.columns([1, 2])
+    n_span = col_n.number_input("Number of Spans", min_value=1, max_value=10, value=2)
+    
+    # Init Data
+    spans = []
+    supports_data = [] # List of dicts
+    
+    # Create columns for spans
+    cols = st.columns(n_span)
+    for i, col in enumerate(cols):
+        l = col.number_input(f"Span {i+1} (m)", min_value=1.0, value=5.0, step=0.5, key=f"span_{i}")
+        spans.append(l)
+    
+    st.markdown("#### Supports Configuration")
+    # Generate Support Inputs
+    # Support count = n_span + 1
+    sup_cols = st.columns(n_span + 1)
+    support_options = ["Pin", "Roller", "Fixed", "None"]
+    
+    current_supports = []
+    for i, col in enumerate(sup_cols):
+        default_idx = 0 if i == 0 else (1 if i < n_span else 1) # Pin first, then Rollers
+        s_type = col.selectbox(f"Sup {i+1}", support_options, index=default_idx, key=f"sup_{i}")
+        current_supports.append(s_type)
+    
+    # Convert supports to dataframe-like structure or list for backend
+    # Mapping supports to x coordinates
+    x_coords = [0] + list(np.cumsum(spans))
+    
+    supports_df = pd.DataFrame({
+        'x': x_coords,
+        'type': current_supports
+    })
+    
+    return n_span, spans, supports_df
+
+# ==========================================
+# 3. CUSTOM LOAD INPUT
 # ==========================================
 def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
-    st.markdown("### 3️⃣ Applied Loads (Service Loads)")
+    st.markdown("### 2️⃣ Applied Loads (Service Loads)")
     st.caption(f"Note: Factors DL={f_dl:.1f}, LL={f_ll:.1f} will be applied automatically.")
     
     force_unit = "kg" if "Metric" in unit_sys else "kN"
@@ -51,13 +123,13 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
             # --- 1. Uniform Load ---
             with col_main_1:
                 st.info(f"**Uniform Load (Span {i+1})**")
-                w_dl = st.number_input(f"Dead Load (w_dl)", value=0.0, step=100.0, format="%.2f", key=f"w_dl_{i}", help=f"Unit: {force_unit}/{dist_unit}")
-                w_ll = st.number_input(f"Live Load (w_ll)", value=0.0, step=100.0, format="%.2f", key=f"w_ll_{i}", help=f"Unit: {force_unit}/{dist_unit}")
+                w_dl = st.number_input(f"Dead Load (w_dl)", value=0.0, step=100.0, format="%.2f", key=f"w_dl_{i}")
+                w_ll = st.number_input(f"Live Load (w_ll)", value=0.0, step=100.0, format="%.2f", key=f"w_ll_{i}")
                 
                 w_u = (w_dl * f_dl) + (w_ll * f_ll)
                 if w_u != 0:
                     loads.append({'span_idx': i, 'type': 'U', 'w': w_u})
-                    st.success(f"Added UDL: {w_u:.2f}")
+                    st.success(f"Added UDL: {w_u:.2f} (Factored)")
 
             # --- 2. Point Load ---
             with col_main_2:
@@ -89,10 +161,9 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     return loads
 
 # ==========================================
-# VISUALIZATION FUNCTIONS
+# 4. VISUALIZATION FUNCTIONS (CORRECTED)
 # ==========================================
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
-    """Draws ENHANCED Engineering Supports"""
     s = size * 0.9 
     line_col, fill_col = "#263238", "#B0BEC5" 
     
@@ -118,7 +189,6 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1.5), row=1, col=1)
 
 def add_peak_annotation(fig, x, y, text, color, row, anchor="bottom"):
-    """Helper to add clean peak annotations"""
     fig.add_annotation(
         x=x, y=y,
         text=f"<b>{text}</b>",
@@ -138,7 +208,7 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     dist_unit = "m"
     
-    # --- SCALING ---
+    # --- SCALING LOGIC ---
     w_vals = [abs(l.get('w',0)) for l in loads if l.get('type')=='U']
     p_vals = [abs(l.get('P',0)) for l in loads if l.get('type')=='P']
     
@@ -180,21 +250,21 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
             fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w:.1f}"), row=1, col=1)
             fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"w={w:.0f}", showarrow=False, yshift=10, font=dict(color="#EF6C00", size=10), row=1, col=1)
 
-        # --- POINT LOAD (FIXED) ---
+        # --- POINT LOAD (FIXED ARROW) ---
         elif load.get('type') == 'P' and load.get('P', 0) != 0:
             P = load['P']
             load_x = load['x'] + x_start
             ratio = abs(P) / max_p
             h = (0.25 + 0.75 * ratio) * target_h
             
-            # Correct Arrow Drawing: Head(x, 0) <- Tail(ax, ay)
-            # Use 'x1' and 'y1' refs to ensure we are plotting in the correct subplot coordinates
+            # Draw Arrow: Head at beam (0), Tail at height (h)
+            # KEY FIX: Using axref='x1', ayref='y1' to match subplot coordinates
             fig.add_annotation(
-                x=load_x, y=0,              # Head position (on beam)
-                ax=load_x, ay=h,            # Tail position (height h)
-                xref='x1', yref='y1',       # Data coordinates for Head
-                axref='x1', ayref='y1',     # Data coordinates for Tail
-                text=f"P={P:.0f}",          # Label on the arrow tail
+                x=load_x, y=0,              # Head (Beam)
+                ax=load_x, ay=h,            # Tail (Height)
+                xref='x1', yref='y1',       
+                axref='x1', ayref='y1',     
+                text=f"P={P:.0f}",          
                 showarrow=True,
                 arrowhead=2,                
                 arrowsize=1.2,
@@ -250,22 +320,28 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     return fig
 
 # ==========================================
-# MAIN APP EXECUTION
+# 5. MAIN EXECUTION
 # ==========================================
 st.markdown('<div class="header-box"><h2>🏗️ RC Beam Pro Ultimate</h2></div>', unsafe_allow_html=True)
 
-# 1. Inputs
-design_code, method, fact_dl, fact_ll, unit_sys = ui.render_sidebar()
+# --- 1. Calls RESTORED Sidebar & Geometry ---
+design_code, method, fact_dl, fact_ll, unit_sys = render_sidebar()
+
+# Layout for Geometry and Loads
 c_geo, c_load = st.columns([1, 1.5])
-with c_geo: n_span, spans, supports = ui.render_geometry_input()
 
-with c_load: loads_input = render_custom_load_input(n_span, spans, unit_sys, fact_dl, fact_ll)
+with c_geo:
+    n_span, spans, supports = render_geometry_input()
 
-# 2. Calculation
+with c_load:
+    # Use the restored/fixed function
+    loads_input = render_custom_load_input(n_span, spans, unit_sys, fact_dl, fact_ll)
+
+# --- 2. Calculation ---
 if st.button("🚀 Calculate Analysis & Design", type="primary"):
     try:
         st.session_state['loads_input'] = loads_input
-        # กรองข้อมูลให้เหลือแต่ dict ที่ถูกต้องก่อนส่งเข้าคำนวณ
+        # Clean Loads
         clean_loads = [l for l in loads_input if isinstance(l, dict)]
         
         # A. Analysis
@@ -276,7 +352,7 @@ if st.button("🚀 Calculate Analysis & Design", type="primary"):
     except Exception as e:
         st.error(f"System Error: {e}")
 
-# 3. Visualization
+# --- 3. Visualization ---
 if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     df = st.session_state['res_df']
     vis_spans, vis_supports_df = st.session_state['vis_data']
@@ -285,5 +361,5 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     st.markdown('<div class="sub-header">1️⃣ Analysis Results</div>', unsafe_allow_html=True)
     st.plotly_chart(create_engineering_plots(df, vis_spans, vis_supports_df, loads, unit_sys), use_container_width=True, key="eng_plot")
 
-    # เรียกใช้ไฟล์ design_view ที่แยกออกไป
+    # B. Design (Assuming design_view handles its own internal logic based on results)
     design_view.render_design_section(df, vis_spans, unit_sys, method)
