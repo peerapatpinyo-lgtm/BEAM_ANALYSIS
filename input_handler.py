@@ -29,11 +29,11 @@ def render_sidebar():
         with st.expander("Rebar Selection", expanded=True):
             db_main = st.selectbox("Main Bar (mm)", [12, 16, 20, 25, 28, 32], index=1)
             db_stirrup = st.selectbox("Stirrup (mm)", [6, 9, 12], index=0)
-            # เพิ่มช่องใส่ Spacing Step ตามขอ
+            # User Requested: Input for Spacing control
             stirrup_step = st.selectbox("Stirrup Spacing Step (cm)", [1.0, 2.5, 5.0], index=1, help="Round stirrup spacing down to nearest X cm")
             
         st.markdown("### ⚖️ Load Factors")
-        method = st.radio("Design Method", ["SDM (Strength Design)"], index=0) # Lock to SDM for now
+        method = st.radio("Design Method", ["SDM (Strength Design)"], index=0)
         c1, c2 = st.columns(2)
         fdl = c1.number_input("Factor DL", value=1.4, format="%.2f")
         fll = c2.number_input("Factor LL", value=1.7, format="%.2f")
@@ -84,7 +84,7 @@ def render_loads(n, spans, p):
                 wdl = st.number_input("Dead Load (DL)", 0.0, key=f"wdl{i}")
                 wll = st.number_input("Live Load (LL)", 0.0, key=f"wll{i}")
                 
-                # คำนวณละเอียด 1.4DL + 1.7LL
+                # User Requested: Detailed Load Calculation Display
                 wu = wdl*p['fdl'] + wll*p['fll']
                 if wu != 0:
                     st.latex(f"W_u = ({p['fdl']}\\times{wdl}) + ({p['fll']}\\times{wll}) = \\mathbf{{{wu:,.2f}}}\; {u_load}")
@@ -101,7 +101,6 @@ def render_loads(n, spans, p):
                     pl_val = cc2.number_input(f"P(LL)", key=f"pl{i}{j}")
                     px = cc3.number_input(f"x (m)", 0.0, spans[i], spans[i]/2.0, key=f"px{i}{j}")
                     
-                    # คำนวณละเอียด
                     pu = pd_val*p['fdl'] + pl_val*p['fll']
                     if pu != 0:
                         st.latex(f"P_u = ({p['fdl']}\\times{pd_val}) + ({p['fll']}\\times{pl_val}) = \\mathbf{{{pu:,.2f}}}\; {u_point}")
