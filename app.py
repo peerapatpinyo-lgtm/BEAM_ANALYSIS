@@ -31,26 +31,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. INPUT SECTIONS (KEPT ORIGINAL)
+# 2. INPUT SECTIONS
 # ==========================================
 
 def render_sidebar():
-    """Render Sidebar Inputs for Code, Materials, and Factors"""
     with st.sidebar:
         st.header("⚙️ Design Parameters")
-        
-        # Unit System
         unit_sys = st.radio("Unit System", ["Metric (kg, m)", "SI (kN, m)"])
-        
         st.markdown("---")
-        
-        # Design Code & Method
         design_code = st.selectbox("Design Code", ["ACI 318-19", "EIT 1007-34", "EIT 1008-38"])
         method = st.radio("Design Method", ["WSD", "SDM"], index=1)
-        
         st.markdown("---")
-        
-        # Load Factors
         st.subheader("Load Factors")
         if method == "SDM":
             col_f1, col_f2 = st.columns(2)
@@ -59,20 +50,14 @@ def render_sidebar():
         else:
             f_dl, f_ll = 1.0, 1.0
             st.info("WSD uses Service Loads (Factor = 1.0)")
-            
         return design_code, method, f_dl, f_ll, unit_sys
 
 def render_geometry_input():
-    """Render Geometry Inputs (Spans & Supports)"""
     st.markdown("### 1️⃣ Geometry & Supports")
-    
-    col_n, col_dummy = st.columns([1, 2])
+    col_n, _ = st.columns([1, 2])
     n_span = col_n.number_input("Number of Spans", min_value=1, max_value=10, value=2)
     
-    # Init Data
     spans = []
-    
-    # Create columns for spans
     cols = st.columns(n_span)
     for i, col in enumerate(cols):
         l = col.number_input(f"Span {i+1} (m)", min_value=1.0, value=5.0, step=0.5, key=f"span_{i}")
@@ -84,47 +69,36 @@ def render_geometry_input():
     
     current_supports = []
     for i, col in enumerate(sup_cols):
-        default_idx = 0 if i == 0 else (1 if i < n_span else 1) 
+        default_idx = 0 if i == 0 else (1 if i < n_span else 1)
         s_type = col.selectbox(f"Sup {i+1}", support_options, index=default_idx, key=f"sup_{i}")
         current_supports.append(s_type)
     
     x_coords = [0] + list(np.cumsum(spans))
-    
-    supports_df = pd.DataFrame({
-        'x': x_coords,
-        'type': current_supports
-    })
-    
+    supports_df = pd.DataFrame({'x': x_coords, 'type': current_supports})
     return n_span, spans, supports_df
 
-# ==========================================
-# 3. CUSTOM LOAD INPUT (UPDATED TO SPLIT DL/LL)
-# ==========================================
 def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
     st.markdown("### 2️⃣ Applied Loads (Service Loads)")
     st.caption(f"Note: Factors DL={f_dl:.1f}, LL={f_ll:.1f} will be applied automatically.")
     
     loads = []
-    
     tabs = st.tabs([f"📍 Span {i+1} (L={spans[i]}m)" for i in range(n_span)])
     
     for i, tab in enumerate(tabs):
         with tab:
             col_main_1, col_main_2 = st.columns([1, 1.2])
             
-            # --- 1. Uniform Load (Combined for simplicity in visual, but factored) ---
+            # --- Uniform Load ---
             with col_main_1:
                 st.info(f"**Uniform Load (Span {i+1})**")
                 w_dl = st.number_input(f"Dead Load (w_dl)", value=0.0, step=100.0, format="%.2f", key=f"w_dl_{i}")
                 w_ll = st.number_input(f"Live Load (w_ll)", value=0.0, step=100.0, format="%.2f", key=f"w_ll_{i}")
                 
-                # Combine UDL for simpler viewing, but strictly factored
                 w_u = (w_dl * f_dl) + (w_ll * f_ll)
                 if w_u != 0:
-                    loads.append({'span_idx': i, 'type': 'U', 'w': w_u, 'source': 'Combined'})
-                    st.success(f"Total Factored UDL: {w_u:.2f}")
+                    loads.append({'span_idx': i, 'type': 'U', 'w': w_u, 'source': 'Total UDL'})
 
-            # --- 2. Point Load (SPLIT DL/LL as requested) ---
+            # --- Point Load (Separated DL/LL) ---
             with col_main_2:
                 st.warning(f"**Point Loads (Span {i+1})**")
                 num_p = st.number_input(f"Add Point Loads (Qty)", min_value=0, max_value=5, value=0, key=f"qty_p_{i}")
@@ -141,32 +115,25 @@ def render_custom_load_input(n_span, spans, unit_sys, f_dl, f_ll):
                             x_max = float(spans[i])
                             x_loc = c3.number_input(f"x (0-{x_max}m)", min_value=0.0, max_value=x_max, value=x_max/2, step=0.1, key=f"p_x_{i}_{j}")
                             
-                            # ** KEY CHANGE: Append separately so we can plot separately **
+                            # Append separately to allow distinct plotting
                             if p_dl != 0:
                                 loads.append({
                                     'span_idx': i, 'type': 'P', 
-                                    'P': p_dl * f_dl,   # Factored Value for Calculation
-                                    'raw': p_dl,        # Raw Value for Label
-                                    'x': x_loc, 
-                                    'source': 'DL'      # Tag for Color/Label
+                                    'P': p_dl * f_dl, 'raw': p_dl,
+                                    'x': x_loc, 'source': 'DL'
                                 })
-                            
                             if p_ll != 0:
                                 loads.append({
                                     'span_idx': i, 'type': 'P', 
-                                    'P': p_ll * f_ll,   # Factored Value for Calculation
-                                    'raw': p_ll,        # Raw Value for Label
-                                    'x': x_loc, 
-                                    'source': 'LL'      # Tag for Color/Label
+                                    'P': p_ll * f_ll, 'raw': p_ll,
+                                    'x': x_loc, 'source': 'LL'
                                 })
-
-                else:
-                    st.caption("No point loads on this span.")
     return loads
 
 # ==========================================
-# 4. VISUALIZATION FUNCTIONS (PROFESSIONAL & REFINED)
+# 3. VISUALIZATION ENGINE (REFINED)
 # ==========================================
+
 def draw_support_shape(fig, x, y, sup_type, size=1.0):
     s = size * 0.9 
     line_col, fill_col = "#263238", "#B0BEC5" 
@@ -188,29 +155,28 @@ def draw_support_shape(fig, x, y, sup_type, size=1.0):
     elif sup_type == "Fixed":
         h_wall = s * 1.6
         fig.add_shape(type="line", x0=x, y0=y-h_wall/2, x1=x, y1=y+h_wall/2, line=dict(color=line_col, width=5), row=1, col=1)
+        # Hatching
         direction = -1 if x <= 0.1 else 1 
         for hy in np.linspace(y-h_wall/2, y+h_wall/2, 8):
             fig.add_shape(type="line", x0=x, y0=hy, x1=x + (direction * s*0.4), y1=hy - s*0.4, line=dict(color=line_col, width=1.5), row=1, col=1)
 
-def add_peak_annotation(fig, x, y, val, color, row, position="top"):
-    """
-    Adds a clean box annotation without arrow.
-    Shows Value AND Distance (x).
-    """
-    yshift = 15 if position == "top" else -15
+def add_peak_box(fig, x, y, val, color, row, position="top"):
+    """Adds a professional box annotation without arrow"""
+    yshift = 25 if position == "top" else -25
     
-    # Text Formatting
-    label_text = f"<b>{val:.2f}</b><br><span style='font-size:10px; color:#555'>@ {x:.2f} m</span>"
+    # Professional Label: Value + Location
+    label_text = f"<b>{val:.2f}</b><br><span style='font-size:10px; color:#444'>@ {x:.2f} m</span>"
     
     fig.add_annotation(
         x=x, y=y,
         text=label_text,
-        showarrow=False,  # REMOVED ARROW
+        showarrow=False,  # No arrow as requested
         font=dict(color=color, size=11),
-        bgcolor="rgba(255, 255, 255, 0.85)", # Semi-transparent white box
+        align="center",
+        bgcolor="rgba(255, 255, 255, 0.9)",
         bordercolor=color,
-        borderwidth=1,
-        borderpad=4,
+        borderwidth=1.5,
+        borderpad=5,
         yshift=yshift,
         row=row, col=1
     )
@@ -225,17 +191,18 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     moment_unit = "kg-m" if "Metric" in unit_sys else "kN-m"
     dist_unit = "m"
     
-    # --- GLOBAL SCALING LOGIC ---
+    # --- 1. GLOBAL SCALING ---
+    # Determine max load to scale visuals proportionally
     all_magnitudes = []
     for l in loads:
-        if l['type'] == 'U': all_magnitudes.append(abs(l.get('w', 0)))
-        if l['type'] == 'P': all_magnitudes.append(abs(l.get('P', 0)))
+        val = abs(l.get('w', 0)) if l['type'] == 'U' else abs(l.get('P', 0))
+        if val > 0: all_magnitudes.append(val)
     
-    global_max = max(all_magnitudes) if all_magnitudes and max(all_magnitudes) > 0 else 1.0
-    target_h = 1.2 
+    global_max = max(all_magnitudes) if all_magnitudes else 1.0
+    target_h = 1.5 # Base visual height
     
     fig = make_subplots(
-        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+        rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.1,
         subplot_titles=(
             "<b>1. Loading Diagram (Free Body Diagram)</b>", 
             f"<b>2. Shear Force Diagram (SFD)</b>", 
@@ -244,17 +211,20 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         row_heights=[0.3, 0.35, 0.35]
     )
 
-    # --- 1. Loading Diagram ---
+    # --- ROW 1: LOADING DIAGRAM ---
     fig.add_shape(type="line", x0=0, y0=0, x1=total_len, y1=0, line=dict(color="black", width=4), row=1, col=1)
     
     # Supports
-    sup_size = target_h * 0.25
+    sup_size = target_h * 0.2
     for i, x in enumerate(cum_len):
         if i < len(vis_supports):
             stype = vis_supports.iloc[i]['type']
             if stype != "None": draw_support_shape(fig, x, 0, stype, size=sup_size)
 
-    # Loads
+    # Position Tracker to prevent overlap of Point Loads
+    # Key: (Span_Idx, X_Rough_Location) -> Count
+    point_load_tracker = {}
+
     for load in loads:
         span_idx = load.get('span_idx', 0)
         if span_idx >= len(vis_spans): continue 
@@ -265,56 +235,66 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
         if load.get('type') == 'U' and load.get('w', 0) != 0:
             w = load['w']
             ratio = abs(w) / global_max
-            h = (0.15 + 0.85 * ratio) * target_h 
+            h = (0.2 + 0.8 * ratio) * target_h 
             
-            # UDL uses a neutral orange
+            # Draw UDL Block
             fig.add_trace(go.Scatter(x=[x_start, x_end, x_end, x_start], y=[0, 0, h, h], fill='toself', fillcolor='rgba(255, 152, 0, 0.2)', line=dict(width=0), showlegend=False, hoverinfo='skip'), row=1, col=1)
-            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"Total w: {w:.1f}"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=[x_start, x_end], y=[h, h], mode='lines', line=dict(color='#EF6C00', width=2), showlegend=False, hoverinfo='text', text=f"UDL: {w:.1f}"), row=1, col=1)
             fig.add_annotation(x=(x_start+x_end)/2, y=h, text=f"w={w:.0f}", showarrow=False, yshift=10, font=dict(color="#EF6C00", size=10), row=1, col=1)
 
-        # --- POINT LOAD (SEPARATE DL/LL) ---
+        # --- POINT LOAD (Separated & Offset) ---
         elif load.get('type') == 'P' and load.get('P', 0) != 0:
             P = load['P']
-            load_x = load['x'] + x_start
-            ratio = abs(P) / global_max
-            h = (0.15 + 0.85 * ratio) * target_h
+            local_x = load['x']
+            raw_x = local_x + x_start
             
-            # Determine Color & Label based on Source (DL vs LL)
+            # --- OFFSET LOGIC ---
+            # If multiple point loads exist at same X, shift them visually
+            tracker_key = round(raw_x, 2)
+            if tracker_key in point_load_tracker:
+                offset_count = point_load_tracker[tracker_key]
+                point_load_tracker[tracker_key] += 1
+            else:
+                offset_count = 0
+                point_load_tracker[tracker_key] = 1
+            
+            # Visual Shift (offset 2% of total length per overlapping load)
+            vis_x_shift = offset_count * (total_len * 0.02)
+            vis_x = raw_x + vis_x_shift
+            
+            ratio = abs(P) / global_max
+            h = (0.2 + 0.8 * ratio) * target_h
+            
+            # Styling based on Source
             source = load.get('source', '')
             if source == 'DL':
-                p_color = "#1565C0" # Dark Blue
+                p_color = "#1565C0" # Blue
                 label_text = f"P_DL={load.get('raw', P):.0f}"
-                x_offset = -0.05 # Slight offset to prevent text overlap if stacked (though arrows overlap)
+                anchor_y = -10
             elif source == 'LL':
-                p_color = "#C62828" # Dark Red
+                p_color = "#C62828" # Red
                 label_text = f"P_LL={load.get('raw', P):.0f}"
-                x_offset = 0.05
+                anchor_y = -10
             else:
                 p_color = "#333333"
                 label_text = f"P={P:.0f}"
-                x_offset = 0
+                anchor_y = -10
 
             # Draw Arrow
             fig.add_annotation(
-                x=load_x, y=0,              
-                ax=load_x, ay=h,            
-                xref='x1', yref='y1',       
-                axref='x1', ayref='y1',     
+                x=vis_x, y=0,              
+                ax=vis_x, ay=h,            
+                xref='x1', yref='y1', axref='x1', ayref='y1',     
                 text=f"<b>{label_text}</b>",          
-                showarrow=True,
-                arrowhead=2,                
-                arrowsize=1.2,
-                arrowwidth=2.5,
-                arrowcolor=p_color,
+                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2.5, arrowcolor=p_color,
                 yshift=10,
-                xshift=x_offset * 100, # Pixel shift for label
                 font=dict(color=p_color, size=10, weight="bold"),
                 row=1, col=1
             )
 
     fig.update_yaxes(range=[-target_h*0.5, target_h*1.5], visible=False, row=1, col=1)
 
-    # --- 2. SFD & 3. BMD Data Prep ---
+    # --- ROW 2 & 3: SFD & BMD ---
     plot_x, plot_v, plot_m = [], [], []
     current_offset = 0.0
     for i in range(len(vis_spans)):
@@ -329,70 +309,64 @@ def create_engineering_plots(df, vis_spans, vis_supports, loads, unit_sys):
     
     np_x, np_v, np_m = np.array(plot_x), np.array(plot_v), np.array(plot_m)
 
-    # Plot SFD
+    # SFD
     shear_color = '#D32F2F'
     fig.add_trace(go.Scatter(x=np_x, y=np_v, mode='lines', line=dict(color=shear_color, width=2.5), fill='tozeroy', fillcolor='rgba(211, 47, 47, 0.1)', name="Shear", hovertemplate="V: %{y:.2f}"), row=2, col=1)
+    
+    # Annotate Max/Min Shear
     if len(np_v) > 0:
         v_max, v_min = np_v.max(), np_v.min()
         idx_max, idx_min = np.argmax(np_v), np.argmin(np_v)
-        
-        # Add Peak Annotations (No Arrow, Clean Box, With Distance)
-        if abs(v_max) > 0.1: 
-            add_peak_annotation(fig, np_x[idx_max], v_max, v_max, shear_color, 2, "top" if v_max > 0 else "bottom")
-        if abs(v_min) > 0.1: 
-            add_peak_annotation(fig, np_x[idx_min], v_min, v_min, shear_color, 2, "bottom" if v_min < 0 else "top")
+        if abs(v_max) > 0.1: add_peak_box(fig, np_x[idx_max], v_max, v_max, shear_color, 2, "top" if v_max > 0 else "bottom")
+        if abs(v_min) > 0.1: add_peak_box(fig, np_x[idx_min], v_min, v_min, shear_color, 2, "bottom" if v_min < 0 else "top")
 
-    # Plot BMD
+    # BMD
     moment_color = '#1976D2'
     fig.add_trace(go.Scatter(x=np_x, y=np_m, mode='lines', line=dict(color=moment_color, width=2.5), fill='tozeroy', fillcolor='rgba(25, 118, 210, 0.1)', name="Moment", hovertemplate="M: %{y:.2f}"), row=3, col=1)
+    
+    # Annotate Max/Min Moment
     if len(np_m) > 0:
         m_max, m_min = np_m.max(), np_m.min()
         idx_max, idx_min = np.argmax(np_m), np.argmin(np_m)
-        
-        if abs(m_max) > 0.1: 
-            add_peak_annotation(fig, np_x[idx_max], m_max, m_max, moment_color, 3, "top" if m_max > 0 else "bottom")
-        if abs(m_min) > 0.1: 
-            add_peak_annotation(fig, np_x[idx_min], m_min, m_min, moment_color, 3, "bottom" if m_min < 0 else "top")
+        if abs(m_max) > 0.1: add_peak_box(fig, np_x[idx_max], m_max, m_max, moment_color, 3, "top" if m_max > 0 else "bottom")
+        if abs(m_min) > 0.1: add_peak_box(fig, np_x[idx_min], m_min, m_min, moment_color, 3, "bottom" if m_min < 0 else "top")
     
-    # --- PROFESSIONAL LAYOUT SETTINGS ---
-    # Axis Titles & Grid
-    fig.update_yaxes(title_text=f"Shear V ({force_unit})", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinewidth=1.5, zerolinecolor='#455A64', row=2, col=1)
-    fig.update_yaxes(title_text=f"Moment M ({moment_unit})", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', zeroline=True, zerolinewidth=1.5, zerolinecolor='#455A64', row=3, col=1)
-    
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', row=2, col=1)
-    fig.update_xaxes(title_text=f"Position ({dist_unit})", showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)', row=3, col=1)
+    # --- FINAL LAYOUT ADJUSTMENTS ---
+    # Axis Labels
+    fig.update_yaxes(title_text=f"Shear V ({force_unit})", showgrid=True, gridwidth=1, gridcolor='#ECEFF1', zeroline=True, zerolinewidth=1.5, zerolinecolor='#546E7A', row=2, col=1)
+    fig.update_yaxes(title_text=f"Moment M ({moment_unit})", showgrid=True, gridwidth=1, gridcolor='#ECEFF1', zeroline=True, zerolinewidth=1.5, zerolinecolor='#546E7A', row=3, col=1)
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#ECEFF1', row=2, col=1)
+    fig.update_xaxes(title_text=f"Position ({dist_unit})", showgrid=True, gridwidth=1, gridcolor='#ECEFF1', row=3, col=1)
     
     # Span Separators
     for r in [2, 3]:
         for x in cum_len: fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="#90A4AE", opacity=0.7, row=r, col=1)
 
-    fig.update_layout(height=1000, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=60, b=40, l=80, r=40))
-    
+    fig.update_layout(height=1000, showlegend=False, plot_bgcolor="white", hovermode="x unified", margin=dict(t=60, b=50, l=80, r=40))
     return fig
 
 # ==========================================
-# 5. MAIN EXECUTION
+# 4. MAIN EXECUTION
 # ==========================================
 st.markdown('<div class="header-box"><h2>🏗️ RC Beam Pro Ultimate</h2></div>', unsafe_allow_html=True)
 
-# --- 1. Calls Sidebar & Geometry ---
+# 1. Sidebar & Geometry
 design_code, method, fact_dl, fact_ll, unit_sys = render_sidebar()
-
 c_geo, c_load = st.columns([1, 1.5])
+
 with c_geo:
     n_span, spans, supports = render_geometry_input()
 
 with c_load:
-    # Use Updated Load Input (Splits DL/LL)
+    # 2. Load Input
     loads_input = render_custom_load_input(n_span, spans, unit_sys, fact_dl, fact_ll)
 
-# --- 2. Calculation ---
+# 3. Calculation & Display
 if st.button("🚀 Calculate Analysis & Design", type="primary"):
     try:
         st.session_state['loads_input'] = loads_input
         clean_loads = [l for l in loads_input if isinstance(l, dict)]
         
-        # A. Analysis
         vis_spans_df, vis_supports_df = run_beam_analysis(spans, supports, clean_loads)
         st.session_state['res_df'] = vis_spans_df
         st.session_state['vis_data'] = (spans, vis_supports_df) 
@@ -400,7 +374,6 @@ if st.button("🚀 Calculate Analysis & Design", type="primary"):
     except Exception as e:
         st.error(f"System Error: {e}")
 
-# --- 3. Visualization ---
 if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     df = st.session_state['res_df']
     vis_spans, vis_supports_df = st.session_state['vis_data']
@@ -408,6 +381,6 @@ if st.session_state['analyzed'] and st.session_state.get('res_df') is not None:
     
     st.markdown('<div class="sub-header">1️⃣ Analysis Results</div>', unsafe_allow_html=True)
     st.plotly_chart(create_engineering_plots(df, vis_spans, vis_supports_df, loads, unit_sys), use_container_width=True, key="eng_plot")
-
-    # B. Design
+    
+    # Design Section
     design_view.render_design_section(df, vis_spans, unit_sys, method)
