@@ -6,71 +6,74 @@ import input_handler
 import design_view 
 from datetime import datetime
 
-# --- CONFIG ---
-st.set_page_config(page_title="Structural Analysis Pro", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="Structural Pro", layout="wide", page_icon="🏗️")
 
+# Clean UI CSS
 st.markdown("""
 <style>
-    /* ปรับ Padding ให้ชิดขอบบนมากขึ้น เพื่อประหยัดที่ */
     .block-container { padding-top: 1rem; padding-bottom: 2rem; }
-    /* ปรับปุ่มให้ดูแน่นขึ้น */
-    .stButton button { width: 100%; border-radius: 4px; font-weight: bold; }
+    .stButton button { width: 100%; font-weight: bold; border-radius: 5px; }
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
 def main():
-    # --- HEADER ---
+    # Header
     c1, c2 = st.columns([8, 2])
-    with c1: st.title("🏗️ Beam Analysis Professional")
+    with c1: st.title("🏗️ Beam Analysis & Design Professional")
     with c2: st.caption(f"Date: {datetime.now().strftime('%Y-%m-%d')}")
     st.divider()
 
-    # --- MAIN LAYOUT (Input 20% | Output 80%) ---
-    col_input, col_output = st.columns([20, 80], gap="medium")
+    # Split Layout: Input (Left, 25%) | Output (Right, 75%)
+    col_input, col_output = st.columns([25, 75], gap="large")
 
-    # === LEFT PANEL: INPUT ===
     with col_input:
-        st.subheader("⚙️ Setup")
-        
-        with st.expander("1. Structure & Loads", expanded=True):
-            params = input_handler.render_sidebar() # เรียกใช้ Sidebar settings
+        st.subheader("⚙️ Inputs")
+        with st.expander("1. Geometry & Support", expanded=True):
+            params = input_handler.render_sidebar()
             n, spans, sup_df, stable = input_handler.render_model_inputs(params)
-            st.markdown("---")
-            loads = input_handler.render_loads(n, spans, params)
         
+        with st.expander("2. Loads", expanded=True):
+            loads = input_handler.render_loads(n, spans, params)
+            
         st.markdown("###")
-        run_btn = st.button("RUN ANALYSIS ▶", type="primary", disabled=not stable)
-        if not stable: st.error("Unstable Model")
+        run_btn = st.button("RUN ANALYSIS", type="primary", disabled=not stable)
+        if not stable: st.error("⚠️ Unstable Structure")
 
-    # === RIGHT PANEL: RESULTS ===
     with col_output:
         if run_btn or st.session_state.get('analysis_done'):
             if run_btn:
                 try:
                     engine = solver.BeamSolver(spans, sup_df, loads)
                     df_res, reactions = engine.solve()
-                    st.session_state.update({'analysis_done': True, 'df_res': df_res, 'reactions': reactions, 
-                                           'spans': spans, 'sup_df': sup_df, 'loads': loads})
+                    st.session_state.update({'analysis_done': True, 'df_res': df_res, 'reactions': reactions, 'spans': spans, 'sup_df': sup_df, 'loads': loads})
                 except Exception as e:
-                    st.error(f"Solver Error: {e}")
+                    st.error(f"Error: {e}")
                     st.stop()
 
+            # Retrieve Data
             df = st.session_state['df_res']
             reac = st.session_state['reactions']
             spans = st.session_state['spans']
 
-            # 1. INTERACTIVE DIAGRAMS (Fit Screen)
-            # ไม่ต้องใช้ Slider แล้วครับ ใช้เมาส์ชี้ที่กราฟได้เลย
-            design_view.draw_interactive_diagrams(df, spans, st.session_state['sup_df'], 
-                                                  st.session_state['loads'], params['u_force'], params['u_len'])
+            # TABS for organized view
+            tab1, tab2 = st.tabs(["📊 Analysis Results", "🏗️ RC Design"])
             
-            # 2. COMPACT TABLE
-            st.markdown("---")
-            design_view.render_engineering_table(df, reac, spans)
-
+            with tab1:
+                # 1. Interactive Graph
+                design_view.draw_interactive_diagrams(df, spans, st.session_state['sup_df'], st.session_state['loads'], params['u_force'], params['u_len'])
+                
+                # 2. Reaction Table (Compact)
+                st.markdown("##### 📍 Support Reactions")
+                r_data = [{"Node": f"Sup {i+1}", "Ry (kg)": f"{reac[2*i]:.2f}", "Mz (kg-m)": f"{reac[2*i+1]:.2f}"} for i in range(len(spans)+1)]
+                st.table(pd.DataFrame(r_data).set_index("Node").T)
+            
+            with tab2:
+                # 3. RC Design Module (The Missing Piece Restored!)
+                design_view.render_design_sheet(df, spans, params)
+                
         else:
-            st.info("👈 Please define model and click 'RUN ANALYSIS' to start.")
+            st.info("👈 Please define model and click 'RUN ANALYSIS'")
 
 if __name__ == "__main__":
     main()
