@@ -18,108 +18,88 @@ def calculate_flexure_sdm(Mu, type_str, params):
     b = params['b']
     h = params['h']
     d = h - params['cv']
-    db_select = params['db_main']
     
     phi_b = 0.90
     beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*(fc-280)/70)
     
-    # Unit conversion
     if 'Metric' in params['unit']:
         M_design = abs(Mu) * 100 
         fc_calc, fy_calc = fc, fy
         b_calc, d_calc = b, d
         rho_min = max(14/fy_calc, 0.25*np.sqrt(fc_calc)/fy_calc) 
+        bal_const = 6120
     else: 
         M_design = abs(Mu) * 1e6 
         fc_calc, fy_calc = fc, fy
         b_calc, d_calc = b*10, d*10
         rho_min = max(1.4/fy_calc, 0.25*np.sqrt(fc_calc)/fy_calc)
+        bal_const = 6000
 
-    # Design
-    rho = 999
-    try:
-        Rn = M_design / (phi_b * b_calc * d_calc**2)
-        term = 1 - 2*Rn/(0.85*fc_calc)
-        if term >= 0:
-            rho = (0.85 * fc_calc / fy_calc) * (1 - np.sqrt(term))
-    except:
-        pass
-        
-    bal_const = 6120 if 'Metric' in params['unit'] else 6000
+    Rn = M_design / (phi_b * b_calc * d_calc**2)
     rho_bal = 0.85 * beta1 * (fc_calc/fy_calc) * (bal_const/(bal_const+fy_calc))
     rho_max = 0.75 * rho_bal 
     
+    try:
+        term = 1 - 2*Rn/(0.85*fc_calc)
+        if term < 0:
+            rho = 999 
+        else:
+            rho = (0.85 * fc_calc / fy_calc) * (1 - np.sqrt(term))
+    except:
+        rho = 999
+        
     As_req = rho * b_calc * d_calc
     As_min = rho_min * b_calc * d_calc
     
-    status = "✅ OK"
-    final_As = As_req
+    bars = [12, 16, 20, 25, 28]
+    select_str = ""
+    status = ""
+    final_As = 0
     
     if rho == 999 or rho > rho_max:
         status = "❌ Over Reinforced"
+        final_As = As_req
     elif rho < rho_min:
         final_As = As_min
-        status = "⚠️ Min Steel Governs"
-
-    select_str = ""
-    if "Over" not in status:
-        unit_area = 3.1416 * (db_select/10)**2 / 4 if 'Metric' in params['unit'] else 3.1416 * db_select**2 / 4
-        num = math.ceil(final_As / unit_area)
+        status = "⚠️ Min Steel"
+    else:
+        final_As = As_req
+        status = "✅ OK"
         
-        # Check excessive bars
-        limit_bars = max(b/3.0, 15)
-        if num > limit_bars: 
-            select_str = f"Too many DB{db_select}"
-            status = "⚠️ Section Too Small"
-        else:
-            select_str = f"{int(num)}-DB{db_select}"
-            
+    if "Over" not in status:
+        As_target_cm2 = final_As if 'Metric' in params['unit'] else final_As/100
+        found = False
+        for db in bars:
+            area = 3.1416 * (db/10)**2 / 4
+            num = math.ceil(As_target_cm2 / area)
+            if num <= max(b/2.5, 10): 
+                 select_str = f"{num}-DB{db}"
+                 found = True
+                 break
+        if not found: select_str = f"{math.ceil(As_target_cm2/3.14)}+-DB25"
+    
     return_As = final_As if 'Metric' in params['unit'] else final_As/100
-    return { "Type": type_str, "Mu": abs(Mu), "As_req": return_As, "Status": status, "Bars": select_str }
+
+    return {
+        "Type": type_str,
+        "Mu": abs(Mu),
+        "As_req": return_As, 
+        "Status": status,
+        "Bars": select_str
+    }
 
 def calculate_shear_capacity(Vu, params):
     fc = params['fc']
-    fy_stir = params['fys']
     b = params['b']
     d = params['h'] - params['cv']
-    db_stir = params['db_stirrup']
-    step = params.get('s_step', 2.5) 
-    
-    spacing_txt = ""
     
     if 'Metric' in params['unit']:
         vc = 0.53 * np.sqrt(fc) * b * d 
         phi_vc = 0.85 * vc 
-        vu_val = abs(Vu)
-        
-        if vu_val > phi_vc:
-            vs = (vu_val - phi_vc) / 0.85
-            av = 2 * (3.1416 * (db_stir/10)**2 / 4)
-            s_req = (av * fy_stir * d) / vs
-            s_max = d/2
-            s_use = min(s_req, s_max, 30.0)
-            
-            # Rounding logic
-            s_use = math.floor(s_use / step) * step
-            
-            if s_use < 5.0: 
-                spacing_txt = f"RB{db_stir} - Increase Section"
-            else: 
-                spacing_txt = f"RB{db_stir}@{s_use:.0f}cm"
-            
-        elif vu_val > phi_vc/2:
-            s_max = d/2
-            s_use = min(s_max, 30.0)
-            s_use = math.floor(s_use / step) * step
-            spacing_txt = f"RB{db_stir}@{s_use:.0f}cm (Min)"
-        else:
-            spacing_txt = "None Req."
-            
+        vu_val = abs(Vu) 
     else:
-        # SI Unit (Simplified)
         vc = 0.17 * np.sqrt(fc) * b*10 * d*10 
         phi_vc = 0.75 * (vc / 1000) 
-        vu_val = abs(Vu)
-        spacing_txt = "Check SI Manual" # Placeholder
+        vu_val = abs(Vu) 
         
-    return vu_val, phi_vc, spacing_txt
+    return vu_val, phi_vc
