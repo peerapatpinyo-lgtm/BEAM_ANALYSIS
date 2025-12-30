@@ -11,6 +11,7 @@ class BeamAnalysisEngine:
         self.cum_len = [0] + list(np.cumsum(spans))
 
     def solve(self):
+        # 1. Mesh Creation
         x_eval = []
         for i, L in enumerate(self.spans):
             x_start = self.cum_len[i]
@@ -27,6 +28,7 @@ class BeamAnalysisEngine:
         
         x_eval = np.array(sorted(list(set(x_eval))))
         
+        # 2. Stiffness Matrix
         NDOF = 2 * self.n_nodes
         K_global = np.zeros((NDOF, NDOF))
         F_global = np.zeros(NDOF)
@@ -55,6 +57,7 @@ class BeamAnalysisEngine:
                     fem[1]+=P*a*b**2/L**2; fem[3]-=P*a**2*b/L**2
             F_global[idx1:idx1+4] += fem
 
+        # 3. Boundary Conditions
         fixed_dofs = []
         for i, row in self.supports.iterrows():
             stype = row['type']
@@ -77,6 +80,7 @@ class BeamAnalysisEngine:
         D_total[active_dofs] = D_a
         R_total = K_global @ D_total + F_global
         
+        # 4. Post-Processing
         shear, moment = [], []
         for x in x_eval:
             V, M = 0, 0
