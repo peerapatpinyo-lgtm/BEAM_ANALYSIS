@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
-# import beam_analysis  <-- ลบอันเก่าทิ้ง
-import solver  # <-- ใช้อันใหม่ที่เพิ่งสร้าง
+import solver  
 import input_handler
 import design_view
 
@@ -39,3 +38,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
