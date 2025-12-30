@@ -15,13 +15,11 @@ def main():
     params = input_handler.render_sidebar()
 
     # 2. Model Inputs
-    # รับค่า sup_df กลับมาด้วย
     n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
     
     st.markdown("---")
 
     # 3. Loads Input
-    # ส่ง sup_df เข้าไปเพื่อเช็ค Warning Moment @ Pin
     loads = input_handler.render_loads(n_spans, spans, params, sup_df)
 
     st.markdown("---")
@@ -39,16 +37,17 @@ def main():
         try:
             df_results, reactions = beam_solver.solve()
             
-            # --- 5. Visualization (แก้ไขลำดับตัวแปรตรงนี้ครับ) ---
-            # ลำดับที่ถูกต้อง: df, reac, spans, sup_df, loads, units...
+            # --- 5. Visualization (UPDATED: ส่ง Load Factors เข้าไปด้วย) ---
             design_view.draw_interactive_diagrams(
                 df_results, 
-                reactions,       # ใส่ reactions เข้ามาเป็นตัวที่ 2
+                reactions, 
                 spans, 
                 sup_df, 
                 loads, 
-                params['u_force'], 
-                params['u_len']
+                unit_force=params['u_force'], 
+                unit_len=params['u_len'],
+                dl_factor=params.get('gamma_dead', 1.4), # Default 1.4 ถ้าหาไม่เจอ
+                ll_factor=params.get('gamma_live', 1.7)  # Default 1.7 ถ้าหาไม่เจอ
             )
             
             # --- 6. Result Tables ---
