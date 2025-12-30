@@ -3,10 +3,9 @@ import math
 import re
 
 def parse_bars(bar_str):
-    """Parses '2-DB12' into (2, 12). Returns None if invalid."""
     try:
         if not bar_str or "Over" in bar_str or "Too many" in bar_str: return None
-        match = re.search(r'(\d+)-DB(\d+)', bar_str)
+        match = re.search(r'(\d+)-DB(\d+)', str(bar_str))
         if match:
             return int(match.group(1)), int(match.group(2))
     except:
@@ -14,23 +13,24 @@ def parse_bars(bar_str):
     return None
 
 def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
-    """Design flexural reinforcement (SDM) with span-specific dimensions."""
-    fc = params['fc']
-    fy = params['fy']
-    
-    # Use span-specific dimensions provided by input
-    b = b_in
-    h = h_in
-    cv = cv_in
-    d = h - cv
-    db_select = params['db_main']
-    
+    # Force convert inputs to float to prevent formatting errors
+    try:
+        fc = float(params['fc'])
+        fy = float(params['fy'])
+        b = float(b_in)
+        h = float(h_in)
+        cv = float(cv_in)
+        d = h - cv
+        db_select = int(params['db_main'])
+        Mu = float(Mu)
+    except ValueError:
+        return {"Type": type_str, "Mu": 0, "As_req": 0, "Status": "❌ Data Error", "Bars": "", "Log": ["Error converting inputs"]}
+
     phi_b = 0.90
     beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*(fc-280)/70)
     
     is_metric = 'Metric' in params['unit']
     
-    # Unit Conversion for Calculation
     if is_metric:
         M_design = abs(Mu) * 100 # kg-m -> kg-cm
         fc_c, fy_c = fc, fy
@@ -79,7 +79,7 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
         unit_area = 3.1416 * (db_select/10)**2 / 4 if is_metric else 3.1416 * db_select**2 / 4
         num = math.ceil(control_As / unit_area)
         
-        width_avail = b_c - 2*cv_in if is_metric else b_c - 2*cv_in*10
+        width_avail = b_c - 2*cv if is_metric else b_c - 2*cv*10
         bar_dia = db_select/10 if is_metric else db_select
         spacing_req = max(2.5, bar_dia)
         max_bars_layer = int((width_avail + spacing_req) / (bar_dia + spacing_req))
@@ -91,10 +91,10 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
         As_provided = num * unit_area
             
     return_As = control_As if is_metric else control_As/100
-    
     u_len = "cm" if is_metric else "mm"
     u_area = "cm²" if is_metric else "mm²"
     
+    # Safe formatting
     calc_log = [
         f"**Design Parameters ({type_str})**",
         f"- Section: {b:.1f}x{h:.1f} {u_len}, d={d:.1f} {u_len}",
@@ -115,15 +115,18 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
     }
 
 def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
-    """Shear design with span-specific dimensions."""
-    fc = params['fc']
-    fy_stir = params['fys']
-    b = b_in
-    h = h_in
-    cv = cv_in
-    d = h - cv
-    db_stir = params['db_stirrup']
-    step = params.get('s_step', 2.5)
+    try:
+        fc = float(params['fc'])
+        fy_stir = float(params['fys'])
+        b = float(b_in)
+        h = float(h_in)
+        cv = float(cv_in)
+        d = h - cv
+        db_stir = int(params['db_stirrup'])
+        step = float(params.get('s_step', 2.5))
+        vu_val = abs(float(Vu))
+    except:
+        return 0, 0, "Error", ["Check Inputs"]
     
     spacing_txt = ""
     v_cap_display = 0
@@ -134,7 +137,6 @@ def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
     if is_metric:
         vc = 0.53 * np.sqrt(fc) * b * d 
         phi_vc = 0.85 * vc 
-        vu_val = abs(Vu)
         v_cap_display = phi_vc
         
         calc_log.append(f"**Shear Check** ($d={d:.1f}$ cm)")
@@ -148,10 +150,12 @@ def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
             s_req = (av * fy_stir * d) / vs
             s_max = d/2
             s_use = min(s_req, s_max, 30.0)
-            s_use = math.floor(s_use / step) * step
+            try:
+                s_use = math.floor(s_use / step) * step
+            except: s_use = 10.0
             
             if s_use < 5.0: 
-                spacing_txt = f"RB{db_stir} - Fail (Too close)"
+                spacing_txt = f"RB{db_stir} - Fail"
             else: 
                 spacing_txt = f"RB{db_stir}@{s_use:.0f}cm"
             calc_log.append(f"- $V_u > \phi V_c$ -> **Use {spacing_txt}**")
@@ -163,13 +167,10 @@ def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
         else:
             spacing_txt = "None Req."
             calc_log.append(f"- $V_u \le 0.5\phi V_c$ -> No stirrups req.")
-            
     else:
-        # SI Placeholder
         vc = 0.17 * np.sqrt(fc) * b*10 * d*10 
         phi_vc = 0.75 * (vc / 1000) 
-        vu_val = abs(Vu)
         v_cap_display = phi_vc
         spacing_txt = "Check SI Manual"
         
-    return abs(Vu), v_cap_display, spacing_txt, calc_log
+    return vu_val, v_cap_display, spacing_txt, calc_log
