@@ -23,8 +23,7 @@ def render_sidebar():
         with st.expander("Rebar Selection", expanded=True):
             db_main = st.selectbox("Main Bar (mm)", [12, 16, 20, 25, 28, 32], index=1)
             db_stir = st.selectbox("Stirrup Bar (mm)", [6, 9, 12], index=0)
-            # Feature: Step Control
-            s_step = st.selectbox("Spacing Step (cm)", [1.0, 2.5, 5.0], index=1, help="Round stirrup spacing down to this step")
+            s_step = st.selectbox("Spacing Step (cm)", [1.0, 2.5, 5.0], index=1)
         
         st.markdown("### Safety Factors")
         c1, c2 = st.columns(2)
@@ -63,9 +62,18 @@ def render_geometry():
             
     df_sup = pd.DataFrame({'x': [0]+list(np.cumsum(spans)), 'type': sup_types})
     
+    # --- FIX: Stability Check Logic & Display ---
     valid_sups = [t for t in sup_types if t != 'None']
     stable = True
-    if len(valid_sups) < 2 and "Fixed" not in valid_sups: stable = False
+    if len(valid_sups) == 0:
+        stable = False
+        st.error("❌ **Structure Unstable:** No supports defined.")
+    elif len(valid_sups) < 2 and "Fixed" not in valid_sups:
+        stable = False
+        st.error("❌ **Structure Unstable:** Needs at least 2 supports (or 1 Fixed) to be stable.")
+    else:
+        st.success("✅ Structure appears stable (Geometric check)")
+    # --------------------------------------------
     
     return n, spans, df_sup, stable
 
@@ -85,7 +93,7 @@ def render_loads(n, spans, params):
                 dl = st.number_input(f"DL ({u_load})", 0.0, key=f"wdl_{i}")
                 ll = st.number_input(f"LL ({u_load})", 0.0, key=f"wll_{i}")
                 
-                # Feature: Detailed Load Calc Display (กลับมาแล้ว!)
+                # --- FIX: Load Calc Display Retained ---
                 wu = dl*params['fdl'] + ll*params['fll']
                 if wu > 0:
                     st.latex(f"W_u = ({params['fdl']}\\times {dl}) + ({params['fll']}\\times {ll}) = \\mathbf{{{wu:,.2f}}}\; {u_load}")
@@ -102,7 +110,7 @@ def render_loads(n, spans, params):
                     p_ll = cc2.number_input(f"PLL", key=f"pl_{i}_{j}")
                     px = cc3.number_input(f"x (m)", 0.0, spans[i], spans[i]/2, key=f"px_{i}_{j}")
                     
-                    # Feature: Detailed Point Load Calc
+                    # --- FIX: Point Load Calc Display Retained ---
                     pu = p_dl*params['fdl'] + p_ll*params['fll']
                     if pu > 0:
                         st.latex(f"P_u = ({params['fdl']}\\times {p_dl}) + ({params['fll']}\\times {p_ll}) = \\mathbf{{{pu:,.2f}}}\; {u_point}")
