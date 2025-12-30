@@ -13,7 +13,7 @@ def render_sidebar():
             fy = st.number_input("fy Main (ksc/MPa)", value=4000.0)
             fys = st.number_input("fy Stirrup (ksc/MPa)", value=2400.0)
         
-        # Removed Global Dimensions input here. Moved to per-span.
+        # Dimensions removed from sidebar, moved to Span Definitions
         
         st.markdown("### Rebar Options")
         with st.expander("Rebar Selection", expanded=True):
@@ -34,14 +34,14 @@ def render_sidebar():
             'fdl': fdl, 'fll': fll, 'unit': unit, 'u_force': u_force
         }
 
-def render_geometry_and_sections(n_default=2):
+def render_geometry(n_default=2):
     st.markdown("### 1️⃣ Geometry & Section Properties")
     
     col_n, col_dummy = st.columns([1, 3])
     with col_n:
         n = st.number_input("Number of Spans", 1, 10, n_default)
     
-    # Container for span properties
+    # List to store properties for each span
     span_props = []
     
     st.markdown("**Span Definitions & Sections**")
@@ -52,7 +52,7 @@ def render_geometry_and_sections(n_default=2):
         with tab:
             c1, c2, c3, c4 = st.columns(4)
             l = c1.number_input(f"Length (m)", 1.0, 50.0, 5.0, key=f"L{i}")
-            # NEW: Per-span section inputs
+            # Section Inputs per Span
             b = c2.number_input(f"Width b (cm)", 10.0, 100.0, 25.0, key=f"b{i}")
             h = c3.number_input(f"Depth h (cm)", 10.0, 200.0, 50.0, key=f"h{i}")
             cv = c4.number_input(f"Cover (cm)", 1.0, 10.0, 3.0, key=f"cv{i}")
@@ -66,7 +66,7 @@ def render_geometry_and_sections(n_default=2):
     sup_types = []
     for i in range(n+1):
         with cols_sup[i%6]:
-            def_idx = 2 if i==0 else (1 if i<n else 1) # Default Fixed-Roller-Roller
+            def_idx = 2 if i==0 else (1 if i<n else 1) # Default: Fixed - Roller...
             s = st.selectbox(f"Node {i+1}", opts, index=def_idx, key=f"sup_{i}")
             sup_types.append(s)
 
@@ -76,11 +76,11 @@ def render_geometry_and_sections(n_default=2):
     stable = True
     if len(valid) < 2 and "Fixed" not in valid: 
         stable = False
-        st.error("❌ Structure Unstable: Need supports.")
+        st.error("❌ Structure Unstable: Need at least 2 supports or 1 Fixed support.")
     else:
-        st.success("✅ Geometry Defined.")
+        st.success("✅ Geometry & Sections Defined.")
         
-    # Return span lengths, support df, stability, AND the new span_props list
+    # RETURNS 5 VALUES
     return n, spans_len, df_sup, stable, span_props
 
 def render_loads(n, spans, params):
@@ -114,7 +114,6 @@ def render_loads(n, spans, params):
                         st.latex(f"P_{{u{j+1}}} = {params['fdl']}({pdl}) + {params['fll']}({pll}) = \\mathbf{{{pu:,.0f}}}\; {u_point} @ {px}m")
                         raw_p.append({'P': pu, 'x': px})
                 
-                # Aggregate
                 merged = {}
                 for p in raw_p: merged[p['x']] = merged.get(p['x'], 0) + p['P']
                 for x, p in merged.items(): loads.append({'span_idx': i, 'type': 'P', 'P': p, 'x': x})
