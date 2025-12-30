@@ -9,22 +9,24 @@ C_BEAM = 'black'
 C_PIN_ROLLER = 'white' 
 C_OUTLINE = 'black'
 C_SHEAR_LINE = '#D97706'    # Amber Dark
-C_SHEAR_FILL = 'rgba(217, 119, 6, 0.1)' # Fill จางๆ สบายตา
+C_SHEAR_FILL = 'rgba(217, 119, 6, 0.1)' 
 C_MOMENT_LINE = '#2563EB'   # Blue Dark
 C_MOMENT_FILL = 'rgba(37, 99, 235, 0.1)'
 
 def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
+    st.markdown("### 📊 Structural Analysis") # Added Header
+    
     total_len = sum(spans)
     cum_spans = [0] + list(np.cumsum(spans))
     n_nodes = len(cum_spans)
     
-    # --- 1. SETUP LAYOUT ---
-    # จัดสัดส่วนกราฟใหม่ให้สมดุล (Model 20%, SFD 40%, BMD 40%)
+    # --- SETUP LAYOUT ---
+    # Increased vertical_spacing to 0.15 to prevent title overlap
     fig = make_subplots(
         rows=3, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.12, # ระยะห่างระหว่างกราฟ (เพิ่มนิดหน่อยไม่ให้เบียด)
-        row_heights=[0.20, 0.40, 0.40], 
+        vertical_spacing=0.15, 
+        row_heights=[0.25, 0.375, 0.375], 
         subplot_titles=(
             "<b>1. Structural Model (FBD)</b>", 
             "<b>2. Shear Force Diagram (SFD)</b>", 
@@ -81,7 +83,7 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
                 for hy in np.linspace(-0.3, 0.3, 7):
                     fig.add_shape(type="line", x0=x, y0=hy, x1=x+h_dir, y1=hy-0.05, line=dict(color='black', width=1), row=1, col=1)
         else:
-            # Internal Node (No Support) -> จุดดำเล็กๆ
+            # Internal Node
             fig.add_trace(go.Scatter(
                 x=[x], y=[0],
                 mode='markers',
@@ -93,23 +95,24 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     for l in loads:
         x_s = cum_spans[int(l['span_idx'])]
         if l['type'] == 'P':
-            # Load Label (Clean text without border)
+            # Point Load Label
             text_label = f"<b>P={l['P']} {unit_force}</b>"
             fig.add_annotation(
-                x=x_s + l['x'], y=0, ax=0, ay=-55,
+                x=x_s + l['x'], y=0, ax=0, ay=-60, # Lift higher
                 arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor='#DC2626',
                 text=text_label, font=dict(color='#DC2626', size=12),
-                bgcolor="rgba(255,255,255,0.7)", # พื้นหลังจางๆ กันทับเส้น แต่ไม่มีขอบ
+                bgcolor="rgba(255,255,255,0.85)", # Masking
                 row=1, col=1
             )
         elif l['type'] == 'U':
+            # UDL Label
             x_e = cum_spans[int(l['span_idx'])+1]
             text_label = f"<b>w={l['w']} {unit_force}/{unit_len}</b>"
             fig.add_shape(type="rect", x0=x_s, y0=0.15, x1=x_e, y1=0.3, line_width=0, fillcolor='#DC2626', opacity=0.15, row=1, col=1)
             fig.add_annotation(
                 x=(x_s+x_e)/2, y=0.35, showarrow=False, 
                 text=text_label, font=dict(color='#DC2626', size=12),
-                bgcolor="rgba(255,255,255,0.7)",
+                bgcolor="rgba(255,255,255,0.85)", # Masking
                 row=1, col=1
             )
 
@@ -125,7 +128,7 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
         name='Shear'
     ), row=2, col=1)
 
-    # Label Logic (Clean Text)
+    # Labels
     v_max = df['shear'].abs().max()
     if v_max > 0:
         idx = df['shear'].abs().idxmax()
@@ -133,18 +136,17 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
         val = row_v['shear']
         x_loc = row_v['x']
         
-        yshift = 20 if val > 0 else -20
-        # Check edges to anchor text properly
+        yshift = 25 if val > 0 else -25
         xanchor = 'center'
         if x_loc < total_len * 0.1: xanchor = 'left'
         elif x_loc > total_len * 0.9: xanchor = 'right'
 
         fig.add_annotation(
             x=x_loc, y=val, 
-            text=f"<b>{val:.2f} @ {x_loc:.2f}m</b>",
+            text=f"<b>{val:.2f}</b>", # Show value only for clean look
             showarrow=False, yshift=yshift, xanchor=xanchor,
             font=dict(color=C_SHEAR_LINE, size=12),
-            bgcolor="rgba(255,255,255,0.6)", # Subtle background mask
+            bgcolor="rgba(255,255,255,0.8)",
             row=2, col=1
         )
 
@@ -164,7 +166,7 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     m_max = df['moment'].max()
     m_min = df['moment'].min()
     
-    # Max (+) Label
+    # Max (+)
     if m_max > 0.01:
         xm = df.loc[df['moment'] == m_max, 'x'].iloc[0]
         xanchor = 'center'
@@ -173,14 +175,14 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
 
         fig.add_annotation(
             x=xm, y=m_max, 
-            text=f"<b>{m_max:.2f} @ {xm:.2f}m</b>",
-            showarrow=False, yshift=20, xanchor=xanchor,
+            text=f"<b>{m_max:.2f}</b>",
+            showarrow=False, yshift=25, xanchor=xanchor,
             font=dict(color=C_MOMENT_LINE, size=12),
-            bgcolor="rgba(255,255,255,0.6)",
+            bgcolor="rgba(255,255,255,0.8)",
             row=3, col=1
         )
 
-    # Min (-) Label
+    # Min (-)
     if m_min < -0.01:
         xm = df.loc[df['moment'] == m_min, 'x'].iloc[0]
         xanchor = 'center'
@@ -189,43 +191,43 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
 
         fig.add_annotation(
             x=xm, y=m_min, 
-            text=f"<b>{m_min:.2f} @ {xm:.2f}m</b>",
-            showarrow=False, yshift=-20, xanchor=xanchor,
+            text=f"<b>{m_min:.2f}</b>",
+            showarrow=False, yshift=-25, xanchor=xanchor,
             font=dict(color=C_MOMENT_LINE, size=12),
-            bgcolor="rgba(255,255,255,0.6)",
+            bgcolor="rgba(255,255,255,0.8)",
             row=3, col=1
         )
 
     # ==========================================
-    # GLOBAL LAYOUT
+    # GLOBAL LAYOUT STYLING
     # ==========================================
     fig.update_layout(
-        height=950, # ความสูงที่เหมาะสมสำหรับ 3 กราฟ
-        margin=dict(l=80, r=40, t=50, b=50),
+        height=1000, # Increased height to let charts breathe
+        margin=dict(l=60, r=40, t=60, b=50), # Adjusted margins
         plot_bgcolor='white',
         paper_bgcolor='white',
         showlegend=False,
         hovermode="x unified",
-        font=dict(family="Sarabun, sans-serif", size=13, color='black')
+        font=dict(family="Arial, sans-serif", size=14, color='black')
     )
 
-    # Axis Style (Clean Grid)
+    # Clean Axis Style (No Box, Just Lines)
     ax_style = dict(
-        showline=True, linewidth=1.5, linecolor='black',
-        showgrid=True, gridcolor='#F3F4F6', # Grid เทาอ่อนๆ
-        ticks="outside", tickwidth=1.5, ticklen=5,
-        mirror=True
+        showline=True, linewidth=1, linecolor='black', # Main Axis Line
+        mirror=False, # REMOVE BOX BORDER
+        showgrid=True, gridcolor='#F0F0F0', # Very light grid
+        ticks="outside", tickwidth=1, ticklen=5,
     )
 
     fig.update_xaxes(**ax_style)
     fig.update_yaxes(**ax_style)
 
-    # Titles & Units
+    # Force Titles & Units (English)
     fig.update_yaxes(visible=False, row=1, col=1, range=[-0.6, 0.6])
     fig.update_xaxes(visible=True, showticklabels=True, title_text="", row=1, col=1)
 
-    fig.update_yaxes(title_text=f"<b>V ({unit_force})</b>", row=2, col=1)
-    fig.update_yaxes(title_text=f"<b>M ({unit_force}-{unit_len})</b>", row=3, col=1)
+    fig.update_yaxes(title_text=f"<b>Shear ({unit_force})</b>", row=2, col=1)
+    fig.update_yaxes(title_text=f"<b>Moment ({unit_force}-{unit_len})</b>", row=3, col=1)
     fig.update_xaxes(title_text=f"<b>Distance ({unit_len})</b>", row=3, col=1)
 
     st.plotly_chart(fig, use_container_width=True)
@@ -233,14 +235,14 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
 def render_result_tables(df, reac, spans):
     st.markdown("---")
     
-    # Summary
+    # Summary Cards (English)
     c1, c2, c3 = st.columns(3)
     c1.metric("Max Shear", f"{df['shear'].abs().max():.2f}")
     c2.metric("Max Moment (+)", f"{df['moment'].max():.2f}")
     c3.metric("Max Moment (-)", f"{df['moment'].min():.2f}")
 
-    # Reactions
-    st.write("#### 📍 Support Reactions")
+    # Reactions Table (English)
+    st.subheader("📍 Support Reactions")
     data = []
     n_nodes = len(spans) + 1
     for i in range(n_nodes):
