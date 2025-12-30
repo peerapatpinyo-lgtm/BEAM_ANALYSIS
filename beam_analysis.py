@@ -11,7 +11,6 @@ class BeamAnalysisEngine:
         self.cum_len = [0] + list(np.cumsum(spans))
 
     def solve(self):
-        # 1. Mesh
         x_eval = []
         for i, L in enumerate(self.spans):
             x_start = self.cum_len[i]
@@ -25,7 +24,6 @@ class BeamAnalysisEngine:
                 x_eval.extend(x_start + seg)
         x_eval = np.array(sorted(list(set(x_eval))))
         
-        # 2. Stiffness
         NDOF = 2 * self.n_nodes
         K = np.zeros((NDOF, NDOF))
         F = np.zeros(NDOF)
@@ -42,7 +40,6 @@ class BeamAnalysisEngine:
                 elif l['type']=='P': P=l['P']; a=l['x']; b=L-a; fem+=[P*b**2*(3*a+b)/L**3, P*a*b**2/L**2, P*a**2*(a+3*b)/L**3, -P*a**2*b/L**2]
             F[idx:idx+4] += fem
 
-        # 3. BCs & Solve
         fixed = []
         for i, row in self.supports.iterrows():
             if row['type'] in ['Pin', 'Roller']: fixed.append(2*i)
@@ -56,7 +53,6 @@ class BeamAnalysisEngine:
             R = K @ D + F
         except linalg.LinAlgError: return None, None
             
-        # 4. Post-Process
         shear, moment = [], []
         for x in x_eval:
             V, M = 0, 0
