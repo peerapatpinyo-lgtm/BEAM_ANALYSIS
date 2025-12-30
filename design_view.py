@@ -20,14 +20,21 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     st.markdown("### 📊 Structural Analysis Results")
 
     # --- 1. LOAD COMBINATION SUMMARY ---
-    # Display the loads clearly before graphs
     if loads:
         with st.expander("📋 Applied Loads Summary (Load Combination)", expanded=False):
             st.write("The following loads were superimposed for this analysis:")
             summary_data = []
             for i, l in enumerate(loads):
-                l_desc = f"Point Load P = {l['mag']} {unit_force}" if l['type'] == 'P' else f"UDL w = {l['mag']} {unit_force}/{unit_len}"
-                loc_desc = f"at x = {l['x']} m (Span {l['span_idx']+1})" if l['type'] == 'P' else f"Full Span {l['span_idx']+1}"
+                if l['type'] == 'P':
+                    l_desc = f"Point Load P = {l['mag']} {unit_force}"
+                    loc_desc = f"at x = {l['x']} m (Span {l['span_idx']+1})"
+                elif l['type'] == 'U':
+                    l_desc = f"UDL w = {l['mag']} {unit_force}/{unit_len}"
+                    loc_desc = f"Full Span {l['span_idx']+1}"
+                elif l['type'] == 'M':
+                    l_desc = f"Moment M = {l['mag']} {unit_force}-{unit_len}"
+                    loc_desc = f"at x = {l['x']} m (Span {l['span_idx']+1})"
+                    
                 summary_data.append({"ID": i+1, "Load Type": l_desc, "Location": loc_desc})
             st.table(pd.DataFrame(summary_data))
 
@@ -94,22 +101,27 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
             text_label = f"<b>w={val}</b>"
             fig.add_shape(type="rect", x0=x_s, y0=0.12, x1=x_e, y1=0.30, line_width=0, fillcolor='#DC2626', opacity=0.15, row=1, col=1)
             fig.add_annotation(x=(x_s+x_e)/2, y=0.35, showarrow=False, text=text_label, font=dict(color='#DC2626', size=11), bgcolor=C_TEXT_BG, row=1, col=1)
+        elif l['type'] == 'M':
+            # Visual for Moment: A point marker + Circular Arrow Annotation
+            mx = x_s + l['x']
+            fig.add_trace(go.Scatter(x=[mx], y=[0], mode='markers', marker=dict(symbol='star', size=12, color='#9333EA'), showlegend=False), row=1, col=1)
+            fig.add_annotation(
+                x=mx, y=0, text=f"<b>↻ M={val}</b>", 
+                showarrow=True, arrowhead=0, ax=0, ay=-40,
+                font=dict(color='#9333EA', size=12), bgcolor=C_TEXT_BG,
+                row=1, col=1
+            )
 
     # 3.2 Shear (SFD)
     fig.add_shape(type="line", x0=0, x1=total_len, y0=0, y1=0, line=dict(color='black', width=1), row=2, col=1)
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], mode='lines', line=dict(color=C_SHEAR_LINE, width=2), fill='tozeroy', fillcolor=C_SHEAR_FILL, name='Shear'), row=2, col=1)
     
-    # Max Shear Label
     v_max = df['shear'].abs().max()
     if v_max > 0:
         idx = df['shear'].abs().idxmax()
         row_v = df.loc[idx]
         val = row_v['shear']
-        fig.add_annotation(
-            x=row_v['x'], y=val, text=f"<b>{val:.2f}</b>",
-            showarrow=False, yshift=20 if val>0 else -20,
-            font=dict(color=C_SHEAR_LINE, size=11), bgcolor=C_TEXT_BG, row=2, col=1
-        )
+        fig.add_annotation(x=row_v['x'], y=val, text=f"<b>{val:.2f}</b>", showarrow=False, yshift=20 if val>0 else -20, font=dict(color=C_SHEAR_LINE, size=11), bgcolor=C_TEXT_BG, row=2, col=1)
 
     # 3.3 Moment (BMD)
     fig.add_shape(type="line", x0=0, x1=total_len, y0=0, y1=0, line=dict(color='black', width=1), row=3, col=1)
@@ -134,11 +146,7 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
         row_d = df.loc[idx_d]
         val_d = row_d['deflection']
         txt_d = f"{val_d:.4f}" if abs(val_d) > 0.0001 else f"{val_d:.2e}"
-        fig.add_annotation(
-            x=row_d['x'], y=val_d, text=f"<b>Max: {txt_d}</b>",
-            showarrow=False, yshift=20 if val_d>0 else -20,
-            font=dict(color=C_DEFLECT_LINE, size=11), bgcolor=C_TEXT_BG, row=4, col=1
-        )
+        fig.add_annotation(x=row_d['x'], y=val_d, text=f"<b>Max: {txt_d}</b>", showarrow=False, yshift=20 if val_d>0 else -20, font=dict(color=C_DEFLECT_LINE, size=11), bgcolor=C_TEXT_BG, row=4, col=1)
 
     # Style
     fig.update_layout(
@@ -149,7 +157,6 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     ax_style = dict(showline=True, linewidth=1, linecolor='black', mirror=False, showgrid=True, gridcolor='#F0F0F0', ticks="outside")
     fig.update_xaxes(**ax_style); fig.update_yaxes(**ax_style)
     
-    # Axis Labels
     fig.update_yaxes(visible=False, row=1, col=1, range=[-0.6, 0.6])
     fig.update_xaxes(visible=True, showticklabels=True, title_text="", row=1, col=1)
     fig.update_yaxes(title_text=f"<b>V ({unit_force})</b>", row=2, col=1)
@@ -163,14 +170,12 @@ def render_result_tables(df, reac, spans):
     if df is None or df.empty: return
     
     st.markdown("---")
-    # Summary Cards
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Max Shear", f"{df['shear'].abs().max():.2f}")
     c2.metric("Max Moment (+)", f"{df['moment'].max():.2f}")
     c3.metric("Max Moment (-)", f"{df['moment'].min():.2f}")
     c4.metric("Max Deflection", f"{df['deflection'].abs().max():.4f}")
 
-    # Reactions
     st.subheader("📍 Support Reactions")
     data = []
     n_nodes = len(spans) + 1
