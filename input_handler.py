@@ -14,6 +14,7 @@ def render_sidebar():
     E = st.sidebar.number_input("Elastic Modulus (E)", value=2e6, format="%.2e")
     I = st.sidebar.number_input("Moment of Inertia (I) [cm^4]", value=10000.0)
     
+    # Unit conversion
     I_m4 = I * 1e-8 
     E_calc = E * 10000 if "kg" in u_force else E * 1000 
     
@@ -33,17 +34,27 @@ def render_model_inputs(params):
             spans.append(val)
             
     st.write("**Supports Conditions**")
+    
+    # สร้างตารางข้อมูลเริ่มต้น
     default_types = ['Pin'] + ['Roller'] * (n_spans-1) + ['Roller']
     sup_data = [{"Node": i+1, "Type": default_types[i] if i < len(default_types) else 'Roller'} for i in range(n_spans + 1)]
     
+    # --- ส่วนที่ทำให้เป็น Dropdown ---
     edited_df = st.data_editor(
         pd.DataFrame(sup_data),
         column_config={
-            "Node": st.column_config.TextColumn("Node", disabled=True),
-            "Type": st.column_config.SelectboxColumn("Type", options=['Pin', 'Roller', 'Fixed', 'None'], required=True)
+            "Node": st.column_config.TextColumn("Node ID", disabled=True),
+            "Type": st.column_config.SelectboxColumn(
+                "Support Type (Click to Select)", 
+                options=['Pin', 'Roller', 'Fixed', 'None'], # ตัวเลือก Dropdown
+                required=True,
+                width="medium"
+            )
         },
-        hide_index=True, use_container_width=True
+        hide_index=True, 
+        use_container_width=True
     )
+    # -----------------------------
     
     sup_config = [{'id': r['Node']-1, 'type': r['Type']} for _, r in edited_df.iterrows() if r['Type'] != 'None']
     sup_df = pd.DataFrame(sup_config)
@@ -57,7 +68,7 @@ def render_loads(n_spans, spans, params, sup_df):
     if 'loads' not in st.session_state: st.session_state['loads'] = []
 
     # --- ADD LOAD FORM ---
-    with st.expander("➕ Add Load", expanded=True):
+    with st.expander("➕ Add New Load", expanded=True):
         c1, c2, c3, c4 = st.columns([1.5, 0.8, 1, 1])
         with c1: l_type = st.selectbox("Type", ["Point Load (P)", "Uniform Load (w)", "Moment Load (M)"])
         with c2: span_idx = st.selectbox("Span", range(1, n_spans+1)) - 1
@@ -73,9 +84,11 @@ def render_loads(n_spans, spans, params, sup_df):
             st.session_state['loads'].append({'type': code, 'span_idx': span_idx, 'mag': mag, 'x': loc})
             st.rerun()
 
-    # --- LOAD TABLE ---
+    # --- LOAD TABLE (EDITABLE) ---
     if st.session_state['loads']:
         st.write("**Current Loads List**")
+        
+        # จัดเตรียมข้อมูลใส่ตาราง
         df_disp = pd.DataFrame([{
             "Type": "Point" if l['type']=='P' else ("Uniform" if l['type']=='U' else "Moment"),
             "Span": l['span_idx']+1,
@@ -84,37 +97,45 @@ def render_loads(n_spans, spans, params, sup_df):
             "Del": False
         } for l in st.session_state['loads']])
         
-        edited = st.data_editor(df_disp, column_config={
-            "Type": st.column_config.TextColumn(disabled=True),
-            "Span": st.column_config.NumberColumn(disabled=True),
-            "Mag": st.column_config.NumberColumn(f"Magnitude (+/-)"),
-            "Dist": st.column_config.NumberColumn(f"@ Distance"),
-            "Del": st.column_config.CheckboxColumn("Delete")
-        }, hide_index=True, use_container_width=True)
+        edited = st.data_editor(
+            df_disp, 
+            column_config={
+                "Type": st.column_config.TextColumn("Load Type", disabled=True),
+                "Span": st.column_config.NumberColumn("Span #", disabled=True),
+                "Mag": st.column_config.NumberColumn(f"Magnitude (+/-)"),
+                "Dist": st.column_config.NumberColumn(f"Location @ ({params['u_len']})"),
+                "Del": st.column_config.CheckboxColumn("Delete?")
+            }, 
+            hide_index=True, 
+            use_container_width=True
+        )
         
-        # Logic update
+        # Sync ข้อมูลกลับ (ป้องกันข้อมูลหาย)
         new_loads = []
         for i, row in edited.iterrows():
             if not row['Del']:
                 orig = st.session_state['loads'][i]
-                new_loads.append({'type': orig['type'], 'span_idx': orig['span_idx'], 'mag': row['Mag'], 'x': row['Dist']})
+                new_loads.append({
+                    'type': orig['type'], 
+                    'span_idx': orig['span_idx'], 
+                    'mag': row['Mag'], 
+                    'x': row['Dist']
+                })
         
         if new_loads != st.session_state['loads']:
             st.session_state['loads'] = new_loads
             st.rerun()
 
-    # --- ENGINEERING WARNING CHECK ---
-    # Check if Moment Load is applied at a Pin/Roller
-    if not sup_df.empty:
+    # --- WARNING CHECK (Moment @ Pin) ---
+    if not sup_df.empty and st.session_state['loads']:
         cum_spans = [0] + list(pd.Series(spans).cumsum())
         for l in st.session_state['loads']:
             if l['type'] == 'M':
                 abs_x = cum_spans[l['span_idx']] + l['x']
-                # Check against supports
                 for _, s in sup_df.iterrows():
                     sup_x = cum_spans[int(s['id'])]
+                    # ถ้า Moment ลงตรงตำแหน่ง Pin/Roller พอดี
                     if abs(abs_x - sup_x) < 0.01 and s['type'] in ['Pin', 'Roller']:
-                        st.warning(f"⚠️ **Engineering Check:** You applied a Moment Load at Node {int(s['id'])+1} ({s['type']}). "
-                                   "Ensure this is intentional (e.g., motor torque). The diagram will show a non-zero moment at this support.")
+                        st.warning(f"⚠️ **Engineering Check:** Moment Load detected at Node {int(s['id'])+1} ({s['type']}). The graph will show a jump in moment value here.")
 
     return st.session_state['loads']
