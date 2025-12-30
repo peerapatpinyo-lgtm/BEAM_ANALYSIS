@@ -92,10 +92,10 @@ def render_loads(n, spans, params):
                 dl = st.number_input(f"DL ({u_load})", 0.0, key=f"wdl_{i}")
                 ll = st.number_input(f"LL ({u_load})", 0.0, key=f"wll_{i}")
                 
-                # Load Calc Display
+                # UDL Calc
                 wu = dl*params['fdl'] + ll*params['fll']
                 if wu > 0:
-                    st.latex(f"W_u = ({params['fdl']}\\times {dl}) + ({params['fll']}\\times {ll}) = \\mathbf{{{wu:,.2f}}}\; {u_load}")
+                    st.latex(f"W_u = {params['fdl']}({dl}) + {params['fll']}({ll}) = \\mathbf{{{wu:,.2f}}}\; {u_load}")
                     loads.append({'span_idx': i, 'type': 'U', 'w': wu})
                 elif wu == 0:
                     st.caption("No Uniform Load")
@@ -104,21 +104,25 @@ def render_loads(n, spans, params):
                 st.markdown(f"**Point Load ($P$)**")
                 cnt = st.number_input("Count", 0, 5, 0, key=f"p_cnt_{i}")
                 
-                # Temp list to collect raw inputs before aggregation
+                # Collect inputs
                 raw_points = []
                 for j in range(cnt):
+                    st.markdown(f"**Load #{j+1}**")
                     cc1, cc2, cc3 = st.columns([1,1,1.2])
                     p_dl = cc1.number_input(f"PDL", key=f"pd_{i}_{j}")
                     p_ll = cc2.number_input(f"PLL", key=f"pl_{i}_{j}")
                     px = cc3.number_input(f"x (m)", 0.0, spans[i], spans[i]/2, key=f"px_{i}_{j}")
                     
                     pu = p_dl*params['fdl'] + p_ll*params['fll']
+                    
+                    # --- REQ 1: Show Pu Calculation for each point load ---
                     if pu > 0:
-                        st.latex(f"P_u = {pu:,.2f}\; {u_point}")
+                        st.caption(f"Calc: {params['fdl']}*{p_dl} + {params['fll']}*{p_ll}")
+                        st.latex(f"P_{{u,{j+1}}} = \\mathbf{{{pu:,.2f}}}\; {u_point} \quad @ x={px:.2f}m")
                         raw_points.append({'P': pu, 'x': px})
+                        st.divider()
 
-                # --- AGGREGATION LOGIC (รวมแรงที่ตำแหน่งเดียวกัน) ---
-                # Check exist loads in this span
+                # Aggregate logic
                 merged_points = {}
                 for p in raw_points:
                     pos = p['x']
