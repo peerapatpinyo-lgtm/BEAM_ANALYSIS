@@ -35,6 +35,7 @@ def add_peak_annotations(fig, x_data, y_data, row, col, unit):
         fig.add_trace(go.Scatter(x=[x_vals[idx_max]], y=[val_max], mode='markers', 
                                  marker=dict(color='red', size=8), showlegend=False, hoverinfo='skip'), row=row, col=col)
 
+        # Plot Min only if it's distinct enough
         if abs(idx_max - idx_min) > 0 or abs(val_max - val_min) > 1.0:
             fig.add_annotation(
                 x=x_vals[idx_min], y=val_min,
@@ -57,6 +58,7 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
         row_heights=[0.3, 0.35, 0.35]
     )
     
+    # Grid lines
     for x_s in cum_len:
         fig.add_vline(x=x_s, line_width=1, line_dash="dash", line_color="gray", opacity=0.5)
 
@@ -70,6 +72,7 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
             fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='triangle-up', size=15, color='#B0BEC5', line=dict(color='black', width=2)), showlegend=False, hovertext="Pin"), row=1, col=1)
         elif stype == "Roller":
             fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='circle', size=15, color='white', line=dict(color='black', width=2)), showlegend=False, hovertext="Roller"), row=1, col=1)
+            # Corrected shape properties
             fig.add_shape(type="line", x0=x-viz_scale/2, y0=-viz_scale/1.5, x1=x+viz_scale/2, y1=-viz_scale/1.5, line=dict(color="black", width=2), row=1, col=1)
         elif stype == "Fixed":
             fig.add_shape(type="rect", x0=x-viz_scale/5, y0=-viz_scale/1.5, x1=x+viz_scale/5, y1=viz_scale/1.5, line=dict(color="black", width=2), fillcolor="gray", row=1, col=1)
@@ -121,6 +124,7 @@ def render_combined_section(b, h, cover, top_bars, bot_bars):
     except: return go.Figure()
 
     fig = go.Figure()
+    # Corrected: line=dict(color=...)
     fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=3), fillcolor="#ECEFF1")
     fig.add_shape(type="rect", x0=cover, y0=cover, x1=b-cover, y1=h-cover, line=dict(color="#388E3C", width=2, dash="longdash"))
     
@@ -132,7 +136,8 @@ def render_combined_section(b, h, cover, top_bars, bot_bars):
             if num == 1: xs = [b/2]
             else: xs = np.linspace(cover+r, b-cover-r, num)
             for x in xs:
-                fig.add_shape(type="circle", x0=x-r, y0=y_center-r, x1=x+r, y1=y_center+r, fillcolor=color, line_color="black")
+                # 🔴 FIXED HERE: 'line_color' changed to 'line=dict(color="black")'
+                fig.add_shape(type="circle", x0=x-r, y0=y_center-r, x1=x+r, y1=y_center+r, fillcolor=color, line=dict(color="black"))
             fig.add_annotation(x=b/2, y=y_center+label_pos_offset, text=f"<b>{bars}</b>", showarrow=False, font=dict(color=color, size=14))
 
     draw_rebars(bot_bars, cover + 2.0, "#1565C0", 6) 
@@ -195,26 +200,18 @@ def render_design_results(df, params, spans, span_props_list, supports):
 
     # Details
     st.markdown("---")
-    if not summary_data:
-        st.info("No span data available.")
-        return
+    if not summary_data: return
 
     tabs = st.tabs([f"Span {d['Span']}" for d in summary_data])
     for i, tab in enumerate(tabs):
         d = summary_data[i]
         sp = span_props_list[i]
-        try:
-            bb = float(sp['b'])
-            hh = float(sp['h'])
-            cc = float(sp['cv'])
+        try: bb, hh, cc = float(sp['b']), float(sp['h']), float(sp['cv'])
         except: bb, hh, cc = 30.0, 60.0, 3.0
 
         with tab:
             c1, c2 = st.columns([1, 1.5])
             with c1:
-                # ----------------------------------------------------
-                # 🔥 KEY FIX HERE: Added unique key argument
-                # ----------------------------------------------------
                 st.plotly_chart(
                     render_combined_section(bb, hh, cc, d['_n']['Bars'], d['_p']['Bars']), 
                     use_container_width=True,
@@ -240,10 +237,12 @@ def render_longitudinal_view(spans, supports, design_data):
     cum_len = [0] + list(np.cumsum(spans))
     fig = go.Figure()
     
+    # Corrected: line=dict(color=...) instead of color=... in add_shape
     fig.add_shape(type="rect", x0=0, y0=0, x1=total_len, y1=10, line=dict(color="black", width=2), fillcolor="#FAFAFA", layer="below")
     
     for i, x in enumerate(cum_len):
-        fig.add_vline(x=x, line_width=1, line_dash="dot", color="gray")
+        # 🔴 FIXED HERE: 'color' changed to 'line_color' for add_vline
+        fig.add_vline(x=x, line_width=1, line_dash="dot", line_color="gray")
         fig.add_trace(go.Scatter(x=[x], y=[-1], mode='markers', marker=dict(symbol='triangle-up', size=12, color='gray'), showlegend=False))
 
     for i, L in enumerate(spans):
@@ -265,4 +264,4 @@ def render_longitudinal_view(spans, supports, design_data):
     fig.update_xaxes(visible=False, range=[-0.5, total_len+0.5])
     fig.update_yaxes(visible=False, range=[-2, 12])
     fig.update_layout(height=250, title="<b>Longitudinal Reinforcement Profile</b>", margin=dict(t=30,b=10), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True, key="long_profile_view") # Add key here too just in case
+    st.plotly_chart(fig, use_container_width=True, key="long_profile_view")
