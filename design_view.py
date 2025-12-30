@@ -94,11 +94,11 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             f"<b>Bending Moment Diagram (BMD)</b>", 
             f"<b>Deflection (δ)</b>"
         ),
-        row_heights=[0.20, 0.26, 0.26, 0.28] # ปรับความสูง Row 1 ให้มีที่หายใจสำหรับ Load
+        row_heights=[0.20, 0.26, 0.26, 0.28]
     )
 
     # ==========================================
-    # ROW 1: STRUCTURE (FBD) - จัดระเบียบใหม่
+    # ROW 1: STRUCTURE (FBD)
     # ==========================================
     
     # 1.1 Support Preparation
@@ -107,80 +107,67 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     if sup_df is not None and not sup_df.empty and 'id' in sup_df.columns:
         sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
 
-    # 1.2 Draw Nodes & Supports (ย้ายลงมาใต้เส้น)
+    # 1.2 Draw Nodes & Supports
     for i, x in enumerate(cum_spans):
-        # Node Labels (อยู่เหนือคานนิดหน่อย ไม่ทับ Load)
+        # Node Labels
         fig.add_annotation(
             x=x, y=0, 
-            ax=0, ay=-15, # Offset text up relative to point
+            ax=0, ay=-15,
             text=f"Node {i+1}", showarrow=False,
             font=dict(size=9, color="gray"), row=1, col=1
         )
         
         if i in sup_map:
             stype = sup_map[i]
-            # --- Support Logic: Drawing UNDER the beam ---
+            # Draw Support UNDER beam
             if stype == 'Fixed':
-                # ขีดตั้งฉากลงมา แล้วขีดนอน
                 fig.add_shape(type="line", x0=x, y0=0, x1=x, y1=-0.3, line=dict(width=4, color='black'), row=1, col=1)
                 fig.add_shape(type="line", x0=x-0.15, y0=-0.3, x1=x+0.15, y1=-0.3, line=dict(width=4, color='black'), row=1, col=1)
-                # ขีดแรเงา (Hatch)
                 for h in np.linspace(x-0.15, x+0.15, 5):
                      fig.add_shape(type="line", x0=h, y0=-0.3, x1=h-0.05, y1=-0.4, line=dict(width=1, color='black'), row=1, col=1)
 
             elif stype == 'Pin':
-                # สามเหลี่ยมใต้คาน
                 fig.add_trace(go.Scatter(
-                    x=[x], y=[-0.15], # ขยับลงมา -0.15
+                    x=[x], y=[-0.15],
                     mode='markers', 
                     marker=dict(symbol='triangle-up', size=18, color='white', line=dict(color='black', width=2)), 
                     name=stype, hoverinfo='name', showlegend=False
                 ), row=1, col=1)
-                # พื้นรอง
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.25, x1=x+0.2, y1=-0.25, line=dict(width=2, color='black'), row=1, col=1)
 
             elif stype == 'Roller':
-                # วงกลมใต้คาน
                 fig.add_trace(go.Scatter(
-                    x=[x], y=[-0.15], # ขยับลงมา
+                    x=[x], y=[-0.15],
                     mode='markers', 
                     marker=dict(symbol='circle', size=18, color='white', line=dict(color='black', width=2)), 
                     name=stype, hoverinfo='name', showlegend=False
                 ), row=1, col=1)
-                # พื้นรอง + เส้นล่าง
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.30, x1=x+0.2, y1=-0.30, line=dict(width=2, color='black'), row=1, col=1)
 
-    # 1.3 Beam Line (วาดทับ Support จะได้สวย)
+    # 1.3 Beam Line
     fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=5), hoverinfo='skip', showlegend=False), row=1, col=1)
 
-    # 1.4 Loads Drawing (แก้เรื่อง Text ซ้อนกัน)
+    # 1.4 Loads Drawing
     for l in clean_loads:
         x_abs = cum_spans[l['span_idx']] + l['x']
         mag = l['mag']
         l_type = l['type']
         
-        # --- Text Position Logic ---
-        # Uniform Load Text @ y=0.4
-        # Point Load Text @ y=0.7 (สูงกว่า เพื่อหลบกัน)
-        
         if l_type == 'P':
-            # Arrow
             fig.add_annotation(
                 x=x_abs, y=0, 
-                ax=0, ay=-50, # หางลูกศรยาวขึ้น
+                ax=0, ay=-50,
                 arrowhead=2, arrowwidth=2, arrowcolor='#E74C3C', 
                 text=f"P={mag}", 
                 font=dict(color='#E74C3C', size=11, family="Arial Black"),
-                yshift=10, # ยก Text หนีปลายลูกศร
+                yshift=10,
                 row=1, col=1
             )
         elif l_type == 'U':
             xs = cum_spans[l['span_idx']]
             xe = cum_spans[l['span_idx']+1]
-            # Rect visual
             fig.add_shape(type="rect", x0=xs, x1=xe, y0=0.05, y1=0.25, fillcolor="#E74C3C", opacity=0.15, line_width=0, row=1, col=1)
             fig.add_shape(type="line", x0=xs, y0=0.25, x1=xe, y1=0.25, line=dict(color="#E74C3C", width=2), row=1, col=1)
-            # Label ตรงกลาง Span แต่ต่ำกว่า P Load
             fig.add_annotation(
                 x=(xs+xe)/2, y=0.25, 
                 text=f"w={mag}", showarrow=False, 
@@ -192,7 +179,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             fig.add_annotation(x=x_abs, y=0, text=f"M={mag}", showarrow=True, arrowhead=1, ax=0, ay=-40, arrowcolor='purple', font=dict(size=10), row=1, col=1)
 
     # ==========================================
-    # HELPER: Eng Labels (Clean Box Style)
+    # HELPER: Eng Labels (Fix: Removed ax/ay from dict)
     # ==========================================
     def add_eng_labels(x_data, y_data, row_idx, color_code, unit_suffix):
         y_arr = np.array(y_data, dtype=float)
@@ -202,12 +189,11 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         max_idx = np.argmax(y_arr)
         min_idx = np.argmin(y_arr)
         
-        # Style: Clean Box with Border
+        # FIX: เอา ax, ay ออกจาก dict นี้ เพื่อไม่ให้ซ้ำกับตอนเรียกใช้
         style = dict(
             showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
-            ax=0, ay=-30, # Default shift up
             font=dict(color=color_code, size=10),
-            bgcolor="rgba(255,255,255,0.95)", # Opaque background
+            bgcolor="rgba(255,255,255,0.95)",
             bordercolor=color_code, borderwidth=1, borderpad=4
         )
 
@@ -215,15 +201,15 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             lbl = "Max" if is_top else "Min"
             txt = f"<b>{lbl}:</b> {val:.2f} {unit_suffix}<br>@ {x_pos:.2f}m"
             
-            # Smart positioning: ถ้าค่าเป็นบวก ชี้จากบนลงล่าง, ถ้าลบ ชี้จากล่างขึ้นบน
+            # Smart positioning
             ay_val = -30 if val >= 0 else 30
             
             fig.add_annotation(
                 x=x_pos, y=val, 
                 text=txt, 
-                ax=0, ay=ay_val,
+                ax=0, ay=ay_val, # กำหนดค่าตรงนี้จุดเดียว
                 row=row_idx, col=1, 
-                **style
+                **style # Unpack ส่วนที่เหลือ
             )
 
         if abs(y_arr[max_idx]) > 1e-4:
@@ -264,32 +250,27 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             )
 
     # ==========================================
-    # LAYOUT: CLEAN GRID & LINES
+    # LAYOUT
     # ==========================================
-    
-    # Draw Vertical Grid Lines (Layer='below' สำคัญมาก เพื่อให้ไปอยู่ข้างหลังสุด)
-    # ใช้ add_vline ครั้งเดียว ใส่ row='all' เพื่อให้ทะลุทุกกราฟ
     for kp in sorted_keys:
         fig.add_vline(
             x=kp, 
             line_width=1, line_dash="dash", line_color="gray", opacity=0.5,
-            layer="below", # <<< Key change: ส่งไปอยู่ข้างหลัง
+            layer="below",
             row="all", col=1
         )
 
     fig.update_layout(
         height=1000, 
         showlegend=False,
-        template="plotly_white", # เปลี่ยนเป็น plotly_white จะสะอาดกว่า simple_white
+        template="plotly_white",
         margin=dict(l=60, r=30, t=40, b=50),
         font=dict(family="Roboto, Arial", size=12),
         hovermode="x unified"
     )
     
-    # Hide Y-axis for FBD
-    fig.update_yaxes(visible=False, range=[-0.6, 0.8], row=1, col=1) # Set fixed range for FBD visuals
+    fig.update_yaxes(visible=False, range=[-0.6, 0.8], row=1, col=1)
     
-    # Add Grid for other plots
     for r, title in zip([2,3,4], [f"V ({unit_force})", f"M ({unit_force}-{unit_len})", f"δ ({unit_len})"]):
         fig.update_yaxes(title_text=title, row=r, col=1, showgrid=True, gridcolor='#F0F0F0', zeroline=True, zerolinecolor='#999')
         fig.update_xaxes(showgrid=True, gridcolor='#F0F0F0', row=r, col=1)
