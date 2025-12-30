@@ -7,8 +7,22 @@ from plotly.subplots import make_subplots
 # ==========================================
 # 1. FUNCTION: Draw Graphs & Load Table
 # ==========================================
-def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", unit_len="m"):
+def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", unit_len="m", dl_factor=1.0, ll_factor=1.0):
     
+    # --- 0. Design Criteria & Load Combination Display (NEW!) ---
+    st.markdown("### ⚙️ Design Criteria & Load Combination")
+    
+    # สร้างกล่องแสดงผล Factor สวยๆ
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        st.metric(label="Dead Load Factor (DL)", value=f"{dl_factor:.2f}")
+    with col2:
+        st.metric(label="Live Load Factor (LL)", value=f"{ll_factor:.2f}")
+    with col3:
+        st.info(f"**Load Combination Formula:**\n\n$$U = {dl_factor:.2f}(DL) + {ll_factor:.2f}(LL)$$")
+    
+    st.markdown("---")
+
     # --- Data Sanitization ---
     if isinstance(spans, (pd.DataFrame, pd.Series)):
         spans = spans.values.flatten().tolist()
@@ -34,7 +48,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                         continue
 
     # --- 1. Load Calculation List ---
-    st.markdown("### 📋 Load Calculation List")
+    st.markdown("### 📋 Applied Loads List (Unfactored)")
     
     if len(clean_loads) > 0:
         load_table_data = []
@@ -64,7 +78,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         return
 
     st.markdown("---")
-    st.markdown("### 📊 Structural Analysis Diagrams")
+    st.markdown("### 📊 Structural Analysis Diagrams (Factored)")
 
     # --- 2. PREPARE PLOTTING DATA ---
     try:
@@ -179,7 +193,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             fig.add_annotation(x=x_abs, y=0, text=f"M={mag}", showarrow=True, arrowhead=1, ax=0, ay=-40, arrowcolor='purple', font=dict(size=10), row=1, col=1)
 
     # ==========================================
-    # HELPER: Eng Labels (Fix: Removed ax/ay from dict)
+    # HELPER: Eng Labels
     # ==========================================
     def add_eng_labels(x_data, y_data, row_idx, color_code, unit_suffix):
         y_arr = np.array(y_data, dtype=float)
@@ -189,7 +203,6 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         max_idx = np.argmax(y_arr)
         min_idx = np.argmin(y_arr)
         
-        # FIX: เอา ax, ay ออกจาก dict นี้ เพื่อไม่ให้ซ้ำกับตอนเรียกใช้
         style = dict(
             showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
             font=dict(color=color_code, size=10),
@@ -200,16 +213,14 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         def plot_lbl(val, x_pos, is_top):
             lbl = "Max" if is_top else "Min"
             txt = f"<b>{lbl}:</b> {val:.2f} {unit_suffix}<br>@ {x_pos:.2f}m"
-            
-            # Smart positioning
             ay_val = -30 if val >= 0 else 30
             
             fig.add_annotation(
                 x=x_pos, y=val, 
                 text=txt, 
-                ax=0, ay=ay_val, # กำหนดค่าตรงนี้จุดเดียว
+                ax=0, ay=ay_val,
                 row=row_idx, col=1, 
-                **style # Unpack ส่วนที่เหลือ
+                **style
             )
 
         if abs(y_arr[max_idx]) > 1e-4:
