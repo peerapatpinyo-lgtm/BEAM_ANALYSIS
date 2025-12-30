@@ -20,16 +20,16 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     fig = make_subplots(
         rows=3, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.15, # เพิ่มระยะห่างระหว่างกราฟให้ชื่อแกนไม่ซ้อน
+        vertical_spacing=0.15, 
         row_heights=[0.3, 0.35, 0.35],
-        subplot_titles=("", "", "") # ลบ Title อัตโนมัติออก เราจะใส่เอง
+        subplot_titles=("", "", "") 
     )
 
     # ==========================================
     # ROW 1: STRUCTURAL MODEL (FBD)
     # ==========================================
     
-    # 1.1 Beam Line (วาดเส้นคาน)
+    # 1.1 Beam Line
     fig.add_trace(go.Scatter(
         x=[0, total_len], y=[0, 0],
         mode='lines', line=dict(color=C_BEAM, width=5),
@@ -37,7 +37,6 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     ), row=1, col=1)
 
     # 1.2 Nodes & Supports Logic
-    # แปลง support dataframe เป็น dictionary {node_index: type}
     sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
 
     for i in range(n_nodes):
@@ -50,14 +49,13 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
             if sType == 'Pin':
                 # Triangle
                 fig.add_trace(go.Scatter(
-                    x=[x], y=[-0.12], # ขยับลงนิดหน่อยใต้คาน
+                    x=[x], y=[-0.12], 
                     mode='markers',
                     marker=dict(symbol='triangle-up', size=20, color=C_PIN_ROLLER, line=dict(width=2, color=C_OUTLINE)),
                     hoverinfo='name', name=f"Pin @ Node {i+1}"
                 ), row=1, col=1)
-                # Ground Line
+                # Ground Line & Hatch
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.22, x1=x+0.2, y1=-0.22, line=dict(color='black', width=2), row=1, col=1)
-                # Ground Hatches (ขีดๆ พื้น)
                 for hx in np.linspace(x-0.2, x+0.2, 5):
                     fig.add_shape(type="line", x0=hx, y0=-0.22, x1=hx-0.05, y1=-0.28, line=dict(color='black', width=1), row=1, col=1)
 
@@ -69,27 +67,24 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
                     marker=dict(symbol='circle', size=18, color=C_PIN_ROLLER, line=dict(width=2, color=C_OUTLINE)),
                     hoverinfo='name', name=f"Roller @ Node {i+1}"
                 ), row=1, col=1)
-                # Ground Line (ห่างลงมาหน่อย)
+                # Ground Line & Hatch
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.22, x1=x+0.2, y1=-0.22, line=dict(color='black', width=2), row=1, col=1)
-                # Ground Hatches
                 for hx in np.linspace(x-0.2, x+0.2, 5):
                     fig.add_shape(type="line", x0=hx, y0=-0.22, x1=hx-0.05, y1=-0.28, line=dict(color='black', width=1), row=1, col=1)
 
             elif sType == 'Fixed':
-                # Vertical Line
+                # Vertical Line & Wall Hatch
                 fig.add_shape(type="line", x0=x, y0=-0.3, x1=x, y1=0.3, line=dict(color='black', width=4), row=1, col=1)
-                # Wall Hatches
-                h_dir = -0.15 if x == 0 else 0.15 # ขีดไปทางซ้ายถ้าอยู่ขวา ขีดขวาถ้าอยู่ซ้าย
+                h_dir = -0.15 if x == 0 else 0.15 
                 for hy in np.linspace(-0.3, 0.3, 7):
                     fig.add_shape(type="line", x0=x, y0=hy, x1=x+h_dir, y1=hy-0.05, line=dict(color='black', width=1), row=1, col=1)
 
         else:
             # === NO SUPPORT (Internal Node) ===
-            # วาดจุดดำทับเส้นคาน (ต้องวาดทีหลังเส้นคานถึงจะเห็น)
             fig.add_trace(go.Scatter(
                 x=[x], y=[0],
                 mode='markers',
-                marker=dict(symbol='circle', size=12, color='white', line=dict(width=2.5, color='black')), # จุดขาวขอบดำ (Hinge style)
+                marker=dict(symbol='circle', size=10, color='white', line=dict(width=2, color='black')),
                 hoverinfo='name', name=f"Node {i+1}"
             ), row=1, col=1)
 
@@ -111,7 +106,6 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     # ==========================================
     # ROW 2: SHEAR FORCE (SFD)
     # ==========================================
-    # Zero Line
     fig.add_shape(type="line", x0=0, x1=total_len, y0=0, y1=0, line=dict(color='black', width=1.5), row=2, col=1)
     
     fig.add_trace(go.Scatter(
@@ -121,14 +115,19 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
         name='Shear'
     ), row=2, col=1)
 
-    # Labels
+    # Labels (Added @ Distance Back!)
     v_max = df['shear'].abs().max()
     if v_max > 0:
         idx = df['shear'].abs().idxmax()
         row_v = df.loc[idx]
         val = row_v['shear']
+        x_loc = row_v['x']
+        
+        # Format: Value @ Distance
+        label_text = f"<b>{val:.2f} @ {x_loc:.2f}m</b>"
+        
         fig.add_annotation(
-            x=row_v['x'], y=val, text=f"<b>{val:.2f}</b>",
+            x=x_loc, y=val, text=label_text,
             showarrow=False, yshift=15 if val>0 else -15,
             font=dict(color=C_SHEAR, size=11), bgcolor="rgba(255,255,255,0.8)", row=2, col=1
         )
@@ -145,30 +144,33 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
         name='Moment'
     ), row=3, col=1)
 
-    # Labels
+    # Labels (Added @ Distance Back!)
     m_max = df['moment'].max()
     m_min = df['moment'].min()
+    
     if abs(m_max) > 0.01:
         xm = df.loc[df['moment'] == m_max, 'x'].iloc[0]
-        fig.add_annotation(x=xm, y=m_max, text=f"<b>{m_max:.2f}</b>", showarrow=False, yshift=15, font=dict(color=C_MOMENT), row=3, col=1)
+        label_text = f"<b>{m_max:.2f} @ {xm:.2f}m</b>"
+        fig.add_annotation(x=xm, y=m_max, text=label_text, showarrow=False, yshift=15, font=dict(color=C_MOMENT), row=3, col=1)
+        
     if abs(m_min) > 0.01:
         xm = df.loc[df['moment'] == m_min, 'x'].iloc[0]
-        fig.add_annotation(x=xm, y=m_min, text=f"<b>{m_min:.2f}</b>", showarrow=False, yshift=-15, font=dict(color=C_MOMENT), row=3, col=1)
+        label_text = f"<b>{m_min:.2f} @ {xm:.2f}m</b>"
+        fig.add_annotation(x=xm, y=m_min, text=label_text, showarrow=False, yshift=-15, font=dict(color=C_MOMENT), row=3, col=1)
 
     # ==========================================
-    # LAYOUT & AXIS TITLES (Force Display)
+    # LAYOUT & AXIS
     # ==========================================
     fig.update_layout(
         height=850,
-        margin=dict(l=80, r=40, t=40, b=40), # Margin ซ้ายต้องเยอะหน่อยให้ชื่อแกนไม่ตกขอบ
+        margin=dict(l=80, r=40, t=40, b=40),
         plot_bgcolor='white',
         paper_bgcolor='white',
         showlegend=False,
         hovermode="x unified",
-        font=dict(family="Sarabun", size=14, color='black')
+        font=dict(family="Sarabun, sans-serif", size=14, color='black')
     )
 
-    # Global Axis Style
     ax_style = dict(
         showline=True, linewidth=1.5, linecolor='black',
         showgrid=True, gridcolor='#EEEEEE',
@@ -176,19 +178,15 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
         mirror=True
     )
 
-    # Update Axes
     fig.update_xaxes(**ax_style)
     fig.update_yaxes(**ax_style)
 
-    # --- บังคับใส่ชื่อแกน (Force Titles) ---
-    # Row 1: Model (No Y Axis Title needed, just visual)
+    # Force Titles
     fig.update_yaxes(visible=False, row=1, col=1, range=[-0.6, 0.6])
     fig.update_xaxes(visible=True, showticklabels=True, title_text="", row=1, col=1)
 
-    # Row 2: Shear Force
     fig.update_yaxes(title_text=f"<b>Shear Force<br>(V) [{unit_force}]</b>", title_standoff=10, row=2, col=1)
     
-    # Row 3: Bending Moment
     fig.update_yaxes(title_text=f"<b>Bending Moment<br>(M) [{unit_force}-{unit_len}]</b>", title_standoff=10, row=3, col=1)
     fig.update_xaxes(title_text=f"<b>Distance (x) [{unit_len}]</b>", row=3, col=1)
 
