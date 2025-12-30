@@ -1,114 +1,114 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 
 def render_sidebar():
-    with st.sidebar:
-        st.markdown("### ⚙️ Global Settings")
-        unit = st.radio("Unit System", ["Metric (kg, m)", "SI (kN, m)"])
-        
-        st.markdown("### Material Properties")
-        with st.expander("Materials", expanded=True):
-            fc = st.number_input("fc' (ksc/MPa)", value=240.0, format="%.1f")
-            fy = st.number_input("fy Main (ksc/MPa)", value=4000.0, format="%.1f")
-            fys = st.number_input("fy Stirrup (ksc/MPa)", value=2400.0, format="%.1f")
-        
-        st.markdown("### Rebar Options")
-        with st.expander("Rebar Selection", expanded=True):
-            db_main = st.selectbox("Main Bar (mm)", [12, 16, 20, 25, 28, 32], index=1)
-            db_stir = st.selectbox("Stirrup Bar (mm)", [6, 9, 12], index=0)
-            s_step = st.selectbox("Stirrup Spacing Step (cm)", [1.0, 2.5, 5.0], index=1)
-        
-        st.markdown("### Safety Factors")
-        c1, c2 = st.columns(2)
-        fdl = c1.number_input("Factor DL", value=1.4, format="%.2f")
-        fll = c2.number_input("Factor LL", value=1.7, format="%.2f")
-        
-        u_force = "kg" if "Metric" in unit else "kN"
-        
-        return {
-            'fc': float(fc), 'fy': float(fy), 'fys': float(fys),
-            'db_main': int(db_main), 'db_stirrup': int(db_stir), 's_step': float(s_step),
-            'fdl': float(fdl), 'fll': float(fll), 'unit': unit, 'u_force': u_force
-        }
-
-def render_geometry(n_default=2):
-    st.markdown("### 1️⃣ Geometry & Section Properties")
+    st.sidebar.header("⚙️ Design Standards")
+    unit = st.sidebar.radio("Units", ["Metric (kg, cm)", "SI (kN, m)"])
     
-    col_n, col_dummy = st.columns([1, 3])
-    with col_n:
-        n = st.number_input("Number of Spans", 1, 10, n_default)
+    st.sidebar.markdown("---")
+    st.sidebar.header("🧱 Material Properties")
+    
+    if "Metric" in unit:
+        fc = st.sidebar.number_input("f'c (ksc)", value=240, step=10)
+        fy = st.sidebar.number_input("fy (Main) (ksc)", value=4000, step=100)
+        fys = st.sidebar.number_input("fy (Stirrup) (ksc)", value=2400, step=100)
+        u_force, u_len = "kg", "m"
+    else:
+        fc = st.sidebar.number_input("f'c (MPa)", value=25, step=5)
+        fy = st.sidebar.number_input("fy (Main) (MPa)", value=400, step=10)
+        fys = st.sidebar.number_input("fy (Stirrup) (MPa)", value=240, step=10)
+        u_force, u_len = "kN", "m"
+        
+    db_main = st.sidebar.selectbox("Main Bar DB", [12, 16, 20, 25, 28, 32], index=1)
+    db_stir = st.sidebar.selectbox("Stirrup Bar RB/DB", [6, 9, 10, 12], index=0)
+    
+    return {
+        "unit": unit, "fc": fc, "fy": fy, "fys": fys,
+        "db_main": db_main, "db_stirrup": db_stir,
+        "u_force": u_force, "u_len": u_len
+    }
+
+def render_geometry():
+    st.subheader("1️⃣ Beam Geometry & Supports")
+    n_spans = st.number_input("Number of Spans", min_value=1, max_value=10, value=2)
+    
+    spans = []
+    supports = []
+    
+    # Header row
+    c1, c2 = st.columns([1, 1])
+    c1.markdown("**Span Length (m)**")
+    c2.markdown("**Support Type (Right Side)**")
+    
+    # First support (Leftmost)
+    st.markdown("**Leftmost Support (Start)**")
+    first_sup = st.selectbox("Type", ["Pin", "Roller", "Fixed", "None"], key="sup_0")
+    supports.append({"id": 0, "type": first_sup})
+    
+    for i in range(int(n_spans)):
+        c1, c2 = st.columns([1, 1])
+        l = c1.number_input(f"L{i+1}", min_value=0.1, value=5.0, key=f"span_len_{i}")
+        s = c2.selectbox(f"S{i+1}", ["Pin", "Roller", "Fixed", "None"], index=1, key=f"sup_{i+1}")
+        
+        spans.append(l)
+        supports.append({"id": i+1, "type": s})
+        
+    return int(n_spans), spans, pd.DataFrame(supports), True
+
+def render_loads(n_spans, spans, params):
+    st.subheader("2️⃣ Defined Loads")
+    u_f = params['u_force']
+    
+    if "loads" not in st.session_state:
+        st.session_state.loads = []
+
+    with st.expander("➕ Add New Load", expanded=True):
+        c1, c2, c3, c4 = st.columns([1, 1, 1, 0.5])
+        l_type = c1.selectbox("Type", ["Uniform (U)", "Point (P)"])
+        span_idx = c2.selectbox("Span Index", range(1, n_spans+1)) - 1
+        
+        val = 0
+        loc = 0
+        
+        if "Uniform" in l_type:
+            val = c3.number_input(f"w ({u_f}/m)", value=1000.0)
+            if c4.button("Add", key="add_u"):
+                st.session_state.loads.append({"type": "U", "span_idx": span_idx, "w": val})
+        else:
+            val = c3.number_input(f"P ({u_f})", value=1000.0)
+            loc = c3.number_input(f"Distance x from left (m)", min_value=0.0, max_value=spans[span_idx], value=spans[span_idx]/2)
+            if c4.button("Add", key="add_p"):
+                st.session_state.loads.append({"type": "P", "span_idx": span_idx, "P": val, "x": loc})
+
+    # Display list
+    if st.session_state.loads:
+        for i, l in enumerate(st.session_state.loads):
+            txt = f"Span {l['span_idx']+1}: "
+            if l['type'] == 'U': txt += f"Uniform w={l['w']} {u_f}/m"
+            else: txt += f"Point P={l['P']} {u_f} @ x={l['x']}m"
+            
+            c_txt, c_del = st.columns([4, 1])
+            c_txt.text(txt)
+            if c_del.button("❌", key=f"del_{i}"):
+                st.session_state.loads.pop(i)
+                st.rerun()
+                
+    return st.session_state.loads
+
+# --- NEW FUNCTION: Moved Beam Size Here ---
+def render_section_inputs(n_spans):
+    st.subheader("3️⃣ Section Design Properties")
+    st.info("Define the beam cross-section size for each span (used for Analysis stiffness & Design).")
     
     span_props = []
-    st.markdown("**Span Definitions & Sections**")
-    tabs = st.tabs([f"Span {i+1}" for i in range(n)])
+    cols = st.columns(n_spans)
     
-    spans_len = []
-    for i, tab in enumerate(tabs):
-        with tab:
-            c1, c2, c3, c4 = st.columns(4)
-            l = c1.number_input(f"Length (m)", 1.0, 50.0, 5.0, key=f"L{i}", format="%.2f")
-            b = c2.number_input(f"Width b (cm)", 10.0, 100.0, 25.0, key=f"b{i}", format="%.1f")
-            h = c3.number_input(f"Depth h (cm)", 10.0, 200.0, 50.0, key=f"h{i}", format="%.1f")
-            cv = c4.number_input(f"Cover (cm)", 1.0, 10.0, 3.0, key=f"cv{i}", format="%.1f")
+    for i in range(n_spans):
+        with cols[i]:
+            st.markdown(f"**Span {i+1}**")
+            b = st.number_input(f"b (cm)", min_value=10.0, value=30.0, key=f"b_{i}")
+            h = st.number_input(f"h (cm)", min_value=20.0, value=60.0, key=f"h_{i}")
+            cv = st.number_input(f"Cover (cm)", min_value=2.0, value=3.0, key=f"cv_{i}")
+            span_props.append({"b": b, "h": h, "cv": cv})
             
-            spans_len.append(float(l))
-            span_props.append({'b': float(b), 'h': float(h), 'cv': float(cv)})
-
-    st.markdown("**Support Conditions**")
-    cols_sup = st.columns(min(n+1, 6))
-    opts = ["Pin", "Roller", "Fixed", "None"]
-    sup_types = []
-    for i in range(n+1):
-        with cols_sup[i%6]:
-            def_idx = 2 if i==0 else (1 if i<n else 1)
-            s = st.selectbox(f"Node {i+1}", opts, index=def_idx, key=f"sup_{i}")
-            sup_types.append(s)
-
-    df_sup = pd.DataFrame({'x': [0]+list(np.cumsum(spans_len)), 'type': sup_types})
-    
-    valid = [t for t in sup_types if t != 'None']
-    stable = True
-    if len(valid) < 2 and "Fixed" not in valid: 
-        stable = False
-        st.error("❌ Structure Unstable")
-    else:
-        st.success("✅ Geometry OK")
-        
-    return n, spans_len, df_sup, stable, span_props
-
-def render_loads(n, spans, params):
-    st.markdown("### 2️⃣ Load Configuration")
-    loads = []
-    tabs = st.tabs([f"Span {i+1}" for i in range(n)])
-    u_load, u_point = ("kg/m", "kg") if "Metric" in params['unit'] else ("kN/m", "kN")
-    
-    for i, tab in enumerate(tabs):
-        with tab:
-            c1, c2 = st.columns(2)
-            with c1:
-                st.markdown(f"**Uniform Load ($W$)**")
-                dl = st.number_input(f"DL ({u_load})", 0.0, key=f"wdl{i}", format="%.0f")
-                ll = st.number_input(f"LL ({u_load})", 0.0, key=f"wll{i}", format="%.0f")
-                wu = dl*params['fdl'] + ll*params['fll']
-                if wu > 0:
-                    st.latex(f"W_u = {params['fdl']:.2f}({dl:.0f}) + {params['fll']:.2f}({ll:.0f}) = \\mathbf{{{wu:,.0f}}}\; {u_load}")
-                    loads.append({'span_idx': i, 'type': 'U', 'w': float(wu)})
-            with c2:
-                st.markdown(f"**Point Loads ($P$)**")
-                cnt = st.number_input("Count", 0, 5, 0, key=f"pcnt{i}")
-                raw_p = []
-                for j in range(cnt):
-                    cc1, cc2, cc3 = st.columns([1,1,1.2])
-                    pdl = cc1.number_input(f"P{j+1} DL", key=f"pdl{i}{j}", format="%.0f")
-                    pll = cc2.number_input(f"P{j+1} LL", key=f"pll{i}{j}", format="%.0f")
-                    px = cc3.number_input(f"x (m)", 0.0, spans[i], spans[i]/2, key=f"px{i}{j}", format="%.2f")
-                    pu = pdl*params['fdl'] + pll*params['fll']
-                    if pu > 0:
-                        st.latex(f"P_{{u{j+1}}} = {params['fdl']:.2f}({pdl:.0f}) + {params['fll']:.2f}({pll:.0f}) = \\mathbf{{{pu:,.0f}}}\; {u_point} @ {px:.2f}m")
-                        raw_p.append({'P': float(pu), 'x': float(px)})
-                
-                merged = {}
-                for p in raw_p: merged[p['x']] = merged.get(p['x'], 0) + p['P']
-                for x, p in merged.items(): loads.append({'span_idx': i, 'type': 'P', 'P': p, 'x': x})
-    return loads
+    return span_props
