@@ -7,12 +7,10 @@ import design_view
 from datetime import datetime
 
 # --- 1. CONFIGURATION & STYLING ---
-st.set_page_config(page_title="Structural Beam Analysis", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="RC Beam Pro", layout="wide", page_icon="🏗️")
 
-# Custom CSS for Professional Look
 st.markdown("""
 <style>
-    /* Global Font */
     @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;600;700&display=swap');
     
     html, body, [class*="css"] {
@@ -20,82 +18,65 @@ st.markdown("""
         color: #212529;
     }
     
-    /* Headings */
-    h1 { color: #0D47A1; font-weight: 700; font-size: 2.2rem; border-bottom: 2px solid #0D47A1; padding-bottom: 10px; }
-    h2 { color: #1565C0; font-weight: 600; font-size: 1.5rem; margin-top: 20px; }
-    h3 { color: #424242; font-weight: 600; font-size: 1.2rem; }
+    /* Header Styles */
+    h1 { color: #0D47A1; font-weight: 700; border-bottom: 2px solid #0D47A1; padding-bottom: 10px; }
+    h2, h3 { color: #1565C0; font-weight: 600; }
     
-    /* Metrics Cards */
+    /* Input Highlights */
+    .stNumberInput label, .stSelectbox label { color: #1565C0 !important; font-weight: bold; }
+    
+    /* Card Styling */
     .metric-card {
-        background-color: #FFFFFF;
-        border: 1px solid #E0E0E0;
-        border-radius: 8px;
-        padding: 15px;
-        text-align: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        transition: transform 0.2s;
+        background: white; border: 1px solid #E0E0E0; border-radius: 8px; padding: 15px;
+        text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    .metric-card:hover { transform: translateY(-2px); box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
     .metric-value { font-size: 1.8rem; font-weight: bold; color: #0D47A1; }
-    .metric-label { font-size: 0.9rem; color: #616161; text-transform: uppercase; letter-spacing: 0.5px; }
     
-    /* Buttons */
-    .stButton>button {
-        background-color: #1565C0; color: white; border: none; border-radius: 4px;
-        font-weight: 600; padding: 0.5rem 1rem;
+    /* Custom Container for Span Inputs */
+    .span-box {
+        background-color: #F1F8E9;
+        padding: 15px;
+        border-radius: 8px;
+        border: 1px solid #C5E1A5;
+        margin-bottom: 10px;
     }
-    .stButton>button:hover { background-color: #0D47A1; }
-    
-    /* Tables */
-    div[data-testid="stDataFrame"] { border: 1px solid #E0E0E0; border-radius: 5px; }
-    
-    /* Success/Error Messages */
-    .stAlert { border-radius: 4px; }
-    
-    /* Footer */
-    footer { visibility: hidden; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. HELPER FUNCTIONS ---
-def display_metric_card(col, label, value, unit, color="blue"):
+def display_metric_card(col, label, value, unit, color="#0D47A1"):
     col.markdown(f"""
     <div class="metric-card">
-        <div class="metric-label">{label}</div>
-        <div class="metric-value" style="color: {color};">{value} <span style="font-size: 1rem; color: #757575;">{unit}</span></div>
+        <div style="font-size: 0.9rem; color: #616161;">{label}</div>
+        <div class="metric-value" style="color: {color};">{value} <span style="font-size: 1rem;">{unit}</span></div>
     </div>
     """, unsafe_allow_html=True)
 
 def main():
-    # --- HEADER SECTION ---
+    # --- HEADER ---
     with st.container():
         c1, c2 = st.columns([3, 1])
         with c1:
-            st.title("🏗️ Professional Beam Analysis")
-            st.markdown(f"**Date:** {datetime.now().strftime('%d %B %Y')} | **Standard:** ACI 318 / EIT")
+            st.title("🏗️ Professional RC Beam Design")
+            st.markdown(f"**Date:** {datetime.now().strftime('%d %B %Y')} | **Engineer:** Senior Eng. Team")
         with c2:
-            st.info("💡 **Engine:** Matrix Stiffness Method\n\n✅ Exact Theory Verification")
+            st.success("✅ **System Status:** Ready\n\nEngine: Matrix Stiffness Method")
 
     st.markdown("---")
 
-    # --- SIDEBAR: PROJECT INFO & INPUTS ---
+    # --- SIDEBAR (Global Material Properties) ---
     with st.sidebar:
-        st.header("📝 Project Details")
-        st.text_input("Project Name", placeholder="e.g., Residence 2 Storey")
-        st.text_input("Engineer", placeholder="Senior Eng. Somchai")
-        
-        st.markdown("---")
-        st.header("⚙️ Model Configuration")
-        
-        # Calls existing input_handler (Keep your existing logic)
+        st.header("⚙️ Project & Materials")
+        # เรียก Input เดิม แต่เราจะดึงแค่ parameters ที่เป็น Global (fc, fy)
+        # ส่วนเรื่อง Geometry เราจะจัดการเองใน Main Area
         params = input_handler.render_sidebar()
+        
     
-    # --- MAIN WORKSPACE ---
+    # --- MAIN LAYOUT ---
     col_input, col_output = st.columns([1, 2], gap="large")
     
-    # === LEFT COLUMN: MODELING ===
+    # === LEFT: MODEL INPUT ===
     with col_input:
-        st.subheader("1. Geometry & Loading")
+        st.subheader("1. Structural Model")
         with st.container(border=True):
             n, spans, sup_df, stable = input_handler.render_model_inputs(params)
             loads = input_handler.render_loads(n, spans, params)
@@ -104,109 +85,104 @@ def main():
             run_btn = st.button("🚀 Analyze Structure", type="primary", use_container_width=True, disabled=not stable)
 
             if not stable:
-                st.error("⚠️ Structure is Unstable! Check supports.")
+                st.error("⚠️ Structure Unstable")
 
-    # === RIGHT COLUMN: ANALYSIS REPORT ===
+    # === RIGHT: RESULTS ===
     with col_output:
+        # Check if analysis exists
         if run_btn or st.session_state.get('analysis_done'):
-            try:
-                if run_btn:
-                    with st.spinner("Solving Stiffness Matrix..."):
-                        # Call your NEW CORRECT SOLVER
+            if run_btn:
+                try:
+                    with st.spinner("Calculating..."):
                         engine = solver.BeamSolver(spans, sup_df, loads)
                         df_res, reactions = engine.solve()
                         
-                        if df_res is None:
-                            st.error("Calculation Error: Singular Matrix")
-                            st.stop()
-                            
-                        # Save to Session
                         st.session_state['analysis_done'] = True
                         st.session_state['df_res'] = df_res
                         st.session_state['reactions'] = reactions
                         st.session_state['spans'] = spans
                         st.session_state['sup_df'] = sup_df
                         st.session_state['loads'] = loads
+                except Exception as e:
+                    st.error(f"Solver Error: {e}")
+                    st.stop()
 
-                # Retrieve Data
-                df = st.session_state['df_res']
-                reac = st.session_state['reactions']
-                
-                # --- SECTION 2: EXECUTIVE SUMMARY ---
-                st.subheader("2. Governing Forces (Executive Summary)")
-                
-                # Calculate Max Values
-                max_pos_m = df['moment'].max()
-                max_neg_m = df['moment'].min()
-                max_shear = df['shear'].abs().max()
-                max_reac = np.max(np.abs(reac[::2])) # Take every 2nd element for Fy
-                
-                m1, m2, m3, m4 = st.columns(4)
-                display_metric_card(m1, "Max +Moment", f"{max_pos_m:.2f}", "kg-m", "#2E7D32") # Green
-                display_metric_card(m2, "Max -Moment", f"{max_neg_m:.2f}", "kg-m", "#C62828") # Red
-                display_metric_card(m3, "Max Shear", f"{max_shear:.2f}", "kg", "#F57F17")    # Orange
-                display_metric_card(m4, "Max Reaction", f"{max_reac:.2f}", "kg", "#1565C0")  # Blue
-                
-                st.markdown("###")
+            # Retrieve Data
+            df = st.session_state['df_res']
+            reac = st.session_state['reactions']
 
-                # --- SECTION 3: TABS FOR DETAILS ---
-                tab1, tab2, tab3 = st.tabs(["📈 Diagrams (SFD/BMD)", "📋 Reactions & Tables", "🏗️ RC Design"])
+            # --- EXECUTIVE SUMMARY ---
+            st.subheader("2. Analysis Summary")
+            m1, m2, m3, m4 = st.columns(4)
+            
+            # Helper to find absolute max values
+            display_metric_card(m1, "Max +Moment", f"{df['moment'].max():.2f}", "kg-m", "#2E7D32")
+            display_metric_card(m2, "Max -Moment", f"{df['moment'].min():.2f}", "kg-m", "#C62828")
+            display_metric_card(m3, "Max Shear", f"{df['shear'].abs().max():.2f}", "kg", "#EF6C00")
+            display_metric_card(m4, "Max Reaction", f"{np.max(np.abs(reac[::2])):.2f}", "kg", "#1565C0")
+            
+            st.markdown("###")
+
+            # --- TABS ---
+            tab_diag, tab_reac, tab_design = st.tabs(["📈 Diagrams", "📋 Reactions", "🏗️ RC Design"])
+            
+            with tab_diag:
+                design_view.draw_diagrams(df, st.session_state['spans'], st.session_state['sup_df'], 
+                                          st.session_state['loads'], params['u_force'], params['u_len'])
+            
+            with tab_reac:
+                r_data = []
+                for i in range(len(st.session_state['spans']) + 1):
+                    r_data.append({
+                        "Support Node": f"#{i+1}",
+                        "Vertical (Ry) [kg]": f"{reac[2*i]:.2f}",
+                        "Moment (Mz) [kg-m]": f"{reac[2*i+1]:.2f}"
+                    })
+                st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
+
+            # --- RC DESIGN TAB (UPDATED) ---
+            with tab_design:
+                st.info("👇 **Design Specification:** Adjust beam size & rebar for each span independently.")
                 
-                with tab1:
-                    st.markdown("#### Internal Force Diagrams")
-                    # เรียกกราฟจาก design_view (อันเดิมที่คุณมี)
-                    design_view.draw_diagrams(df, st.session_state['spans'], st.session_state['sup_df'], 
-                                              st.session_state['loads'], params['u_force'], params['u_len'])
+                n_spans = len(st.session_state['spans'])
+                span_props = []
                 
-                with tab2:
-                    st.markdown("#### Support Reactions")
-                    # Format Reaction Data nicely
-                    r_data = []
-                    for i in range(len(st.session_state['spans']) + 1):
-                        fy = reac[2*i]
-                        mz = reac[2*i+1]
-                        r_data.append({
-                            "Node": i+1,
-                            "Vertical Reaction (Ry) [kg]": f"{fy:.2f}",
-                            "Moment Reaction (Mz) [kg-m]": f"{mz:.2f}"
+                # Create Columns for each span
+                d_cols = st.columns(n_spans)
+                
+                for i in range(n_spans):
+                    with d_cols[i]:
+                        # Styling for distinct look
+                        st.markdown(f"""<div style="background:#E3F2FD; padding:10px; border-radius:5px; border-left: 5px solid #1565C0;">
+                            <b>SPAN {i+1}</b> (L = {st.session_state['spans'][i]} m)</div>""", unsafe_allow_html=True)
+                        
+                        st.markdown("##### 📏 Section")
+                        b = st.number_input(f"Width b (cm)", 15.0, 100.0, 25.0, step=5.0, key=f"b_{i}")
+                        h = st.number_input(f"Depth h (cm)", 20.0, 200.0, 50.0, step=5.0, key=f"h_{i}")
+                        
+                        st.markdown("##### ⛓️ Rebar")
+                        # Select Box for Main Bar
+                        main_bar = st.selectbox(f"Main Bar", options=[12, 16, 20, 25, 28], index=1, 
+                                              format_func=lambda x: f"DB{x}", key=f"mb_{i}")
+                        
+                        # Select Box for Stirrup
+                        stirrup = st.selectbox(f"Stirrup", options=[6, 9], index=0, 
+                                             format_func=lambda x: f"RB{x}" if x<10 else f"DB{x}", key=f"st_{i}")
+                        
+                        span_props.append({
+                            "b": b, "h": h, "cv": 3.0, 
+                            "main_bar_dia": main_bar, 
+                            "stirrup_dia": stirrup
                         })
-                    st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
-                    
-                    with st.expander("Show Detailed Calculation Points (Table)"):
-                        st.dataframe(df)
+                
+                st.markdown("---")
+                st.subheader("📝 Design Calculation Results")
+                
+                # Pass data to design view
+                design_view.render_design_results(df, params, st.session_state['spans'], span_props, st.session_state['sup_df'])
 
-                with tab3:
-                    st.markdown("#### Reinforced Concrete Design")
-                    st.info("👇 Define Section Properties per Span")
-                    
-                    # Design Inputs
-                    n_spans = len(st.session_state['spans'])
-                    d_cols = st.columns(n_spans)
-                    span_props = []
-                    
-                    for i in range(n_spans):
-                        with d_cols[i]:
-                            st.markdown(f"**Span {i+1}**")
-                            with st.container(border=True):
-                                b = st.number_input(f"b (cm)", 25.0, step=5.0, key=f"b{i}")
-                                h = st.number_input(f"h (cm)", 50.0, step=5.0, key=f"h{i}")
-                                span_props.append({"b": b, "h": h, "cv": 3.0})
-                    
-                    st.markdown("---")
-                    # Render Design Results
-                    design_view.render_design_results(df, params, st.session_state['spans'], span_props, st.session_state['sup_df'])
-
-            except Exception as e:
-                st.error(f"An error occurred during analysis: {str(e)}")
         else:
-            # Placeholder State
-            st.info("👈 Please define the beam model on the left and click 'Analyze Structure'.")
-            st.markdown("""
-            <div style="text-align: center; color: #BDBDBD; margin-top: 50px;">
-                <h3>Ready for Analysis</h3>
-                <p>Waiting for engineer's input...</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.info("👈 Please define model and Click 'Analyze Structure'")
 
 if __name__ == "__main__":
     main()
