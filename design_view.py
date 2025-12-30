@@ -5,40 +5,38 @@ import numpy as np
 import rc_design 
 
 def add_peak_annotations(fig, x_data, y_data, row, col, unit_label=""):
-    """Helper function to find and annotate Max/Min values on the curve"""
-    # Find Max
-    idx_max = np.argmax(y_data)
-    val_max = y_data[idx_max]
-    x_max = x_data[idx_max]
+    """Annotates Max/Min with value AND location, NO arrows."""
+    idx_max = np.argmax(y_data); val_max = y_data[idx_max]; x_max = x_data[idx_max]
+    idx_min = np.argmin(y_data); val_min = y_data[idx_min]; x_min = x_data[idx_min]
     
-    # Find Min
-    idx_min = np.argmin(y_data)
-    val_min = y_data[idx_min]
-    x_min = x_data[idx_min]
-    
-    # Annotate Max
+    # Max
     if abs(val_max) > 0.01:
+        # Text format: "Max: 1234<br>@ x=2.5m"
+        txt = f"<b>Max: {val_max:,.2f}</b><br>@ x={x_max:.2f}m"
         fig.add_annotation(
-            x=x_max, y=val_max,
-            text=f"Max: {val_max:,.2f}",
-            showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2,
-            ax=0, ay=-40, bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
+            x=x_max, y=val_max, text=txt,
+            showarrow=False,  # REQ 3: Remove arrow
+            yshift=15,        # Shift text up slightly
+            bgcolor="rgba(255,255,255,0.7)", bordercolor="#444", borderwidth=1,
+            font=dict(size=10, color="black"),
             row=row, col=col
         )
-        # Mark point
-        fig.add_trace(go.Scatter(x=[x_max], y=[val_max], mode='markers', marker=dict(color='black', size=8), showlegend=False, hoverinfo='skip'), row=row, col=col)
+        # Dot
+        fig.add_trace(go.Scatter(x=[x_max], y=[val_max], mode='markers', marker=dict(color='black', size=6), showlegend=False, hoverinfo='skip'), row=row, col=col)
 
-    # Annotate Min
+    # Min
     if abs(val_min) > 0.01 and idx_min != idx_max:
+        txt = f"<b>Min: {val_min:,.2f}</b><br>@ x={x_min:.2f}m"
         fig.add_annotation(
-            x=x_min, y=val_min,
-            text=f"Min: {val_min:,.2f}",
-            showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2,
-            ax=0, ay=40, bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
+            x=x_min, y=val_min, text=txt,
+            showarrow=False,  # REQ 3: Remove arrow
+            yshift=-15,       # Shift text down
+            bgcolor="rgba(255,255,255,0.7)", bordercolor="#444", borderwidth=1,
+            font=dict(size=10, color="black"),
             row=row, col=col
         )
-        # Mark point
-        fig.add_trace(go.Scatter(x=[x_min], y=[val_min], mode='markers', marker=dict(color='black', size=8), showlegend=False, hoverinfo='skip'), row=row, col=col)
+        # Dot
+        fig.add_trace(go.Scatter(x=[x_min], y=[val_min], mode='markers', marker=dict(color='black', size=6), showlegend=False, hoverinfo='skip'), row=row, col=col)
 
 def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     cum_len = [0] + list(np.cumsum(spans))
@@ -52,7 +50,11 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
                         subplot_titles=("<b>Load Model</b>", f"<b>Shear Force ({u_force})</b>", f"<b>Bending Moment ({u_force}-{u_len})</b>"),
                         row_heights=[0.25, 0.375, 0.375])
     
-    # -- Row 1: Beam --
+    # REQ 4: Add Vertical Dashed Lines at Supports across ALL subplots
+    for x_sup in cum_len:
+        fig.add_vline(x=x_sup, line_width=1, line_dash="dash", line_color="gray", opacity=0.5)
+
+    # -- Row 1: Beam & Supports --
     fig.add_trace(go.Scatter(x=[0, L_total], y=[0, 0], mode='lines', line=dict(color='black', width=4), hoverinfo='none'), row=1, col=1)
 
     sup_h = viz_h * 0.2 
@@ -67,22 +69,30 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
                                      marker=dict(symbol='circle', size=15, color='white', line=dict(width=2, color='black')), 
                                      showlegend=False, hoverinfo='text', text="Roller"), row=1, col=1)
         elif stype == "Fixed":
-            # IMPROVED FIXED SUPPORT: Tall vertical line with hashing
-            wall_h = sup_h * 1.2
+            # REQ 5: Professional Fixed Support (Wall with hatching)
+            wall_h = sup_h * 1.5
+            # Main vertical line
             fig.add_shape(type="line", x0=x, y0=-wall_h, x1=x, y1=wall_h, line=dict(color="black", width=4), row=1, col=1)
-            for h_line in np.linspace(-wall_h, wall_h, 8):
-                fig.add_shape(type="line", x0=x, y0=h_line, x1=x-0.4, y1=h_line-0.15, line=dict(color="black", width=1), row=1, col=1)
+            # Hatching lines (diagonal)
+            hatch_w = 0.3 if x < L_total/2 else -0.3 # Hatch direction depends on side (simplification)
+            cnt = 6
+            for k in range(cnt):
+                y_s = -wall_h + (2*wall_h*k/(cnt-1))
+                fig.add_shape(type="line", x0=x, y0=y_s, x1=x-hatch_w, y1=y_s-(np.sign(hatch_w)*0.15), 
+                              line=dict(color="black", width=1), row=1, col=1)
 
     for l in loads:
         if l['type'] == 'U':
             x1, x2 = cum_len[l['span_idx']], cum_len[l['span_idx']+1]
             h = (l['w']/max_load) * (viz_h * 0.7)
             fig.add_trace(go.Scatter(x=[x1, x2, x2, x1], y=[0, 0, h, h], fill="toself", fillcolor="rgba(33, 150, 243, 0.3)", line_width=0, hoverinfo='skip'), row=1, col=1)
+            # REQ 2: Wu symbol
             fig.add_annotation(x=(x1+x2)/2, y=h, text=f"<b>Wu={l['w']:.0f}</b>", showarrow=False, yshift=10, font=dict(color="#0D47A1", size=10), row=1, col=1)
         elif l['type'] == 'P':
             px = cum_len[l['span_idx']] + l['x']
             h = (l['P']/max_load) * (viz_h * 0.7)
-            fig.add_annotation(x=px, y=0, ax=0, ay=-40, text=f"<b>P={l['P']:.0f}</b>", arrowhead=2, arrowcolor="#C62828", font=dict(color="#C62828", size=10), row=1, col=1)
+            # REQ 2: Pu symbol
+            fig.add_annotation(x=px, y=0, ax=0, ay=-40, text=f"<b>Pu={l['P']:.0f}</b>", arrowhead=2, arrowcolor="#C62828", font=dict(color="#C62828", size=10), row=1, col=1)
 
     fig.update_yaxes(visible=False, range=[-sup_h*2.5, viz_h*1.2], row=1, col=1)
 
@@ -94,24 +104,24 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1565C0', width=2), name="Moment", hovertemplate='M: %{y:,.2f}'), row=3, col=1)
     add_peak_annotations(fig, df['x'].values, df['moment'].values, 3, 1)
 
-    # Layout Updates
     fig.update_layout(height=800, template="plotly_white", showlegend=False, hovermode="x unified")
     fig.update_xaxes(showspikes=True, spikemode='across', spikethickness=1, spikedash='dash', spikecolor='#546E7A')
     
-    # Adding Axis Titles
     fig.update_xaxes(title_text=f"Distance ({u_len})", row=3, col=1)
     fig.update_yaxes(title_text=f"Force ({u_force})", row=2, col=1)
     fig.update_yaxes(title_text=f"Moment ({u_force}-{u_len})", row=3, col=1)
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="diagram_main")
 
 def render_combined_section(b, h, cover, top_bars, bot_bars):
-    """Draws a single section with both Top and Bottom bars"""
+    """Draws section with Engineering Callouts (REBAR LABELS)."""
     fig = go.Figure()
-    # Concrete Section
+    # Concrete
     fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=2), fillcolor="#ECEFF1")
     # Stirrup
     fig.add_shape(type="rect", x0=cover, y0=cover, x1=b-cover, y1=h-cover, line=dict(color="#43A047", width=2, dash="dash"))
+    
+    # REQ 6: Add Text Labels for Rebar
     
     # Bot Bars
     parsed_bot = rc_design.parse_bars(bot_bars)
@@ -122,6 +132,9 @@ def render_combined_section(b, h, cover, top_bars, bot_bars):
         for x in xs:
             r = (db/10)/2 if db>0 else 0.5
             fig.add_shape(type="circle", x0=x-r, y0=y_pos-r, x1=x+r, y1=y_pos+r, fillcolor="#1565C0", line_color="black")
+        
+        # Label Bottom
+        fig.add_annotation(x=b/2, y=y_pos+r+2, text=f"<b>{bot_bars}</b> (Bot)", showarrow=False, font=dict(color="#1565C0", size=12))
             
     # Top Bars
     parsed_top = rc_design.parse_bars(top_bars)
@@ -132,9 +145,12 @@ def render_combined_section(b, h, cover, top_bars, bot_bars):
         for x in xs:
             r = (db/10)/2 if db>0 else 0.5
             fig.add_shape(type="circle", x0=x-r, y0=y_pos-r, x1=x+r, y1=y_pos+r, fillcolor="#C62828", line_color="black")
+        
+        # Label Top
+        fig.add_annotation(x=b/2, y=y_pos-r-2, text=f"<b>{top_bars}</b> (Top)", showarrow=False, font=dict(color="#C62828", size=12))
 
-    fig.update_xaxes(visible=False, range=[-2, b+2])
-    fig.update_yaxes(visible=False, range=[-2, h+2], scaleanchor="x", scaleratio=1)
+    fig.update_xaxes(visible=False, range=[-5, b+5])
+    fig.update_yaxes(visible=False, range=[-5, h+5], scaleanchor="x", scaleratio=1)
     fig.update_layout(width=250, height=300, margin=dict(l=10, r=10, t=10, b=10), 
                       paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
@@ -146,6 +162,10 @@ def render_longitudinal_view(spans, supports, design_data):
     
     fig.add_shape(type="rect", x0=0, y0=0, x1=total_len, y1=10, line=dict(color="black", width=2), fillcolor="#FAFAFA", layer="below")
     
+    # REQ 4: Vertical Grid Lines here too
+    for x in cum_len:
+        fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
+        
     for i, x in enumerate(cum_len):
         if supports.iloc[i]['type'] != "None":
             fig.add_shape(type="path", path=f"M {x} 0 L {x-0.25} -1.5 L {x+0.25} -1.5 Z", fillcolor="#B0BEC5", line_color="black")
@@ -174,7 +194,7 @@ def render_longitudinal_view(spans, supports, design_data):
     fig.update_xaxes(visible=False)
     fig.update_yaxes(visible=False, range=[-2, 12])
     fig.update_layout(height=250, title="<b>Longitudinal Reinforcement Profile</b>", margin=dict(l=20, r=20, t=40, b=10), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="long_profile")
 
 def render_design_results(df, params, spans, supports):
     st.markdown("### 4️⃣ Structural Design Results")
@@ -199,8 +219,6 @@ def render_design_results(df, params, spans, supports):
         # Calculate
         des_pos = rc_design.calculate_flexure_sdm(m_pos, "Midspan (+)", params)
         des_neg = rc_design.calculate_flexure_sdm(m_neg, "Support (-)", params)
-        
-        # Unpack 4 values from updated rc_design
         v_act, v_cap, stir_txt, v_log = rc_design.calculate_shear_capacity(v_u, params)
         
         span_data.append({'bot_bars': des_pos['Bars'], 'top_bars': des_neg['Bars'], 'stirrups': stir_txt})
@@ -209,24 +227,23 @@ def render_design_results(df, params, spans, supports):
             c_main, c_det = st.columns([1, 1.5])
             
             with c_main:
-                st.subheader("Cross Section")
-                # FIXED: Added unique key for loop generated charts
+                st.subheader("Cross Section Design")
                 st.plotly_chart(
                     render_combined_section(params['b'], params['h'], params['cv'], des_neg['Bars'], des_pos['Bars']), 
                     use_container_width=True, 
                     key=f"sect_chart_{i}"
                 )
                 
-                st.info(f"**Stirrups:** {stir_txt}")
-                if v_act > v_cap: st.error("Shear Failed")
+                st.success(f"**Stirrups:** {stir_txt}")
+                if v_act > v_cap: st.error("❌ Shear Capacity Failed!")
 
             with c_det:
-                st.subheader("Detailed Calculations")
+                st.subheader("📝 Calculation Report")
                 with st.expander("Top Reinforcement (-M)", expanded=False):
                     for line in des_neg['Log']: st.markdown(line)
                 with st.expander("Bottom Reinforcement (+M)", expanded=False):
                     for line in des_pos['Log']: st.markdown(line)
-                with st.expander("Shear Design", expanded=False):
+                with st.expander("Shear Design (Stirrups)", expanded=False):
                     for line in v_log: st.markdown(line)
 
     st.markdown("---")
