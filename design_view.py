@@ -9,21 +9,17 @@ from plotly.subplots import make_subplots
 # ==========================================
 def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", unit_len="m"):
     
-    # --- Data Sanitization (ป้องกัน Error Ambiguous Truth Value) ---
-    # แปลง spans เป็น list เสมอ เพื่อให้เช็ค if spans: ได้ปลอดภัย
+    # --- Data Sanitization ---
     if isinstance(spans, (pd.DataFrame, pd.Series)):
         spans = spans.values.flatten().tolist()
     elif spans is None:
         spans = []
         
-    # แปลง loads ให้จัดการง่าย (แปลงเป็น list of dicts ถ้าจำเป็น)
     clean_loads = []
     if loads is not None:
-        # ถ้า loads เป็น DataFrame
         if isinstance(loads, pd.DataFrame):
              loads = loads.to_dict('records')
         
-        # วนลูปเก็บค่าที่ปลอดภัย
         if len(loads) > 0:
             for l in loads:
                 if isinstance(l, dict):
@@ -64,7 +60,6 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     else:
         st.info("No loads applied yet.")
 
-    # ถ้า df (Result) ไม่มีข้อมูล ให้จบการทำงานส่วนกราฟ
     if df is None or (isinstance(df, pd.DataFrame) and df.empty): 
         return
 
@@ -72,7 +67,6 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     st.markdown("### 📊 Structural Analysis Diagrams")
 
     # --- 2. PREPARE PLOTTING DATA ---
-    # แปลง spans เป็น float list เพื่อการคำนวณ
     try:
         spans_val = [float(s) for s in spans]
     except:
@@ -81,7 +75,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     total_len = sum(spans_val)
     cum_spans = [0] + list(np.cumsum(spans_val))
     
-    # Key Points
+    # Key Points for Grid Lines
     key_points = set()
     for x in cum_spans: key_points.add(round(x, 3))
     for l in clean_loads:
@@ -100,96 +94,157 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             f"<b>Bending Moment Diagram (BMD)</b>", 
             f"<b>Deflection (δ)</b>"
         ),
-        row_heights=[0.15, 0.28, 0.28, 0.29]
+        row_heights=[0.20, 0.26, 0.26, 0.28] # ปรับความสูง Row 1 ให้มีที่หายใจสำหรับ Load
     )
 
-    # --- ROW 1: FBD ---
-    fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=4), hoverinfo='skip'), row=1, col=1)
+    # ==========================================
+    # ROW 1: STRUCTURE (FBD) - จัดระเบียบใหม่
+    # ==========================================
     
-    # Check Support DataFrame
+    # 1.1 Support Preparation
     if isinstance(sup_df, list): sup_df = pd.DataFrame(sup_df)
-    
     sup_map = {}
     if sup_df is not None and not sup_df.empty and 'id' in sup_df.columns:
         sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
 
+    # 1.2 Draw Nodes & Supports (ย้ายลงมาใต้เส้น)
     for i, x in enumerate(cum_spans):
-        # Node Labels
+        # Node Labels (อยู่เหนือคานนิดหน่อย ไม่ทับ Load)
         fig.add_annotation(
-            x=x, y=0.35, text=f"Node {i+1}", showarrow=False,
-            font=dict(size=10, color="gray"), row=1, col=1
+            x=x, y=0, 
+            ax=0, ay=-15, # Offset text up relative to point
+            text=f"Node {i+1}", showarrow=False,
+            font=dict(size=9, color="gray"), row=1, col=1
         )
+        
         if i in sup_map:
             stype = sup_map[i]
+            # --- Support Logic: Drawing UNDER the beam ---
             if stype == 'Fixed':
-                fig.add_shape(type="line", x0=x, y0=-0.25, x1=x, y1=0.25, line=dict(width=5, color='black'), row=1, col=1)
-            else:
-                sym = 'triangle-up' if stype == 'Pin' else 'circle'
-                fig.add_trace(go.Scatter(
-                    x=[x], y=[0], 
-                    mode='markers', 
-                    marker=dict(symbol=sym, size=14, color='white', line=dict(color='black', width=2)), 
-                    name=stype, hoverinfo='name'
-                ), row=1, col=1)
-                if stype == 'Roller':
-                    fig.add_shape(type="line", x0=x-0.1, y0=-0.08, x1=x+0.1, y1=-0.08, line=dict(width=2, color='black'), row=1, col=1)
+                # ขีดตั้งฉากลงมา แล้วขีดนอน
+                fig.add_shape(type="line", x0=x, y0=0, x1=x, y1=-0.3, line=dict(width=4, color='black'), row=1, col=1)
+                fig.add_shape(type="line", x0=x-0.15, y0=-0.3, x1=x+0.15, y1=-0.3, line=dict(width=4, color='black'), row=1, col=1)
+                # ขีดแรเงา (Hatch)
+                for h in np.linspace(x-0.15, x+0.15, 5):
+                     fig.add_shape(type="line", x0=h, y0=-0.3, x1=h-0.05, y1=-0.4, line=dict(width=1, color='black'), row=1, col=1)
 
-    # Draw Loads
+            elif stype == 'Pin':
+                # สามเหลี่ยมใต้คาน
+                fig.add_trace(go.Scatter(
+                    x=[x], y=[-0.15], # ขยับลงมา -0.15
+                    mode='markers', 
+                    marker=dict(symbol='triangle-up', size=18, color='white', line=dict(color='black', width=2)), 
+                    name=stype, hoverinfo='name', showlegend=False
+                ), row=1, col=1)
+                # พื้นรอง
+                fig.add_shape(type="line", x0=x-0.2, y0=-0.25, x1=x+0.2, y1=-0.25, line=dict(width=2, color='black'), row=1, col=1)
+
+            elif stype == 'Roller':
+                # วงกลมใต้คาน
+                fig.add_trace(go.Scatter(
+                    x=[x], y=[-0.15], # ขยับลงมา
+                    mode='markers', 
+                    marker=dict(symbol='circle', size=18, color='white', line=dict(color='black', width=2)), 
+                    name=stype, hoverinfo='name', showlegend=False
+                ), row=1, col=1)
+                # พื้นรอง + เส้นล่าง
+                fig.add_shape(type="line", x0=x-0.2, y0=-0.30, x1=x+0.2, y1=-0.30, line=dict(width=2, color='black'), row=1, col=1)
+
+    # 1.3 Beam Line (วาดทับ Support จะได้สวย)
+    fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=5), hoverinfo='skip', showlegend=False), row=1, col=1)
+
+    # 1.4 Loads Drawing (แก้เรื่อง Text ซ้อนกัน)
     for l in clean_loads:
         x_abs = cum_spans[l['span_idx']] + l['x']
         mag = l['mag']
         l_type = l['type']
         
+        # --- Text Position Logic ---
+        # Uniform Load Text @ y=0.4
+        # Point Load Text @ y=0.7 (สูงกว่า เพื่อหลบกัน)
+        
         if l_type == 'P':
-            fig.add_annotation(x=x_abs, y=0, ax=0, ay=-40, arrowhead=2, arrowwidth=2, arrowcolor='red', text=f"P={mag}", font=dict(color='red', size=10), row=1, col=1)
+            # Arrow
+            fig.add_annotation(
+                x=x_abs, y=0, 
+                ax=0, ay=-50, # หางลูกศรยาวขึ้น
+                arrowhead=2, arrowwidth=2, arrowcolor='#E74C3C', 
+                text=f"P={mag}", 
+                font=dict(color='#E74C3C', size=11, family="Arial Black"),
+                yshift=10, # ยก Text หนีปลายลูกศร
+                row=1, col=1
+            )
         elif l_type == 'U':
             xs = cum_spans[l['span_idx']]
             xe = cum_spans[l['span_idx']+1]
-            fig.add_shape(type="rect", x0=xs, x1=xe, y0=0.05, y1=0.15, fillcolor="red", opacity=0.15, line_width=0, row=1, col=1)
-            fig.add_annotation(x=(xs+xe)/2, y=0.2, text=f"w={mag}", showarrow=False, font=dict(color="red", size=10), row=1, col=1)
+            # Rect visual
+            fig.add_shape(type="rect", x0=xs, x1=xe, y0=0.05, y1=0.25, fillcolor="#E74C3C", opacity=0.15, line_width=0, row=1, col=1)
+            fig.add_shape(type="line", x0=xs, y0=0.25, x1=xe, y1=0.25, line=dict(color="#E74C3C", width=2), row=1, col=1)
+            # Label ตรงกลาง Span แต่ต่ำกว่า P Load
+            fig.add_annotation(
+                x=(xs+xe)/2, y=0.25, 
+                text=f"w={mag}", showarrow=False, 
+                yshift=15,
+                font=dict(color="#C0392B", size=11), 
+                row=1, col=1
+            )
         elif l_type == 'M':
-            fig.add_annotation(x=x_abs, y=0, text=f"M={mag}", showarrow=True, arrowhead=1, ax=0, ay=-30, arrowcolor='purple', font=dict(size=10), row=1, col=1)
+            fig.add_annotation(x=x_abs, y=0, text=f"M={mag}", showarrow=True, arrowhead=1, ax=0, ay=-40, arrowcolor='purple', font=dict(size=10), row=1, col=1)
 
-    # --- Helper: Eng Labels ---
+    # ==========================================
+    # HELPER: Eng Labels (Clean Box Style)
+    # ==========================================
     def add_eng_labels(x_data, y_data, row_idx, color_code, unit_suffix):
-        # Force conversion to numpy array of floats
         y_arr = np.array(y_data, dtype=float)
         x_arr = np.array(x_data, dtype=float)
-        
         if len(y_arr) == 0: return
 
         max_idx = np.argmax(y_arr)
         min_idx = np.argmin(y_arr)
         
+        # Style: Clean Box with Border
         style = dict(
-            showarrow=False,
-            font=dict(color=color_code, size=11),
-            bgcolor="rgba(255,255,255,0.9)",
-            bordercolor=color_code, borderwidth=1, borderpad=3
+            showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
+            ax=0, ay=-30, # Default shift up
+            font=dict(color=color_code, size=10),
+            bgcolor="rgba(255,255,255,0.95)", # Opaque background
+            bordercolor=color_code, borderwidth=1, borderpad=4
         )
 
         def plot_lbl(val, x_pos, is_top):
             lbl = "Max" if is_top else "Min"
             txt = f"<b>{lbl}:</b> {val:.2f} {unit_suffix}<br>@ {x_pos:.2f}m"
-            shift = 25 if is_top else -25
-            fig.add_annotation(x=x_pos, y=val, text=txt, yshift=shift, row=row_idx, col=1, **style)
+            
+            # Smart positioning: ถ้าค่าเป็นบวก ชี้จากบนลงล่าง, ถ้าลบ ชี้จากล่างขึ้นบน
+            ay_val = -30 if val >= 0 else 30
+            
+            fig.add_annotation(
+                x=x_pos, y=val, 
+                text=txt, 
+                ax=0, ay=ay_val,
+                row=row_idx, col=1, 
+                **style
+            )
 
         if abs(y_arr[max_idx]) > 1e-4:
             plot_lbl(y_arr[max_idx], x_arr[max_idx], True)
         if abs(y_arr[min_idx]) > 1e-4 and abs(x_arr[max_idx] - x_arr[min_idx]) > 0.05:
             plot_lbl(y_arr[min_idx], x_arr[min_idx], False)
 
-    # --- ROW 2: Shear ---
+    # ==========================================
+    # ROWS 2-4: GRAPHS
+    # ==========================================
+    # Shear
     c_shear = '#E67E22'
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color=c_shear, width=2), name="Shear"), row=2, col=1)
     add_eng_labels(df['x'], df['shear'], 2, c_shear, unit_force)
 
-    # --- ROW 3: Moment ---
+    # Moment
     c_moment = '#2980B9'
     fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color=c_moment, width=2), name="Moment"), row=3, col=1)
     add_eng_labels(df['x'], df['moment'], 3, c_moment, f"{unit_force}-{unit_len}")
 
-    # --- ROW 4: Deflection ---
+    # Deflection
     c_defl = '#27AE60'
     fig.add_trace(go.Scatter(x=df['x'], y=df['deflection'], fill='tozeroy', line=dict(color=c_defl, width=2), name="Deflection"), row=4, col=1)
     
@@ -198,78 +253,80 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         d_val = float(df.iloc[abs_d_idx]['deflection'])
         d_x = float(df.iloc[abs_d_idx]['x'])
         if abs(d_val) > 1e-9:
-            fig.add_annotation(
+             fig.add_annotation(
                 x=d_x, y=d_val,
                 text=f"<b>Max:</b> {d_val:.4f} {unit_len}<br>@ {d_x:.2f}m",
-                showarrow=False,
-                yshift=25 if d_val > 0 else -25,
-                font=dict(color=c_defl, size=11),
-                bgcolor="rgba(255,255,255,0.9)",
-                bordercolor=c_defl, borderwidth=1, borderpad=3,
+                showarrow=True, arrowhead=2, ax=0, ay=30 if d_val < 0 else -30,
+                font=dict(color=c_defl, size=10),
+                bgcolor="rgba(255,255,255,0.95)",
+                bordercolor=c_defl, borderwidth=1, borderpad=4,
                 row=4, col=1
             )
 
-    # --- Layout ---
+    # ==========================================
+    # LAYOUT: CLEAN GRID & LINES
+    # ==========================================
+    
+    # Draw Vertical Grid Lines (Layer='below' สำคัญมาก เพื่อให้ไปอยู่ข้างหลังสุด)
+    # ใช้ add_vline ครั้งเดียว ใส่ row='all' เพื่อให้ทะลุทุกกราฟ
     for kp in sorted_keys:
-        fig.add_vline(x=kp, line_width=1, line_dash="dash", line_color="gray", opacity=0.4)
+        fig.add_vline(
+            x=kp, 
+            line_width=1, line_dash="dash", line_color="gray", opacity=0.5,
+            layer="below", # <<< Key change: ส่งไปอยู่ข้างหลัง
+            row="all", col=1
+        )
 
     fig.update_layout(
         height=1000, 
         showlegend=False,
-        template="simple_white",
-        margin=dict(l=60, r=20, t=40, b=50),
-        font=dict(family="Roboto, Arial", size=12)
+        template="plotly_white", # เปลี่ยนเป็น plotly_white จะสะอาดกว่า simple_white
+        margin=dict(l=60, r=30, t=40, b=50),
+        font=dict(family="Roboto, Arial", size=12),
+        hovermode="x unified"
     )
     
-    fig.update_yaxes(visible=False, row=1, col=1)
-    fig.update_yaxes(title_text=f"V ({unit_force})", row=2, col=1, showgrid=True, gridcolor='#EEE')
-    fig.update_yaxes(title_text=f"M ({unit_force}-{unit_len})", row=3, col=1, showgrid=True, gridcolor='#EEE')
-    fig.update_yaxes(title_text=f"δ ({unit_len})", row=4, col=1, showgrid=True, gridcolor='#EEE')
-    fig.update_xaxes(title_text=f"Distance ({unit_len})", row=4, col=1, showgrid=True, gridcolor='#EEE')
+    # Hide Y-axis for FBD
+    fig.update_yaxes(visible=False, range=[-0.6, 0.8], row=1, col=1) # Set fixed range for FBD visuals
+    
+    # Add Grid for other plots
+    for r, title in zip([2,3,4], [f"V ({unit_force})", f"M ({unit_force}-{unit_len})", f"δ ({unit_len})"]):
+        fig.update_yaxes(title_text=title, row=r, col=1, showgrid=True, gridcolor='#F0F0F0', zeroline=True, zerolinecolor='#999')
+        fig.update_xaxes(showgrid=True, gridcolor='#F0F0F0', row=r, col=1)
+
+    fig.update_xaxes(title_text=f"Distance ({unit_len})", row=4, col=1)
 
     st.plotly_chart(fig, use_container_width=True)
 
 
 # ==========================================
-# 2. FUNCTION: Render Result Tables (กู้คืนกลับมาแล้ว)
+# 2. FUNCTION: Render Result Tables
 # ==========================================
 def render_result_tables(df, reac, spans, unit_force="kg", unit_len="m"):
     st.markdown("### 📍 Support Reactions")
-    
     reac_data = []
     
-    # Validation: ตรวจสอบว่ามีข้อมูล reac และ spans หรือไม่
-    # ใช้ len() > 0 แทน if reac: เพื่อป้องกัน Ambiguous Error กรณีเป็น array
     if reac is not None and len(reac) > 0 and spans is not None:
-        
-        # ทำให้แน่ใจว่า spans เป็น list
         if isinstance(spans, (pd.DataFrame, pd.Series)):
              spans_list = spans.values.flatten().tolist()
         else:
              spans_list = spans
-             
         num_nodes = len(spans_list) + 1
         
         for i in range(num_nodes):
             try:
-                # ดึงค่า Ry, Mz
                 idx_ry = 2 * i
                 idx_mz = 2 * i + 1
-                
-                # Check bound
                 if idx_mz < len(reac):
                     ry = float(reac[idx_ry])
                     mz = float(reac[idx_mz])
-                    
-                    # กรองแสดงเฉพาะค่าที่มีนัยยะสำคัญ
                     if abs(ry) > 1e-4 or abs(mz) > 1e-4:
                         reac_data.append({
                             "Node": i+1, 
                             f"Vertical (Ry) [{unit_force}]": f"{ry:.2f}", 
                             f"Moment (Mz) [{unit_force}-{unit_len}]": f"{mz:.2f}"
                         })
-            except (IndexError, ValueError, TypeError):
-                continue
+            except: continue
         
         if len(reac_data) > 0:
             st.table(pd.DataFrame(reac_data))
