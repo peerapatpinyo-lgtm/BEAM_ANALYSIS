@@ -37,22 +37,52 @@ class BeamSolver:
             span_loads = [l for l in self.loads if int(l['span_idx']) == i]
             
             for load in span_loads:
-                # Map keys from input_handler (mag -> P/w)
                 val = load['mag']
-                
                 if load['type'] == 'P':
                     a = load['x']; b = L - a; P = val
                     fem[0] += P * b**2 * (3*a + b) / L**3
                     fem[1] += P * a * b**2 / L**2
                     fem[2] += P * a**2 * (a + 3*b) / L**3
                     fem[3] -= P * a**2 * b / L**2
+                    
                 elif load['type'] == 'U':
                     w = val
                     fem[0] += w * L / 2
                     fem[1] += w * L**2 / 12
                     fem[2] += w * L / 2
                     fem[3] -= w * L**2 / 12
-            
+                    
+                elif load['type'] == 'M':
+                    # Moment Load (Concentrated Moment)
+                    # Input Convention: Positive = Clockwise (CW)
+                    # FEM Formulas for CW Moment 'M' at distance 'a':
+                    # M_L = M * b * (2a - b) / L^2
+                    # M_R = M * a * (2b - a) / L^2
+                    # Vertical forces balance the moments
+                    
+                    M_app = val
+                    a = load['x']
+                    b = L - a
+                    
+                    # Nodal Moments (Reaction Moments at fixed ends)
+                    m_fix_left = M_app * b * (2*a - b) / L**2
+                    m_fix_right = M_app * a * (2*b - a) / L**2
+                    
+                    # Vertical reactions to balance these moments + applied moment
+                    # Sum M_B = 0 -> R_A * L + M_fix_left + M_fix_right - M_app (careful with signs)
+                    # Let's use standard coefficients for nodal forces vector directly:
+                    
+                    # Force Vector {Fy1, M1, Fy2, M2} for CW Moment M at a:
+                    # Fy1 = -6*M*a*b / L^3
+                    # M1  = b*(2*a - b)*M / L^2
+                    # Fy2 = 6*M*a*b / L^3
+                    # M2  = a*(2*b - a)*M / L^2
+                    
+                    fem[0] += -6 * M_app * a * b / L**3
+                    fem[1] += M_app * b * (2*a - b) / L**2
+                    fem[2] += 6 * M_app * a * b / L**3
+                    fem[3] += M_app * a * (2*b - a) / L**2
+
             F_global[idx] -= fem 
 
         # 2. Boundary Conditions
@@ -74,20 +104,18 @@ class BeamSolver:
             except np.linalg.LinAlgError:
                 return pd.DataFrame(), np.zeros(n_dof)
 
-        # 4. Post-Processing with Critical Points (Fix Slanted Graph)
+        # 4. Post-Processing
         results = []
         
         for i, L in enumerate(self.spans):
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             u_el = U_global[idx]
             
-            # Recover Local Start Forces
+            # Recover Local Start Forces (need to subtract FEM again)
             fem_local = np.zeros(4)
             span_loads = [l for l in self.loads if int(l['span_idx']) == i]
             
-            # Create Evaluation Points (Mesh)
-            # Add specific points where loads occur to prevent "slanted" shear graphs
-            eval_points = set(np.linspace(0, L, 100)) # Base resolution
+            eval_points = set(np.linspace(0, L, 100))
             
             for load in span_loads:
                 val = load['mag']
@@ -96,53 +124,71 @@ class BeamSolver:
                     fem_local[0] += P*b**2*(3*a+b)/L**3; fem_local[1] += P*a*b**2/L**2
                     fem_local[2] += P*a**2*(a+3*b)/L**3; fem_local[3] -= P*a**2*b/L**2
                     
-                    # Add Critical Points for Graphing (Before, At, After)
-                    eval_points.add(a)
-                    if a > 0: eval_points.add(a - 1e-6)
-                    if a < L: eval_points.add(a + 1e-6)
+                    eval_points.add(a); 
+                    if a>0: eval_points.add(a-1e-6)
+                    if a<L: eval_points.add(a+1e-6)
                     
                 elif load['type'] == 'U':
                     w = val
                     fem_local[0] += w*L/2; fem_local[1] += w*L**2/12
                     fem_local[2] += w*L/2; fem_local[3] -= w*L**2/12
+                    
+                elif load['type'] == 'M':
+                    a = load['x']; b = L - a; M_app = val
+                    fem_local[0] += -6 * M_app * a * b / L**3
+                    fem_local[1] += M_app * b * (2*a - b) / L**2
+                    fem_local[2] += 6 * M_app * a * b / L**3
+                    fem_local[3] += M_app * a * (2*b - a) / L**2
+                    
+                    # Critical points for Moment Load (Jump in BMD)
+                    eval_points.add(a)
+                    if a>0: eval_points.add(a-1e-6)
+                    if a<L: eval_points.add(a+1e-6)
             
-            # Sort points
             x_eval = sorted(list(eval_points))
             
-            # Calculate Start Forces
             k_el = (self.E * self.I / L**3) * np.array([
                 [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
                 [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
             ])
             f_local = k_el @ u_el + fem_local
             V_start = f_local[0]
-            M_start = f_local[1]
+            M_start = f_local[1] # CCW is Positive in solver vector, but usually we plot Sagging as +
 
-            # Calculate V, M along beam
             M_vals = []
             V_vals = []
             
             for x in x_eval:
                 V_x = V_start
+                # Initial Moment at x from start forces
+                # Note: M_start from matrix is Nodal Moment (CCW+). 
+                # Internal Moment convention: Sagging +. 
+                # If we cut at x: M_internal = -M_node + V_node*x ...
                 M_x = -M_start + V_start * x
                 
                 for load in span_loads:
                     val = load['mag']
                     if load['type'] == 'P':
-                        # Use a tiny tolerance for step function
                         if x >= load['x'] + 1e-9: 
                             V_x -= val
                             M_x -= val * (x - load['x'])
                     elif load['type'] == 'U':
                         if x > 0:
-                            w = val
                             d = x
-                            V_x -= w * d
-                            M_x -= (w * d) * (d / 2)
+                            V_x -= val * d
+                            M_x -= (val * d) * (d / 2)
+                    elif load['type'] == 'M':
+                        # Applied Moment M (CW)
+                        # Equilibrium: M_internal + M_app (if x>a) + ... = 0
+                        # Thus M_internal reduces by M_app? 
+                        # Standard Jump: CW Moment creates Positive Jump in BMD (Sagging increases)
+                        if x >= load['x'] + 1e-9:
+                            M_x += val # Add CW moment value creates upward jump
+                            
                 M_vals.append(M_x)
                 V_vals.append(V_x)
             
-            # Deflection (Double Integration)
+            # Deflection
             M_vals = np.array(M_vals)
             curv = M_vals / (self.E * self.I)
             
@@ -151,8 +197,6 @@ class BeamSolver:
             else:
                 trapz = integrate.cumtrapz
                 
-            # Note: Integration needs handling of duplicate x-coords (steps), 
-            # but trapezoidal rule handles zero-width intervals safely (area=0)
             theta_vals = u_el[1] + trapz(curv, x_eval, initial=0)
             deflection_vals = u_el[0] + trapz(theta_vals, x_eval, initial=0)
             
