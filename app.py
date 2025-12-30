@@ -4,61 +4,50 @@ import input_handler
 import solver
 import design_view
 
-def main():
-    st.set_page_config(page_title="Beam Analysis", layout="wide")
-    
-    # 1. Render Sidebar & Get Parameters (Includes E, I)
-    params = input_handler.render_sidebar()
-    
-    col_input, col_result = st.columns([1, 2])
-    
-    with col_input:
-        # 2. Render Model Inputs
-        n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
-        
-        # Save to session state to persist during interaction
-        st.session_state['sup_df'] = sup_df
-        
-        # 3. Render Loads
-        loads = input_handler.render_loads(n_spans, spans, params)
-        st.session_state['loads'] = loads
+# Page Config
+st.set_page_config(page_title="Beam Analysis Pro", layout="wide", page_icon="🏗️")
 
-    with col_result:
+def main():
+    st.title("🏗️ Structural Beam Analysis Professional")
+    st.markdown("---")
+
+    # 1. Sidebar Settings
+    params = input_handler.render_sidebar()
+
+    # 2. Main Inputs (Model)
+    # รับค่า sup_df ออกมาด้วย
+    n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
+    
+    st.markdown("---")
+
+    # 3. Loads Input
+    # *** แก้ไขจุดนี้: ส่ง sup_df เข้าไปให้ฟังก์ชันด้วย ***
+    loads = input_handler.render_loads(n_spans, spans, params, sup_df)
+
+    st.markdown("---")
+
+    # 4. Calculation & Solver
+    if st.button("🚀 Run Analysis", type="primary"):
         if not stable:
-            st.error("Structure is unstable! Please check supports.")
-        else:
-            if st.button("🚀 Analyze Beam", type="primary", use_container_width=True):
-                # 4. SOLVE (Pass E and I here!)
-                beam_solver = solver.BeamSolver(
-                    spans, 
-                    st.session_state['sup_df'], 
-                    st.session_state['loads'],
-                    E=params['E'], # รับค่าจาก input_handler
-                    I=params['I']  # รับค่าจาก input_handler
-                )
-                
-                df_res, reac = beam_solver.solve()
-                
-                # Save results
-                st.session_state['result_df'] = df_res
-                st.session_state['reactions'] = reac
-                
-            # 5. Display Results
-            if 'result_df' in st.session_state and not st.session_state['result_df'].empty:
-                design_view.draw_interactive_diagrams(
-                    st.session_state['result_df'], 
-                    spans, 
-                    st.session_state['sup_df'], 
-                    st.session_state['loads'], 
-                    params['u_force'], 
-                    params['u_len']
-                )
-                
-                design_view.render_result_tables(
-                    st.session_state['result_df'],
-                    st.session_state['reactions'],
-                    spans
-                )
+            st.error("❌ Structure is Unstable! Please add more supports (e.g., at least 2 Pins/Rollers or 1 Fixed).")
+            return
+            
+        # Initialize Solver
+        beam_solver = solver.BeamSolver(spans, sup_df, loads, E=params['E'], I=params['I'])
+        
+        # Solve
+        try:
+            df_results, reactions = beam_solver.solve()
+            
+            # 5. Visualization
+            design_view.draw_interactive_diagrams(df_results, spans, sup_df, loads, params['u_force'], params['u_len'])
+            
+            # 6. Result Tables
+            design_view.render_result_tables(df_results, reactions, spans)
+            
+        except Exception as e:
+            st.error(f"Analysis Failed: {str(e)}")
+            st.code(e)
 
 if __name__ == "__main__":
     main()
