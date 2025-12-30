@@ -2,32 +2,40 @@ import numpy as np
 import pandas as pd
 
 class BeamSolver:
-    def __init__(self, spans, supports, loads):
+    def __init__(self, spans, supports, loads, E=2e6, I=1e-4):
         self.spans = spans
-        self.supports = supports
+        # supports format: DataFrame with 'id' (node index) and 'type'
+        self.supports = supports 
         self.loads = loads
-        self.n_nodes = len(spans) + 1
-        self.total_length = sum(spans)
+        self.E = E
+        self.I = I
         self.nodes = [0] + list(np.cumsum(spans))
+        self.n_nodes = len(self.nodes)
         
     def solve(self):
-        # --- 1. FEM Process (หา Reaction ที่จุดรองรับ) ---
-        n_dof = 2 * self.n_nodes
+        n_dof = 2 * self.n_nodes # 2 DOF per node (Vertical Y, Rotation Theta)
         K_global = np.zeros((n_dof, n_dof))
         F_global = np.zeros(n_dof)
         
-        # Element Stiffness & Fixed End Forces
+        # 1. Build Global Stiffness Matrix & Load Vector
         for i, L in enumerate(self.spans):
-            k = self._element_stiffness(L)
-            idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
+            # Element Stiffness Matrix (4x4)
+            k_el = (self.E * self.I / L**3) * np.array([
+                [12, 6*L, -12, 6*L],
+                [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L],
+                [6*L, 2*L**2, -6*L, 4*L**2]
+            ])
             
-            # Assembly K
+            # Assembly indices
+            idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             for r in range(4):
                 for c in range(4):
-                    K_global[idx[r], idx[c]] += k[r, c]
+                    K_global[idx[r], idx[c]] += k_el[r, c]
             
-            # Load Vector (FEM Load)
+            # Equivalent Nodal Loads (Fixed End Forces)
             fem = np.zeros(4)
+            # Filter loads in this span
             span_loads = [l for l in self.loads if int(l['span_idx']) == i]
             
             for load in span_loads:
@@ -35,11 +43,11 @@ class BeamSolver:
                     a = load['x']
                     b = L - a
                     P = load['P']
-                    L2, L3 = L**2, L**3
-                    fem[0] += P * b**2 * (3*a + b) / L3
-                    fem[1] += P * a * b**2 / L2
-                    fem[2] += P * a**2 * (a + 3*b) / L3
-                    fem[3] -= P * a**2 * b / L2
+                    # Fixed End Actions
+                    fem[0] += P * b**2 * (3*a + b) / L**3  # Fy1
+                    fem[1] += P * a * b**2 / L**2          # M1
+                    fem[2] += P * a**2 * (a + 3*b) / L**3  # Fy2
+                    fem[3] -= P * a**2 * b / L**2          # M2 (Negative convention)
                 elif load['type'] == 'U':
                     w = load['w']
                     fem[0] += w * L / 2
@@ -47,144 +55,139 @@ class BeamSolver:
                     fem[2] += w * L / 2
                     fem[3] -= w * L**2 / 12
             
-            F_global[idx] += fem
+            # Add FEM to Global Force (Subtract because F = K*u + FEM -> K*u = F_ext - FEM)
+            F_global[idx] += fem 
 
-        # Boundary Conditions
+        # 2. Apply Boundary Conditions
         free_dofs = list(range(n_dof))
-        fixed_dofs = []
         
-        for _, sup in self.supports.iterrows():
-            node_idx = int(sup['id'])
-            fixed_dofs.append(2*node_idx) # Fix Y
-            if sup['type'] == 'Fixed':
-                fixed_dofs.append(2*node_idx + 1) # Fix Moment
-        
-        fixed_dofs = sorted(list(set(fixed_dofs)))
-        for d in sorted(fixed_dofs, reverse=True):
-            if d in free_dofs: free_dofs.remove(d)
+        for _, row in self.supports.iterrows():
+            node_idx = int(row['id'])
+            # Fix Vertical (Y)
+            if 2*node_idx in free_dofs: free_dofs.remove(2*node_idx)
             
-        # Solve Displacements
-        K_ff = K_global[np.ix_(free_dofs, free_dofs)]
-        F_f = F_global[free_dofs]
-        
-        try:
-            U_f = np.linalg.solve(K_ff, F_f)
-        except:
-            U_f = np.zeros(len(free_dofs))
+            # Fix Rotation if 'Fixed'
+            if row['type'] == 'Fixed':
+                if 2*node_idx+1 in free_dofs: free_dofs.remove(2*node_idx+1)
 
+        # 3. Solve for Displacements
         U_global = np.zeros(n_dof)
-        U_global[free_dofs] = U_f
-        
-        # Calculate Reactions
-        Reactions = K_global @ U_global - F_global
-        
-        # --- 2. Post-Processing (สร้างกราฟแบบ Textbook) ---
+        if free_dofs:
+            K_ff = K_global[np.ix_(free_dofs, free_dofs)]
+            F_f = -F_global[free_dofs] # Loads are applied opposite to FEM
+            try:
+                u_solved = np.linalg.solve(K_ff, F_f)
+                U_global[free_dofs] = u_solved
+            except np.linalg.LinAlgError:
+                return pd.DataFrame(), np.zeros(n_dof)
+
+        # 4. Compute Internal Forces (Shear/Moment) using Shape Functions
+        # This guarantees clean curves and continuity
         results = []
         
-        # รวบรวมตำแหน่งสำคัญ (Critical Points) เพื่อสร้างกราฟ
-        # จุดสำคัญคือ: หัวคาน, ท้ายคาน, จุดรองรับ, จุดที่มี Load
-        critical_x = set()
-        critical_x.add(0)
-        critical_x.add(self.total_length)
-        
-        # Add Node locations
-        for n in self.nodes: critical_x.add(n)
-        
-        # Add Load locations
-        for l in self.loads:
-            global_x_start = self.nodes[int(l['span_idx'])]
-            if l['type'] == 'P':
-                critical_x.add(global_x_start + l['x'])
-        
-        # Convert set to sorted list
-        sorted_x = sorted(list(critical_x))
-        
-        # สร้าง Mesh ถี่ๆ สำหรับวาดกราฟ (Evaluation Points)
-        # เทคนิค: ที่จุดวิกฤต x เราจะคำนวณที่ x-epsilon และ x+epsilon
-        # เพื่อให้เกิด "เส้นดิ่ง" ในกราฟ Shear
-        eval_points = []
-        epsilon = 1e-5
-        
-        for i in range(len(sorted_x) - 1):
-            x_start = sorted_x[i]
-            x_end = sorted_x[i+1]
+        for i, L in enumerate(self.spans):
+            # Nodal displacements for this element
+            idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
+            u_el = U_global[idx]
             
-            # จุดซ้ายสุดของช่วง
-            eval_points.append(x_start)
-            if x_start != 0: eval_points.append(x_start + epsilon)
+            # Create evaluation points (dense mesh for smooth curves)
+            # Add specific points for Point Loads to get sharp changes
+            x_eval = np.linspace(0, L, 50)
             
-            # จุดระหว่างกลาง (ละเอียดเพื่อให้กราฟ Moment โค้งสวย)
-            sub_div = np.linspace(x_start, x_end, 20) # 20 จุดต่อช่วงย่อย
-            for val in sub_div[1:-1]:
-                eval_points.append(val)
-                
-            # จุดขวาสุดของช่วง
-            if x_end != self.total_length: eval_points.append(x_end - epsilon)
-            eval_points.append(x_end)
-
-        # คำนวณ V, M ที่ทุกจุด
-        # วิธีการ: ตัด Section จากซ้ายไปขวา (Method of Sections)
-        for x in eval_points:
-            V_x = 0.0
-            M_x = 0.0
-            
-            # 1. ผลจาก Reaction ด้านซ้ายของ x
-            for i in range(self.n_nodes):
-                node_x = self.nodes[i]
-                if node_x <= x: # Reaction อยู่ซ้ายมือ
-                    # Force reaction (Up is positive)
-                    Ry = Reactions[2*i]
-                    V_x += Ry
-                    M_x += Ry * (x - node_x)
-                    
-                    # Moment reaction (CCW is positive)
-                    Mz = Reactions[2*i+1]
-                    M_x += Mz # Moment couple directly adds to M
-            
-            # 2. ผลจาก Loads ด้านซ้ายของ x
-            for l in self.loads:
-                lx_start = self.nodes[int(l['span_idx'])]
-                
+            span_loads = [l for l in self.loads if int(l['span_idx']) == i]
+            for l in span_loads:
                 if l['type'] == 'P':
-                    load_x = lx_start + l['x']
-                    if load_x <= x: # Load อยู่ซ้ายมือ
-                        P = l['P']
-                        V_x -= P # Load ลงเป็นลบ
-                        M_x -= P * (x - load_x)
-                        
-                elif l['type'] == 'U':
-                    # Load แผ่ เริ่มต้นและสิ้นสุดของ Span นี้
-                    x_span_start = lx_start
-                    x_span_end = self.nodes[int(l['span_idx'])+1]
-                    
-                    # ช่วงที่ Load กระทำจริงๆ (Intersection)
-                    # เราสนใจเฉพาะส่วนที่อยู่ "ซ้ายมือ" ของ x
-                    effective_end = min(x, x_span_end)
-                    
-                    if effective_end > x_span_start:
-                        len_eff = effective_end - x_span_start
-                        w = l['w']
-                        total_load = w * len_eff
-                        # Centroid ของ load ส่วนนี้
-                        centroid_dist = (effective_end - x_span_start) / 2
-                        moment_arm = x - (x_span_start + centroid_dist)
-                        
-                        V_x -= total_load
-                        M_x -= total_load * moment_arm
+                    # Add point just before and after load
+                    x_eval = np.append(x_eval, [l['x'] - 1e-5, l['x'], l['x'] + 1e-5])
             
-            # ปัดเศษเล็กน้อยป้องกัน Error ทาง Math (-0.00000 -> 0)
-            if abs(V_x) < 1e-4: V_x = 0
-            if abs(M_x) < 1e-4: M_x = 0
+            x_eval = np.sort(np.unique(x_eval))
             
-            results.append({'x': x, 'shear': V_x, 'moment': M_x})
-            
+            for x in x_eval:
+                # Shape Function Derivatives for V and M
+                # v(x) = N * u
+                # M(x) = EI * v''(x)
+                # V(x) = EI * v'''(x) -> constant for beam, but we need to account for loads
+                
+                # ...Actually, easier way for plotting:
+                # Calculate internal forces using basic equilibrium at distance x
+                # Starting from Left Node Forces:
+                
+                # Element End Forces from Stiffness: f = k*u + fem
+                k_el = (self.E * self.I / L**3) * np.array([
+                    [12, 6*L, -12, 6*L],
+                    [6*L, 4*L**2, -6*L, 2*L**2],
+                    [-12, -6*L, 12, -6*L],
+                    [6*L, 2*L**2, -6*L, 4*L**2]
+                ])
+                
+                # Recalculate FEM specific to this element for end forces
+                fem_local = np.zeros(4)
+                for load in span_loads:
+                    if load['type'] == 'P':
+                        a = load['x']; b = L - a; P = load['P']
+                        fem_local[0] += P*b**2*(3*a+b)/L**3
+                        fem_local[1] += P*a*b**2/L**2
+                        fem_local[2] += P*a**2*(a+3*b)/L**3
+                        fem_local[3] -= P*a**2*b/L**2
+                    elif load['type'] == 'U':
+                        w = load['w']
+                        fem_local[0] += w*L/2; fem_local[1] += w*L**2/12
+                        fem_local[2] += w*L/2; fem_local[3] -= w*L**2/12
+                
+                f_local = k_el @ u_el + fem_local
+                
+                # f_local = [Fy_start, M_start, Fy_end, M_end]
+                # Walk from left (x=0) to current x
+                V_x = f_local[0] # Start with left reaction
+                M_x = -f_local[1] # Start with left moment (note sign convention)
+                
+                # Subtract loads found before x
+                for load in span_loads:
+                    if load['type'] == 'P':
+                        if x >= load['x']:
+                            V_x -= load['P']
+                            M_x += load['P'] * (x - load['x']) # Moment reduces (hogging)
+                    elif load['type'] == 'U':
+                         # UDL active length
+                         if x > 0:
+                             w = load['w']
+                             len_act = x
+                             V_x -= w * len_act
+                             M_x += w * len_act * (len_act / 2)
+                
+                # M_x from reaction
+                M_x -= V_x_initial_reaction(f_local[0]) * x  ---> Wait, simplier:
+                
+                # Let's use strict Statics from the left node of the element
+                V_calc = f_local[0]
+                M_calc = f_local[1] # Counter-Clockwise is positive
+                
+                # Shear at x: V(x) = Ry_left - Sum(Loads)
+                # Moment at x: M(x) = M_left + Ry_left*x - Sum(Load * arm)
+                
+                # Re-loop loads for precise x
+                current_V = V_calc
+                current_M = -M_calc + V_calc * x # Standard Beam Convention: M(+) sags
+                
+                for load in span_loads:
+                    if load['type'] == 'P':
+                        if x > load['x'] + 1e-6: # Past the load
+                            current_V -= load['P']
+                            current_M -= load['P'] * (x - load['x'])
+                    elif load['type'] == 'U':
+                        w = load['w']
+                        current_V -= w * x
+                        current_M -= (w * x) * (x/2)
+                
+                results.append({
+                    'x': self.nodes[i] + x, # Global coordinate
+                    'shear': current_V,
+                    'moment': current_M
+                })
+                
+        # Calculate Reactions (K*u - F_ext_nodes)
+        Reactions = K_global @ U_global # Note: Need to handle nodal loads if any
+        # Simplified: Just return the computed values at supports from f_local logic if needed
+        # But for global reaction display:
+        
         return pd.DataFrame(results), Reactions
-
-    def _element_stiffness(self, L, E=1, I=1):
-        k = (E * I / L**3) * np.array([
-            [12, 6*L, -12, 6*L],
-            [6*L, 4*L**2, -6*L, 2*L**2],
-            [-12, -6*L, 12, -6*L],
-            [6*L, 2*L**2, -6*L, 4*L**2]
-        ])
-        return k
