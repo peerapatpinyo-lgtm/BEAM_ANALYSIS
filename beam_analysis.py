@@ -1,147 +1,117 @@
 import numpy as np
 import pandas as pd
+from scipy import linalg
 
 class BeamAnalysisEngine:
-    def __init__(self, spans, supports, loads, E=2e6, I=1e-3):
+    def __init__(self, spans, supports, loads):
         self.spans = spans
         self.supports = supports
         self.loads = loads
-        self.E = E
-        self.I = I
-        self.nodes = [0] + list(np.cumsum(spans))
-        self.n_nodes = len(self.nodes)
-        self.dof = 2 * self.n_nodes 
-        
+        self.n_nodes = len(spans) + 1
+        self.cum_len = [0] + list(np.cumsum(spans))
+
     def solve(self):
-        # 1. Global Stiffness Matrix
-        K_global = np.zeros((self.dof, self.dof))
+        # 1. Mesh Creation
+        x_eval = []
+        for i, L in enumerate(self.spans):
+            x_start = self.cum_len[i]
+            pts = [0, L]
+            # Add load points to mesh
+            for l in self.loads:
+                if l['span_idx'] == i and l['type'] == 'P':
+                    pts.append(l['x'])
+            pts = sorted(list(set(pts)))
+            
+            for j in range(len(pts)-1):
+                seg = np.linspace(pts[j], pts[j+1], 20) # 20 points per segment
+                if j > 0: seg = seg[1:]
+                x_eval.extend(x_start + seg)
+        
+        x_eval = np.array(sorted(list(set(x_eval))))
+        
+        # 2. Stiffness Matrix Setup
+        NDOF = 2 * self.n_nodes
+        K_global = np.zeros((NDOF, NDOF))
+        F_global = np.zeros(NDOF)
+        
+        E = 2e10 
+        I = 1e-4 
         
         for i, L in enumerate(self.spans):
-            k = self.E * self.I / L**3
-            # Local K matrix
-            K_elem = np.array([
-                [12*k,      6*k*L,    -12*k,     6*k*L],
-                [6*k*L,     4*k*L**2, -6*k*L,    2*k*L**2],
-                [-12*k,    -6*k*L,     12*k,    -6*k*L],
-                [6*k*L,     2*k*L**2, -6*k*L,    4*k*L**2]
+            idx1, idx2 = 2*i, 2*(i+1)
+            k = (E*I/L**3) * np.array([
+                [12, 6*L, -12, 6*L],
+                [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L],
+                [6*L, 2*L**2, -6*L, 4*L**2]
             ])
+            K_global[idx1:idx1+4, idx1:idx1+4] += k
             
-            idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
-            for r in range(4):
-                for c in range(4):
-                    K_global[idx[r], idx[c]] += K_elem[r, c]
-
-        # 2. Force Vector (FEM)
-        F_global = np.zeros(self.dof)
-        
-        for l in self.loads:
-            span_idx = l['span_idx']
-            L = self.spans[span_idx]
-            idx_base = 2*span_idx
-            
-            if l['type'] == 'U':
-                w = l['w']
-                fem = np.array([-w*L/2, -w*L**2/12, -w*L/2, w*L**2/12])
-                F_global[idx_base:idx_base+4] += fem
-                
-            elif l['type'] == 'P':
-                P = l['P']; a = l['x']; b = L - a
-                r1 = (P*b**2*(3*a+b))/L**3
-                m1 = (P*a*b**2)/L**2
-                r2 = (P*a**2*(a+3*b))/L**3
-                m2 = -(P*a**2*b)/L**2
-                F_global[idx_base:idx_base+4] += np.array([-r1, -m1, -r2, -m2])
-
-        # 3. Apply Boundary Conditions
-        constrained_dof = []
-        for i, row in self.supports.iterrows():
-            stype = row['type']
-            node_idx = i
-            if stype in ["Pin", "Roller"]:
-                constrained_dof.append(2*node_idx) 
-            elif stype == "Fixed":
-                constrained_dof.append(2*node_idx)
-                constrained_dof.append(2*node_idx+1)
-        
-        # 4. Solve
-        free_dof = [i for i in range(self.dof) if i not in constrained_dof]
-        
-        if not free_dof:
-            return None, None # Unstable
-
-        K_reduced = K_global[np.ix_(free_dof, free_dof)]
-        F_reduced = F_global[free_dof]
-        
-        try:
-            D_free = np.linalg.solve(K_reduced, F_reduced)
-        except np.linalg.LinAlgError:
-            return None, None
-
-        D_total = np.zeros(self.dof)
-        D_total[free_dof] = D_free
-        
-        # 5. Post-Processing & Reactions
-        R_calc = np.dot(K_global, D_total) 
-        reactions = R_calc - F_global
-        
-        # Internal Forces Integration
-        curr_x = 0
-        all_x, all_v, all_m = [], [], []
-        points_per_span = 100 
-        
-        for i, L in enumerate(self.spans):
-            idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
-            d_local = D_total[idx]
-            
-            k = self.E * self.I / L**3
-            K_el = np.array([
-                [12*k,      6*k*L,    -12*k,     6*k*L],
-                [6*k*L,     4*k*L**2, -6*k*L,    2*k*L**2],
-                [-12*k,    -6*k*L,     12*k,    -6*k*L],
-                [6*k*L,     2*k*L**2, -6*k*L,    4*k*L**2]
-            ])
-            f_member = np.dot(K_el, d_local)
-            
-            # Add FEM back
-            fem_vec = np.zeros(4)
+            # Fixed End Moments (FEM)
+            fem = np.zeros(4)
             span_loads = [l for l in self.loads if l['span_idx'] == i]
-            
             for l in span_loads:
                 if l['type'] == 'U':
-                    w = l['w']
-                    fem_vec += np.array([w*L/2, w*L**2/12, w*L/2, -w*L**2/12])
+                    w = l['w']; fem[0]+=w*L/2; fem[2]+=w*L/2; fem[1]+=w*L**2/12; fem[3]-=w*L**2/12
                 elif l['type'] == 'P':
-                    P = l['P']; a = l['x']; b = L - a
-                    r1 = (P*b**2*(3*a+b))/L**3
-                    m1 = (P*a*b**2)/L**2
-                    r2 = (P*a**2*(a+3*b))/L**3
-                    m2 = -(P*a**2*b)/L**2
-                    fem_vec += np.array([r1, m1, r2, m2])
+                    P=l['P']; a=l['x']; b=L-a
+                    fem[0]+=P*b**2*(3*a+b)/L**3; fem[2]+=P*a**2*(a+3*b)/L**3
+                    fem[1]+=P*a*b**2/L**2; fem[3]-=P*a**2*b/L**2
+            F_global[idx1:idx1+4] += fem
+
+        # 3. Boundary Conditions
+        fixed_dofs = []
+        for i, row in self.supports.iterrows():
+            stype = row['type']
+            if stype in ['Pin', 'Roller']: fixed_dofs.append(2*i) # Fix Y
+            elif stype == 'Fixed': fixed_dofs.extend([2*i, 2*i+1]) # Fix Y, M
             
-            f_final = f_member + fem_vec
-            V_start, M_start = f_final[0], f_final[1]
+        active_dofs = [d for d in range(NDOF) if d not in fixed_dofs]
+        
+        if not active_dofs: return None, None # Error
+
+        K_aa = K_global[np.ix_(active_dofs, active_dofs)]
+        F_a = -F_global[active_dofs]
+        
+        try:
+            D_a = linalg.solve(K_aa, F_a)
+        except linalg.LinAlgError:
+            return None, None # Unstable
             
-            x_span = np.linspace(0, L, points_per_span)
+        D_total = np.zeros(NDOF)
+        D_total[active_dofs] = D_a
+        R_total = K_global @ D_total + F_global # Reactions
+        
+        # 4. Post-Process (Statics)
+        shear, moment = [], []
+        for x in x_eval:
+            V, M = 0, 0
+            # Reactions effect
+            for n_i in range(self.n_nodes):
+                xn = self.cum_len[n_i]
+                if xn < x:
+                    Ry, Rm = R_total[2*n_i], R_total[2*n_i+1]
+                    dist = x - xn
+                    if dist > 1e-5:
+                        V += Ry
+                        M += Ry*dist - Rm
+            # Loads effect
+            for l in self.loads:
+                xs = self.cum_len[l['span_idx']]
+                if l['type'] == 'U':
+                    xe = xs + self.spans[l['span_idx']]
+                    if x > xs:
+                        len_act = min(x, xe) - xs
+                        load = l['w'] * len_act
+                        cent = x - (xs + len_act/2)
+                        V -= load
+                        M -= load * cent
+                elif l['type'] == 'P':
+                    xl = xs + l['x']
+                    if x > xl:
+                        V -= l['P']
+                        M -= l['P'] * (x - xl)
+            shear.append(V)
+            moment.append(M)
             
-            for x in x_span:
-                v_x = V_start
-                m_x = -M_start + V_start * x 
-                
-                for l in span_loads:
-                    if l['type'] == 'U':
-                        if x > 0:
-                            w = l['w']
-                            v_x -= w * x
-                            m_x -= w * x**2 / 2
-                    elif l['type'] == 'P':
-                        if x >= l['x']:
-                            v_x -= l['P']
-                            m_x -= l['P'] * (x - l['x'])
-                
-                all_x.append(curr_x + x)
-                all_v.append(v_x)
-                all_m.append(m_x)
-                
-            curr_x += L
-            
-        return pd.DataFrame({'x': all_x, 'shear': all_v, 'moment': all_m}), reactions
+        return pd.DataFrame({'x': x_eval, 'shear': shear, 'moment': moment}), R_total
