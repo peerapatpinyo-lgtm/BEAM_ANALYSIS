@@ -6,51 +6,44 @@ import input_handler
 import design_view 
 from datetime import datetime
 
-# --- PRO CONFIG ---
+# --- CONFIG ---
 st.set_page_config(page_title="Structural Analysis Pro", layout="wide", page_icon="🏗️")
 
 st.markdown("""
 <style>
-    /* Compact Layout fixes */
-    .block-container { padding-top: 1rem; padding-bottom: 1rem; }
-    h1 { font-size: 1.5rem; margin-bottom: 0; }
+    /* ปรับ Padding ให้ชิดขอบบนมากขึ้น เพื่อประหยัดที่ */
+    .block-container { padding-top: 1rem; padding-bottom: 2rem; }
+    /* ปรับปุ่มให้ดูแน่นขึ้น */
     .stButton button { width: 100%; border-radius: 4px; font-weight: bold; }
-    /* Hide default Streamlit footer */
     footer {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
 def main():
     # --- HEADER ---
-    c_head_1, c_head_2 = st.columns([8, 2])
-    with c_head_1:
-        st.title("🏗️ Beam Analysis Professional")
-        st.caption("Finite Element Method (Stiffness Matrix) | ACI 318 Standard")
-    with c_head_2:
-        st.markdown(f"<div style='text-align:right; font-size:0.8rem; color:grey;'>{datetime.now().strftime('%Y-%m-%d %H:%M')}</div>", unsafe_allow_html=True)
-    
+    c1, c2 = st.columns([8, 2])
+    with c1: st.title("🏗️ Beam Analysis Professional")
+    with c2: st.caption(f"Date: {datetime.now().strftime('%Y-%m-%d')}")
     st.divider()
 
-    # --- MAIN SPLIT (20% Input / 80% Output) ---
-    col_input, col_output = st.columns([2, 8], gap="medium")
+    # --- MAIN LAYOUT (Input 20% | Output 80%) ---
+    col_input, col_output = st.columns([20, 80], gap="medium")
 
-    # === LEFT: CONTROLS ===
+    # === LEFT PANEL: INPUT ===
     with col_input:
-        st.subheader("🛠️ Model")
-        with st.expander("1. Geometry & Supports", expanded=True):
-            params = input_handler.render_sidebar() # ปรับให้ input อยู่ใน expander ได้ถ้ายาวไป
-            n, spans, sup_df, stable = input_handler.render_model_inputs(params)
+        st.subheader("⚙️ Setup")
         
-        with st.expander("2. Loading Conditions", expanded=True):
+        with st.expander("1. Structure & Loads", expanded=True):
+            params = input_handler.render_sidebar() # เรียกใช้ Sidebar settings
+            n, spans, sup_df, stable = input_handler.render_model_inputs(params)
+            st.markdown("---")
             loads = input_handler.render_loads(n, spans, params)
-            
+        
         st.markdown("###")
         run_btn = st.button("RUN ANALYSIS ▶", type="primary", disabled=not stable)
-        
-        if not stable:
-            st.error("Structure Unstable")
+        if not stable: st.error("Unstable Model")
 
-    # === RIGHT: VISUALIZATION & RESULTS ===
+    # === RIGHT PANEL: RESULTS ===
     with col_output:
         if run_btn or st.session_state.get('analysis_done'):
             if run_btn:
@@ -60,32 +53,24 @@ def main():
                     st.session_state.update({'analysis_done': True, 'df_res': df_res, 'reactions': reactions, 
                                            'spans': spans, 'sup_df': sup_df, 'loads': loads})
                 except Exception as e:
-                    st.error(f"Computation Error: {e}")
+                    st.error(f"Solver Error: {e}")
                     st.stop()
 
             df = st.session_state['df_res']
             reac = st.session_state['reactions']
             spans = st.session_state['spans']
 
-            # 1. THE INTERACTIVE GRAPH (Full Width)
-            # Hover over this graph to see exact X values. No slider needed.
+            # 1. INTERACTIVE DIAGRAMS (Fit Screen)
+            # ไม่ต้องใช้ Slider แล้วครับ ใช้เมาส์ชี้ที่กราฟได้เลย
             design_view.draw_interactive_diagrams(df, spans, st.session_state['sup_df'], 
                                                   st.session_state['loads'], params['u_force'], params['u_len'])
             
-            # 2. PRO DATA TABLE (Compact below graph)
+            # 2. COMPACT TABLE
             st.markdown("---")
             design_view.render_engineering_table(df, reac, spans)
 
         else:
-            # Empty State (Professional Placeholder)
-            st.info("👈 Please define the beam geometry and loads on the left panel to initialize the Finite Element Solver.")
-            st.markdown("""
-            **Capabilities:**
-            * Matrix Stiffness Method Solver
-            * Point Loads & Uniform Distributed Loads
-            * Shear & Moment Diagrams (Interactive)
-            * Reaction Calculation
-            """)
+            st.info("👈 Please define model and click 'RUN ANALYSIS' to start.")
 
 if __name__ == "__main__":
     main()
