@@ -17,10 +17,9 @@ class BeamSolver:
         K_global = np.zeros((n_dof, n_dof))
         F_global = np.zeros(n_dof)
         
-        # 1. Build Stiffness & Load Vector
+        # 1. Stiffness & Load Vector
         for i, L in enumerate(self.spans):
             k_val = (self.E * self.I / L**3)
-            # Element Stiffness
             k_el = k_val * np.array([
                 [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
                 [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
@@ -31,7 +30,6 @@ class BeamSolver:
                 for c in range(4):
                     K_global[idx[r], idx[c]] += k_el[r, c]
             
-            # FEM
             fem = np.zeros(4)
             span_loads = [l for l in self.loads if int(l['span_idx']) == i]
             
@@ -50,11 +48,11 @@ class BeamSolver:
                 elif load['type'] == 'M':
                     M_app = val 
                     a = load['x']; b = L - a
-                    # Correct FEM for Moment Load (CCW +)
+                    # Correct FEM for Moment Load
                     fem[0] += -6 * M_app * a * b / L**3
                     fem[1] += M_app * b * (2*a - b) / L**2
                     fem[2] += 6 * M_app * a * b / L**3
-                    fem[3] += M_app * a * (2*b - a) / L**2  # Correct formula 2*b
+                    fem[3] += M_app * a * (2*b - a) / L**2 # Fixed syntax 2*b
             
             F_global[idx] -= fem 
 
@@ -74,33 +72,29 @@ class BeamSolver:
             except:
                 return pd.DataFrame(), np.zeros(n_dof)
 
-        # 4. Process Results
+        # 4. Results
         results = []
         
-        # --- FIX SCIPY VERSION ISSUE ---
-        # Check carefully to avoid AttributeError on newer SciPy versions
+        # --- FIX: Compatibility for SciPy ---
         if hasattr(integrate, 'cumulative_trapezoid'):
             trapz_func = integrate.cumulative_trapezoid
         else:
             trapz_func = integrate.cumtrapz
-        # -------------------------------
+        # ------------------------------------
 
         for i, L in enumerate(self.spans):
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             u_el = U_global[idx]
             
-            # Recalculate forces at nodes
             fem_local = np.zeros(4)
             span_loads = [l for l in self.loads if int(l['span_idx']) == i]
             
             eval_points = set(np.linspace(0, L, 100))
             for load in span_loads:
-                # Add critical points
                 eval_points.add(load['x'])
                 if load['x'] > 0: eval_points.add(load['x'] - 1e-6)
                 if load['x'] < L: eval_points.add(load['x'] + 1e-6)
                 
-                # FEM local recalc for starting forces
                 val = load['mag']
                 if load['type'] == 'P':
                     a = load['x']; b = L - a
@@ -114,47 +108,32 @@ class BeamSolver:
                     fem_local[0] += -6*val*a*b/L**3; fem_local[1] += val*b*(2*a-b)/L**2
                     fem_local[2] += 6*val*a*b/L**3; fem_local[3] += val*a*(2*b-a)/L**2
 
-            # Element Stiffness
+            x_eval = sorted(list(eval_points))
+            
             k_val = (self.E * self.I / L**3)
             k_el = k_val * np.array([
                 [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
                 [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
             ])
-            
             f_start = k_el @ u_el + fem_local
             V_start, M_start = f_start[0], f_start[1]
             
-            # Calculate V, M along span
-            x_eval = sorted(list(eval_points))
             M_vals, V_vals = [], []
-            
             for x in x_eval:
                 V_x = V_start
-                M_x = -M_start + V_start * x # Internal M convention
-                
+                M_x = -M_start + V_start * x 
                 for load in span_loads:
-                    lx = load['x']
-                    mag = load['mag']
+                    lx = load['x']; mag = load['mag']
                     if load['type'] == 'P':
-                        if x >= lx + 1e-9:
-                            V_x -= mag
-                            M_x -= mag * (x - lx)
+                        if x >= lx + 1e-9: V_x -= mag; M_x -= mag * (x - lx)
                     elif load['type'] == 'U':
-                        if x > 0: 
-                            d = x 
-                            V_x -= mag * d
-                            M_x -= mag * d * d / 2
+                        if x > 0: d=x; V_x -= mag*d; M_x -= mag*d*d/2
                     elif load['type'] == 'M':
-                        # Applied Moment CW -> Jump Up in BMD
-                        if x >= lx + 1e-9:
-                            M_x += mag
-                            
+                        if x >= lx + 1e-9: M_x += mag 
                 V_vals.append(V_x)
                 M_vals.append(M_x)
                 
-            # Deflection (Double Integration) using safe trapz_func
             curv = np.array(M_vals) / (self.E * self.I)
-            
             theta = u_el[1] + trapz_func(curv, x_eval, initial=0)
             defl = u_el[0] + trapz_func(theta, x_eval, initial=0)
             
@@ -167,4 +146,6 @@ class BeamSolver:
                 })
 
         Reactions = K_global @ U_global 
+        # Note: No 'snap to zero' logic to preserve real moments at pins
+        
         return pd.DataFrame(results), Reactions
