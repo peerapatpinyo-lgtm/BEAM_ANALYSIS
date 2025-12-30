@@ -35,12 +35,10 @@ def render_geometry():
     spans = []
     supports = []
     
-    # Header row
     c1, c2 = st.columns([1, 1])
     c1.markdown("**Span Length (m)**")
     c2.markdown("**Support Type (Right Side)**")
     
-    # First support (Leftmost)
     st.markdown("**Leftmost Support (Start)**")
     first_sup = st.selectbox("Type", ["Pin", "Roller", "Fixed", "None"], key="sup_0")
     supports.append({"id": 0, "type": first_sup})
@@ -67,9 +65,6 @@ def render_loads(n_spans, spans, params):
         l_type = c1.selectbox("Type", ["Uniform (U)", "Point (P)"])
         span_idx = c2.selectbox("Span Index", range(1, n_spans+1)) - 1
         
-        val = 0
-        loc = 0
-        
         if "Uniform" in l_type:
             val = c3.number_input(f"w ({u_f}/m)", value=1000.0)
             if c4.button("Add", key="add_u"):
@@ -80,7 +75,6 @@ def render_loads(n_spans, spans, params):
             if c4.button("Add", key="add_p"):
                 st.session_state.loads.append({"type": "P", "span_idx": span_idx, "P": val, "x": loc})
 
-    # Display list
     if st.session_state.loads:
         for i, l in enumerate(st.session_state.loads):
             txt = f"Span {l['span_idx']+1}: "
@@ -95,10 +89,9 @@ def render_loads(n_spans, spans, params):
                 
     return st.session_state.loads
 
-# --- NEW FUNCTION: Moved Beam Size Here ---
 def render_section_inputs(n_spans):
     st.subheader("3️⃣ Section Design Properties")
-    st.info("Define the beam cross-section size for each span (used for Analysis stiffness & Design).")
+    st.info("Define the beam cross-section size for each span.")
     
     span_props = []
     cols = st.columns(n_spans)
