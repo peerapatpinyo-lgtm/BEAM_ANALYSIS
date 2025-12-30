@@ -5,59 +5,51 @@ import input_handler
 import design_view
 
 st.set_page_config(page_title="RC Beam Pro", layout="wide", page_icon="🏗️")
+st.markdown("""<style>.stApp { font-family: 'Sarabun', sans-serif; } h1, h2, h3 { color: #0D47A1; } .stButton>button { background-color: #1565C0; color: white; border-radius: 8px; font-weight: bold; }</style>""", unsafe_allow_html=True)
 
-st.markdown("""
-<style>
-    .stApp { font-family: 'Sarabun', sans-serif; }
-    h1, h2, h3 { color: #1565C0; }
-    .stButton>button { background-color: #1565C0; color: white; }
-</style>
-""", unsafe_allow_html=True)
-
-st.title("🏗️ RC Beam Design: Professional Edition")
+st.title("🏗️ RC Beam Design: Professional Edition (Rev.2)")
 
 def main():
     params = input_handler.render_sidebar()
     
-    col_geo, col_load = st.columns([1, 1.5])
-    with col_geo:
-        n, spans, sup_df, stable = input_handler.render_geometry()
-    with col_load:
+    c_geo, c_load = st.columns([1.2, 1.5])
+    with c_geo:
+        # NEW: Receive span_props list
+        n, spans, sup_df, stable, span_props = input_handler.render_geometry_and_sections()
+    with c_load:
         loads = input_handler.render_loads(n, spans, params)
         
     st.markdown("---")
     
-    if st.button("🚀 EXECUTE ANALYSIS & DESIGN", type="primary", use_container_width=True, disabled=not stable):
-        with st.spinner("Analyzing Structure..."):
+    if st.button("🚀 RUN ANALYSIS & DESIGN", type="primary", use_container_width=True, disabled=not stable):
+        with st.spinner("Performing Finite Element Analysis & RC Design..."):
             try:
+                # Note: Analysis assumes constant EI (simplified)
                 engine = beam_analysis.BeamAnalysisEngine(spans, sup_df, loads)
                 df_res, reactions = engine.solve()
                 
                 if df_res is None:
-                    st.error("Matrix Singularity Error: Structure is unstable.")
+                    st.error("Analysis Failed: Structure is unstable.")
                     return
                 
-                st.success("✅ Analysis Complete!")
+                st.success("✅ Analysis & Design Complete!")
                 
-                st.markdown("### 3️⃣ Analysis Results")
+                # Analysis View
+                design_view.draw_diagrams(df_res, spans, sup_df, loads, params['u_force'], 'm')
                 
-                n_nodes = n + 1
-                reac_vals = reactions[:n_nodes*2].reshape(-1, 2)
-                df_reac = pd.DataFrame(reac_vals, columns=[f"Fy ({params['u_force']})", f"Mz ({params['u_force']}-m)"])
-                df_reac.insert(0, "Node", range(1, n_nodes+1))
-                
-                c1, c2 = st.columns([1, 2])
-                with c1:
-                    st.markdown("**Reaction Forces**")
-                    st.dataframe(df_reac.style.format("{:.2f}"), hide_index=True, use_container_width=True)
-                with c2:
-                    design_view.draw_diagrams(df_res, spans, sup_df, loads, params['u_force'], 'm')
-                
-                design_view.render_design_results(df_res, params, spans, sup_df)
+                # Reactions
+                with st.expander("Show Reaction Forces"):
+                    n_nodes = n + 1
+                    r_vals = reactions[:n_nodes*2].reshape(-1, 2)
+                    df_r = pd.DataFrame(r_vals, columns=[f"Fy ({params['u_force']})", f"Mz ({params['u_force']}-m)"])
+                    df_r.insert(0, "Node", [f"N{i+1}" for i in range(n_nodes)])
+                    st.dataframe(df_r.style.format("{:.2f}"), hide_index=True, use_container_width=True)
+
+                # Design View (PASS span_props)
+                design_view.render_design_results(df_res, params, spans, span_props, sup_df)
             
             except Exception as e:
-                st.error(f"Calculation Error: {e}")
-                st.exception(e)
+                st.error(f"System Error: {e}")
 
 if __name__ == "__main__":
     main()
