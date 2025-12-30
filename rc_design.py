@@ -2,6 +2,13 @@ import numpy as np
 import math
 import re
 
+# --- Helper เพื่อป้องกัน Error Format ---
+def safe_float(val, default=0.0):
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
 def parse_bars(bar_str):
     try:
         if not bar_str or "Over" in bar_str or "Too many" in bar_str: return None
@@ -13,18 +20,15 @@ def parse_bars(bar_str):
     return None
 
 def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
-    # Force convert inputs to float to prevent formatting errors
-    try:
-        fc = float(params['fc'])
-        fy = float(params['fy'])
-        b = float(b_in)
-        h = float(h_in)
-        cv = float(cv_in)
-        d = h - cv
-        db_select = int(params['db_main'])
-        Mu = float(Mu)
-    except ValueError:
-        return {"Type": type_str, "Mu": 0, "As_req": 0, "Status": "❌ Data Error", "Bars": "", "Log": ["Error converting inputs"]}
+    # Safe convert inputs
+    fc = safe_float(params['fc'])
+    fy = safe_float(params['fy'])
+    b = safe_float(b_in)
+    h = safe_float(h_in)
+    cv = safe_float(cv_in)
+    d = h - cv
+    Mu = safe_float(Mu)
+    db_select = int(params['db_main'])
 
     phi_b = 0.90
     beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*(fc-280)/70)
@@ -43,7 +47,11 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
         rho_min = max(1.4/fy_c, 0.25*np.sqrt(fc_c)/fy_c)
 
     bal_const = 6120 if is_metric else 6000
-    rho_bal = 0.85 * beta1 * (fc_c/fy_c) * (bal_const/(bal_const+fy_c))
+    try:
+        rho_bal = 0.85 * beta1 * (fc_c/fy_c) * (bal_const/(bal_const+fy_c))
+    except ZeroDivisionError:
+        rho_bal = 0.02
+        
     rho_max = 0.75 * rho_bal 
 
     rho = 999
@@ -77,12 +85,18 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
     As_provided = 0
     if "Over" not in status:
         unit_area = 3.1416 * (db_select/10)**2 / 4 if is_metric else 3.1416 * db_select**2 / 4
-        num = math.ceil(control_As / unit_area)
+        try:
+            num = math.ceil(control_As / unit_area)
+        except ZeroDivisionError:
+            num = 0
         
         width_avail = b_c - 2*cv if is_metric else b_c - 2*cv*10
         bar_dia = db_select/10 if is_metric else db_select
         spacing_req = max(2.5, bar_dia)
-        max_bars_layer = int((width_avail + spacing_req) / (bar_dia + spacing_req))
+        try:
+            max_bars_layer = int((width_avail + spacing_req) / (bar_dia + spacing_req))
+        except:
+            max_bars_layer = 1
         
         if num > max_bars_layer and num > 1:
              status = "⚠️ Crowded / Multi-layer needed"
@@ -94,7 +108,6 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
     u_len = "cm" if is_metric else "mm"
     u_area = "cm²" if is_metric else "mm²"
     
-    # Safe formatting
     calc_log = [
         f"**Design Parameters ({type_str})**",
         f"- Section: {b:.1f}x{h:.1f} {u_len}, d={d:.1f} {u_len}",
@@ -115,18 +128,16 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
     }
 
 def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
-    try:
-        fc = float(params['fc'])
-        fy_stir = float(params['fys'])
-        b = float(b_in)
-        h = float(h_in)
-        cv = float(cv_in)
-        d = h - cv
-        db_stir = int(params['db_stirrup'])
-        step = float(params.get('s_step', 2.5))
-        vu_val = abs(float(Vu))
-    except:
-        return 0, 0, "Error", ["Check Inputs"]
+    # Safe convert
+    fc = safe_float(params['fc'])
+    fy_stir = safe_float(params['fys'])
+    b = safe_float(b_in)
+    h = safe_float(h_in)
+    cv = safe_float(cv_in)
+    d = h - cv
+    db_stir = int(params['db_stirrup'])
+    step = safe_float(params.get('s_step', 2.5))
+    vu_val = abs(safe_float(Vu))
     
     spacing_txt = ""
     v_cap_display = 0
@@ -147,7 +158,11 @@ def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
         
         if vu_val > phi_vc:
             vs = (vu_val - phi_vc) / 0.85
-            s_req = (av * fy_stir * d) / vs
+            try:
+                s_req = (av * fy_stir * d) / vs
+            except ZeroDivisionError:
+                s_req = 1.0
+                
             s_max = d/2
             s_use = min(s_req, s_max, 30.0)
             try:
@@ -168,6 +183,7 @@ def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
             spacing_txt = "None Req."
             calc_log.append(f"- $V_u \le 0.5\phi V_c$ -> No stirrups req.")
     else:
+        # Simplified for SI safety
         vc = 0.17 * np.sqrt(fc) * b*10 * d*10 
         phi_vc = 0.75 * (vc / 1000) 
         v_cap_display = phi_vc
