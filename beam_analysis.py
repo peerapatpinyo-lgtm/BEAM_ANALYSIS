@@ -7,31 +7,29 @@ class BeamAnalysisEngine:
         self.spans = spans
         self.supports = supports
         self.loads = loads
-        self.beam = Beam(sum(spans))
+        self.total_len = sum(spans)
+        self.beam = Beam(self.total_len)
         self._setup_structure()
 
     def _setup_structure(self):
-        # 1. Supports
         cum_len = [0] + list(np.cumsum(self.spans))
+        
+        # 1. Supports
         for _, row in self.supports.iterrows():
             pos = cum_len[int(row['id'])]
             stype = row['type']
-            
-            # Map UI Types to IndetermBeam Types
+            # IndetermBeam convention: Support(coord, (kx, ky, km)) 1=Fixed, 0=Free
             if stype == "Pin":
-                self.beam.add_supports(Support(pos, (1,1,0))) # Fix x,y
+                self.beam.add_supports(Support(pos, (1,1,0)))
             elif stype == "Roller":
-                self.beam.add_supports(Support(pos, (0,1,0))) # Fix y
+                self.beam.add_supports(Support(pos, (0,1,0)))
             elif stype == "Fixed":
-                self.beam.add_supports(Support(pos, (1,1,1))) # Fix x,y,m
+                self.beam.add_supports(Support(pos, (1,1,1)))
 
         # 2. Loads
         for l in self.loads:
             span_start = cum_len[l['span_idx']]
             if l['type'] == 'U':
-                # Uniform Load (start, end, val)
-                # Note: Indetermbeam uses negative for downward if consistent
-                # But here we assume input positive = gravity downward, handle sign later
                 start = span_start
                 end = cum_len[l['span_idx']+1]
                 self.beam.add_loads(DistributedLoadV(-l['w'], (start, end)))
@@ -43,52 +41,56 @@ class BeamAnalysisEngine:
         try:
             self.beam.analyze()
             
-            # --- CRITICAL FIX: SMART SAMPLING ---
-            # สร้างจุด x ที่ละเอียดเป็นพิเศษตรง Support และ Load เพื่อจับ Peak
+            # --- PRECISE SAMPLING STRATEGY ---
+            # เพื่อแก้ปัญหา Max ไม่ลงที่ 0.00 หรือ Support
+            # เราต้องสร้างจุด x ที่รวมตำแหน่งสำคัญ (Critical Points) ทั้งหมด
             
-            x_points = set()
+            points = set()
+            
+            # 1. Boundary Points (Start & End) -> บังคับใส่ 0.00
+            points.add(0.0)
+            points.add(self.total_len)
+            
+            # 2. Support Locations (All Nodes)
             cum_len = [0] + list(np.cumsum(self.spans))
-            
-            # 1. Add Span ends (Supports) with tiny offsets for Shear jumps
             for x in cum_len:
-                x_points.add(x)
-                x_points.add(x - 1e-5) # Just left
-                x_points.add(x + 1e-5) # Just right
+                points.add(x)
+                # Add epsilon points for Shear discontinuity (Left/Right)
+                if x > 0: points.add(x - 1e-6)
+                if x < self.total_len: points.add(x + 1e-6)
 
-            # 2. Add Point Load locations
+            # 3. Point Load Locations
             for l in self.loads:
                 span_start = cum_len[l['span_idx']]
                 if l['type'] == 'P':
                     px = span_start + l['x']
-                    x_points.add(px)
-                    x_points.add(px - 1e-5)
-                    x_points.add(px + 1e-5)
+                    points.add(px)
+                    points.add(px - 1e-6)
+                    points.add(px + 1e-6)
 
-            # 3. Add regular intervals (High resolution)
-            n_segments = 200 # increase resolution
-            total_len = sum(self.spans)
-            regular = np.linspace(0, total_len, n_segments)
-            x_points.update(regular)
+            # 4. Dense Sampling (fill gaps)
+            # เพิ่มความละเอียดเป็น 500 จุด เพื่อความเนียนของกราฟโค้ง (Parabola)
+            dense_x = np.linspace(0, self.total_len, 501)
+            for x in dense_x:
+                points.add(x)
 
-            # Sort and filter valid
-            x_final = sorted([x for x in x_points if 0 <= x <= total_len])
-            x_arr = np.array(x_final)
+            # 5. Clean up
+            # Sort and round to remove duplicates like 0.000000001
+            sorted_points = sorted(list(points))
+            x_arr = np.unique(np.round(sorted_points, 6)) # Round to 6 decimals
+            
+            # Filter valid range only
+            x_arr = x_arr[(x_arr >= 0) & (x_arr <= self.total_len)]
 
-            # Calculate Forces
+            # --- CALCULATE ---
             shear = self.beam.get_shear(x_arr)
             moment = self.beam.get_bending_moment(x_arr)
             
-            # DataFrame for plotting
-            df = pd.DataFrame({
-                'x': x_arr,
-                'shear': shear,
-                'moment': moment
-            })
-            
-            # Get Reactions
+            df = pd.DataFrame({'x': x_arr, 'shear': shear, 'moment': moment})
             reactions = self.beam.get_reaction_forces()
             
             return df, reactions
 
         except Exception as e:
+            # st.error(f"Engine Error: {e}") # Debug only
             return None, None
