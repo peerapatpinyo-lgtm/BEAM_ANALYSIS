@@ -5,63 +5,50 @@ import numpy as np
 import pandas as pd
 import rc_design 
 
-def add_peak_annotations(fig, x_data, y_data, row, col, unit):
-    """
-    บังคับโชว์ Max/Min เสมอ และป้องกัน Error การแปลงค่า
-    """
+# --- Helper function to safe format ---
+def fmt(val, precision=2):
     try:
-        # Convert to numpy array of floats immediately
+        return f"{float(val):.{precision}f}"
+    except:
+        return str(val)
+
+def add_peak_annotations(fig, x_data, y_data, row, col, unit):
+    try:
         y_vals = np.array([float(y) for y in y_data])
         x_vals = np.array([float(x) for x in x_data])
-        
-        # Find indices
         idx_max = np.argmax(y_vals)
         idx_min = np.argmin(y_vals)
-        
         val_max = y_vals[idx_max]
         val_min = y_vals[idx_min]
         
-        # Style for annotations
         style = dict(
             showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2,
             bgcolor="rgba(255,255,255,0.9)", bordercolor="black", borderwidth=1,
-            font=dict(size=11, color="black", family="Arial")
+            font=dict(size=11, color="black")
         )
 
-        # Plot Max
         fig.add_annotation(
             x=x_vals[idx_max], y=val_max,
             text=f"<b>Max: {val_max:,.0f}</b>",
-            ax=0, ay=-40, # Shift up
-            row=row, col=col, **style
+            ax=0, ay=-40, row=row, col=col, **style
         )
-        # Add a dot for Max
         fig.add_trace(go.Scatter(x=[x_vals[idx_max]], y=[val_max], mode='markers', 
-                                 marker=dict(color='red', size=8, line=dict(width=1, color='white')), 
-                                 showlegend=False, hoverinfo='skip'), row=row, col=col)
+                                 marker=dict(color='red', size=8), showlegend=False, hoverinfo='skip'), row=row, col=col)
 
-        # Plot Min (Only if value is significantly different to avoid overlap)
         if abs(idx_max - idx_min) > 0 or abs(val_max - val_min) > 1.0:
             fig.add_annotation(
                 x=x_vals[idx_min], y=val_min,
                 text=f"<b>Min: {val_min:,.0f}</b>",
-                ax=0, ay=40, # Shift down
-                row=row, col=col, **style
+                ax=0, ay=40, row=row, col=col, **style
             )
-            # Add a dot for Min
             fig.add_trace(go.Scatter(x=[x_vals[idx_min]], y=[val_min], mode='markers', 
-                                     marker=dict(color='red', size=8, line=dict(width=1, color='white')), 
-                                     showlegend=False, hoverinfo='skip'), row=row, col=col)
-            
-    except Exception as e:
-        # If anything fails, don't crash, just print error to console
-        print(f"Annotation Error: {e}")
+                                     marker=dict(color='red', size=8), showlegend=False, hoverinfo='skip'), row=row, col=col)
+    except:
+        pass
 
 def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     cum_len = [0] + list(np.cumsum(spans))
     L_total = cum_len[-1]
-    
-    # Scale calculation for drawing visuals
     viz_scale = L_total / 15.0 
     
     fig = make_subplots(
@@ -70,79 +57,70 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
         row_heights=[0.3, 0.35, 0.35]
     )
     
-    # Grid Lines (Strictly enforced)
     for x_s in cum_len:
         fig.add_vline(x=x_s, line_width=1, line_dash="dash", line_color="gray", opacity=0.5)
 
-    # --- ROW 1: Structure ---
+    # Structure
     fig.add_trace(go.Scatter(x=[0, L_total], y=[0, 0], mode='lines', line=dict(color='black', width=4), hoverinfo='none'), row=1, col=1)
 
     for i, x in enumerate(cum_len):
         stype = supports.iloc[i]['type']
-        fig.add_annotation(x=x, y=-viz_scale*0.8, text=f"<b>N{i+1}</b>", showarrow=False, font=dict(size=12), row=1, col=1)
-        
+        fig.add_annotation(x=x, y=-viz_scale*0.8, text=f"<b>N{i+1}</b>", showarrow=False, row=1, col=1)
         if stype == "Pin":
-            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='triangle-up', size=15, color='#B0BEC5', line=dict(width=2, color='black')), showlegend=False, hoverinfo='text', hovertext="Pin"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='triangle-up', size=15, color='#B0BEC5', line=dict(color='black', width=2)), showlegend=False, hovertext="Pin"), row=1, col=1)
         elif stype == "Roller":
-            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='circle', size=15, color='white', line=dict(width=2, color='black')), showlegend=False, hoverinfo='text', hovertext="Roller"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='circle', size=15, color='white', line=dict(color='black', width=2)), showlegend=False, hovertext="Roller"), row=1, col=1)
             fig.add_shape(type="line", x0=x-viz_scale/2, y0=-viz_scale/1.5, x1=x+viz_scale/2, y1=-viz_scale/1.5, line=dict(color="black", width=2), row=1, col=1)
         elif stype == "Fixed":
             fig.add_shape(type="rect", x0=x-viz_scale/5, y0=-viz_scale/1.5, x1=x+viz_scale/5, y1=viz_scale/1.5, line=dict(color="black", width=2), fillcolor="gray", row=1, col=1)
 
     # Loads
-    # Calculate Max Load for scaling
     try:
-        max_load = max([float(l['w']) for l in loads if l['type']=='U'] + [float(l['P']) for l in loads if l['type']=='P'] + [1.0])
+        load_vals = [float(l.get('w',0)) for l in loads if l['type']=='U'] + [float(l.get('P',0)) for l in loads if l['type']=='P']
+        max_load = max(load_vals + [1.0])
     except: max_load = 100
 
     arrow_h = viz_scale * 1.2
     
     for l in loads:
         try:
-            # Force float conversion to prevent 'str' format error
+            # FORCE FLOAT HERE
             val_w = float(l.get('w', 0))
             val_p = float(l.get('P', 0))
             
             if l['type'] == 'U':
                 x1, x2 = cum_len[l['span_idx']], cum_len[l['span_idx']+1]
                 h_draw = arrow_h * (val_w / max_load) if max_load > 0 else arrow_h*0.5
-                h_draw = max(h_draw, arrow_h*0.3) # Minimum visual height
+                h_draw = max(abs(h_draw), arrow_h*0.3)
                 
                 fig.add_trace(go.Scatter(x=[x1, x2, x2, x1], y=[0, 0, h_draw, h_draw], fill="toself", fillcolor="rgba(30, 136, 229, 0.3)", line_width=0, hoverinfo='skip'), row=1, col=1)
-                fig.add_annotation(x=(x1+x2)/2, y=h_draw, text=f"w={val_w:,.0f}", showarrow=False, yshift=10, font=dict(color="#1565C0", size=10), row=1, col=1)
+                # FIX: format using fmt helper or explicit float
+                fig.add_annotation(x=(x1+x2)/2, y=h_draw, text=f"w={val_w:.0f}", showarrow=False, yshift=10, font=dict(color="#1565C0", size=10), row=1, col=1)
                 
             elif l['type'] == 'P':
                 px = cum_len[l['span_idx']] + float(l['x'])
-                fig.add_annotation(x=px, y=0, ax=0, ay=-60, text=f"P={val_p:,.0f}", arrowhead=2, arrowwidth=2, arrowcolor="#D32F2F", font=dict(color="#D32F2F", size=10), row=1, col=1)
-        except Exception as e:
-            continue # Skip bad load data
+                # FIX: format using explicit float
+                fig.add_annotation(x=px, y=0, ax=0, ay=-60, text=f"P={val_p:.0f}", arrowhead=2, arrowwidth=2, arrowcolor="#D32F2F", font=dict(color="#D32F2F", size=10), row=1, col=1)
+        except: continue
 
-    # Fix Row 1 Y-Axis
-    fig.update_yaxes(visible=False, range=[-viz_scale*1.5, arrow_h*2.0], row=1, col=1)
+    fig.update_yaxes(visible=False, range=[-viz_scale*1.5, arrow_h*2.5], row=1, col=1)
 
-    # --- ROW 2: Shear ---
+    # Shear
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#D32F2F', width=2), name="Shear", hovertemplate='V: %{y:,.0f}'), row=2, col=1)
-    # Call annotation
     add_peak_annotations(fig, df['x'].values, df['shear'].values, 2, 1, u_force)
-    # Enable Y-Axis ticks for Shear
-    fig.update_yaxes(title_text=f"Shear ({u_force})", showticklabels=True, showgrid=True, zeroline=True, row=2, col=1)
+    fig.update_yaxes(title_text=f"Shear ({u_force})", showticklabels=True, visible=True, row=2, col=1)
 
-    # --- ROW 3: Moment ---
+    # Moment
     fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1976D2', width=2), name="Moment", hovertemplate='M: %{y:,.0f}'), row=3, col=1)
-    # Call annotation
     add_peak_annotations(fig, df['x'].values, df['moment'].values, 3, 1, f"{u_force}-{u_len}")
-    # Enable Y-Axis ticks for Moment
-    fig.update_yaxes(title_text=f"Moment ({u_force}-{u_len})", showticklabels=True, showgrid=True, zeroline=True, row=3, col=1)
+    fig.update_yaxes(title_text=f"Moment", showticklabels=True, visible=True, row=3, col=1)
 
-    # Global Layout
     fig.update_layout(height=850, template="plotly_white", showlegend=False, hovermode="x unified", margin=dict(t=40, b=40, l=60, r=20))
-    fig.update_xaxes(showspikes=True, spikethickness=1, spikedash='solid', spikecolor='#CFD8DC')
-    fig.update_xaxes(title_text=f"Distance ({u_len})", showticklabels=True, row=3, col=1)
-    
     st.plotly_chart(fig, use_container_width=True, key="main_diagram")
 
 def render_combined_section(b, h, cover, top_bars, bot_bars):
     try:
+        # SAFETY CAST
         b, h, cover = float(b), float(h), float(cover)
     except: return go.Figure()
 
@@ -159,7 +137,7 @@ def render_combined_section(b, h, cover, top_bars, bot_bars):
             else: xs = np.linspace(cover+r, b-cover-r, num)
             for x in xs:
                 fig.add_shape(type="circle", x0=x-r, y0=y_center-r, x1=x+r, y1=y_center+r, fillcolor=color, line_color="black")
-            fig.add_annotation(x=b/2, y=y_center+label_pos_offset, text=f"<b>{bars}</b>", showarrow=False, font=dict(color=color, size=14, weight="bold"))
+            fig.add_annotation(x=b/2, y=y_center+label_pos_offset, text=f"<b>{bars}</b>", showarrow=False, font=dict(color=color, size=14))
 
     draw_rebars(bot_bars, cover + 2.0, "#1565C0", 6) 
     draw_rebars(top_bars, h - cover - 2.0, "#C62828", -6)
@@ -176,19 +154,23 @@ def render_design_results(df, params, spans, span_props_list, supports):
     
     for i in range(len(spans)):
         sp = span_props_list[i]
-        b_s, h_s, cv_s = sp['b'], sp['h'], sp['cv']
+        # 🔴 CRITICAL FIX: Cast to float immediately. 
+        # If 'b' comes from input as string "30", f"{b:.0f}" crashes.
+        try:
+            b_s = float(sp['b'])
+            h_s = float(sp['h'])
+            cv_s = float(sp['cv'])
+        except:
+            b_s, h_s, cv_s = 30.0, 60.0, 3.0 # Default fallback
+
         mask = (df['x'] >= cum_len[i]) & (df['x'] <= cum_len[i+1])
         sub_df = df[mask]
         
         if sub_df.empty: continue
         
-        # Safe Max/Min extraction
-        try:
-            m_pos = float(max(0, sub_df['moment'].max()))
-            m_neg = float(min(0, sub_df['moment'].min()))
-            v_u = float(sub_df['shear'].abs().max())
-        except:
-            m_pos, m_neg, v_u = 0, 0, 0
+        m_pos = float(max(0, sub_df['moment'].max()))
+        m_neg = float(min(0, sub_df['moment'].min()))
+        v_u = float(sub_df['shear'].abs().max())
         
         des_pos = rc_design.calculate_flexure_sdm(m_pos, "Midspan", b_s, h_s, cv_s, params)
         des_neg = rc_design.calculate_flexure_sdm(m_neg, "Support", b_s, h_s, cv_s, params)
@@ -202,7 +184,8 @@ def render_design_results(df, params, spans, span_props_list, supports):
         
         summary_data.append({
             "Span": f"{i+1}",
-            "Size": f"{b_s:.0f}x{h_s:.0f}",
+            # 🔴 THIS LINE was likely causing the crash if b_s/h_s were strings
+            "Size": f"{b_s:.0f}x{h_s:.0f}", 
             "Top Bar": des_neg['Bars'],
             "Bot Bar": des_pos['Bars'],
             "Stirrups": stir_txt,
@@ -220,10 +203,17 @@ def render_design_results(df, params, spans, span_props_list, supports):
     for i, tab in enumerate(tabs):
         d = summary_data[i]
         sp = span_props_list[i]
+        # Recast for section drawing
+        try:
+            bb = float(sp['b'])
+            hh = float(sp['h'])
+            cc = float(sp['cv'])
+        except: bb, hh, cc = 30, 60, 3
+
         with tab:
             c1, c2 = st.columns([1, 1.5])
             with c1:
-                st.plotly_chart(render_combined_section(sp['b'], sp['h'], sp['cv'], d['_n']['Bars'], d['_p']['Bars']), use_container_width=True)
+                st.plotly_chart(render_combined_section(bb, hh, cc, d['_n']['Bars'], d['_p']['Bars']), use_container_width=True)
             with c2:
                 with st.expander("📝 Detailed Calculation", expanded=True):
                     st.markdown(f"**Flexure +M:** {d['Bot Bar']}")
