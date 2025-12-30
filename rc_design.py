@@ -17,7 +17,8 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
     """Design flexural reinforcement (SDM) with span-specific dimensions."""
     fc = params['fc']
     fy = params['fy']
-    # Use span-specific dimensions
+    
+    # Use span-specific dimensions provided by input
     b = b_in
     h = h_in
     cv = cv_in
@@ -80,10 +81,10 @@ def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
         
         width_avail = b_c - 2*cv_in if is_metric else b_c - 2*cv_in*10
         bar_dia = db_select/10 if is_metric else db_select
-        spacing_req = max(2.5, bar_dia) # Approx spacing
+        spacing_req = max(2.5, bar_dia)
         max_bars_layer = int((width_avail + spacing_req) / (bar_dia + spacing_req))
         
-        if num > max_bars_layer and num > 1: # Simple check
+        if num > max_bars_layer and num > 1:
              status = "⚠️ Crowded / Multi-layer needed"
         
         select_str = f"{int(num)}-DB{db_select}"
@@ -117,7 +118,6 @@ def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
     """Shear design with span-specific dimensions."""
     fc = params['fc']
     fy_stir = params['fys']
-    # Use span-specific dimensions
     b = b_in
     h = h_in
     cv = cv_in
