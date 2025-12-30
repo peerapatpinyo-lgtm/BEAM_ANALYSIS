@@ -5,38 +5,33 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
-    # --- 1. LOAD COMBINATION / CALCULATION LIST ---
-    st.markdown("### 📋 Calculation Report: Load Combination")
+    # --- LOAD COMBINATION REPORT ---
+    st.markdown("### 📋 Load Combination & Report")
+    
     if loads:
         load_data = []
         for i, l in enumerate(loads):
             if l['type'] == 'P':
-                desc = "Point Load"
-                val_str = f"{l['mag']} {unit_force}"
-                pos_str = f"@ x = {l['x']} {unit_len} (Span {l['span_idx']+1})"
+                desc, val = "Point Load", f"{l['mag']} {unit_force}"
+                pos = f"@ x = {l['x']} {unit_len} (Span {l['span_idx']+1})"
             elif l['type'] == 'U':
-                desc = "Uniform Load"
-                val_str = f"{l['mag']} {unit_force}/{unit_len}"
-                pos_str = f"Full Span {l['span_idx']+1}"
+                desc, val = "Uniform Load", f"{l['mag']} {unit_force}/{unit_len}"
+                pos = f"Full Span {l['span_idx']+1}"
             elif l['type'] == 'M':
-                desc = "Moment Load"
-                val_str = f"{l['mag']} {unit_force}-{unit_len}"
-                pos_str = f"@ x = {l['x']} {unit_len} (Span {l['span_idx']+1})"
+                desc, val = "Moment Load", f"{l['mag']} {unit_force}-{unit_len}"
+                pos = f"@ x = {l['x']} {unit_len} (Span {l['span_idx']+1})"
             
-            load_data.append([i+1, desc, val_str, pos_str])
+            load_data.append([i+1, desc, val, pos])
             
-        df_load_list = pd.DataFrame(load_data, columns=["No.", "Type", "Magnitude", "Position"])
-        st.table(df_load_list)
+        df_list = pd.DataFrame(load_data, columns=["No.", "Type", "Magnitude", "Position"])
+        st.table(df_list)
     else:
-        st.info("No loads applied.")
+        st.info("No loads applied yet.")
 
-    st.markdown("---")
-    st.markdown("### 📊 Diagrams")
-
-    if df is None or df.empty:
-        return
+    if df is None or df.empty: return
 
     # --- PLOTTING ---
+    st.markdown("### 📊 Diagrams")
     total_len = sum(spans)
     cum_spans = [0] + list(np.cumsum(spans))
     
@@ -47,7 +42,6 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
     # 1. Structure
     fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=4)), row=1, col=1)
     
-    # Supports
     sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
     for i, x in enumerate(cum_spans):
         if i in sup_map:
@@ -57,13 +51,12 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force, unit_len):
             if stype == 'Fixed':
                 fig.add_shape(type="line", x0=x, y0=-0.2, x1=x, y1=0.2, line=dict(width=5, color='black'), row=1, col=1)
 
-    # Loads
     for l in loads:
         x_abs = cum_spans[int(l['span_idx'])] + l['x']
         if l['type'] == 'P':
             fig.add_annotation(x=x_abs, y=0, ax=0, ay=-40, arrowhead=2, text=f"P={l['mag']}", row=1, col=1)
         elif l['type'] == 'M':
-            fig.add_annotation(x=x_abs, y=0, text=f"M={l['mag']}", showarrow=True, arrowhead=1, ax=0, ay=-30, arrowwidth=2, arrowcolor='purple', row=1, col=1)
+            fig.add_annotation(x=x_abs, y=0, text=f"↺ M={l['mag']}", showarrow=True, arrowhead=1, ax=0, ay=-30, arrowwidth=2, arrowcolor='purple', row=1, col=1)
             fig.add_trace(go.Scatter(x=[x_abs], y=[0], mode='markers', marker=dict(symbol='star', size=10, color='purple'), showlegend=False), row=1, col=1)
         elif l['type'] == 'U':
              xs = cum_spans[int(l['span_idx'])]
@@ -93,9 +86,5 @@ def render_result_tables(df, reac, spans):
     for i in range(len(spans)+1):
         ry = reac[2*i]
         mz = reac[2*i+1]
-        reac_data.append({
-            "Node": i+1, 
-            "Fy (Vertical)": f"{ry:.2f}", 
-            "Mz (Moment)": f"{mz:.2f}"
-        })
+        reac_data.append({"Node": i+1, "Vertical (Ry)": f"{ry:.2f}", "Moment (Mz)": f"{mz:.2f}"})
     st.table(pd.DataFrame(reac_data))
