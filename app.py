@@ -23,7 +23,6 @@ def main():
     if st.button("🚀 RUN ANALYSIS & DESIGN", type="primary", use_container_width=True, disabled=not stable):
         with st.spinner("Processing..."):
             try:
-                # 1. Analysis
                 engine = beam_analysis.BeamAnalysisEngine(spans, sup_df, loads)
                 df_res, reactions = engine.solve()
                 
@@ -31,35 +30,35 @@ def main():
                     st.error("Structure is unstable.")
                     return
                 
-                st.success("Analysis Completed Successfully.")
+                st.success("✅ Analysis Complete!")
                 
-                # 2. Diagrams
+                # 1. Plot Diagrams
                 design_view.draw_diagrams(df_res, spans, sup_df, loads, params['u_force'], 'm')
                 
-                # 3. Reaction Table (Explicitly Created Here)
-                st.markdown(f"### ⚓ Support Reactions ({params['u_force']})")
+                # 2. Show Reactions Table
+                st.markdown(f"#### ⚓ Support Reactions ({params['u_force']})")
                 n_nodes = n + 1
                 
-                # Create Dictionary for cleaner dataframe
                 react_data = []
                 for i in range(n_nodes):
-                    ry = reactions[2*i]
-                    mz = reactions[2*i+1]
-                    # Only show significant values
+                    # 🔴 FIX: Force float conversion before formatting
+                    ry = float(reactions[2*i])
+                    mz = float(reactions[2*i+1])
+                    
                     react_data.append({
                         "Node": f"N{i+1}",
-                        f"Fy ({params['u_force']})": f"{ry:.2f}" if abs(ry)>0.01 else "-",
-                        f"Mz ({params['u_force']}-m)": f"{mz:.2f}" if abs(mz)>0.01 else "-"
+                        f"Fy": f"{ry:,.2f}" if abs(ry)>0.01 else "-",
+                        f"Mz": f"{mz:,.2f}" if abs(mz)>0.01 else "-"
                     })
                 
                 st.table(pd.DataFrame(react_data))
 
-                # 4. Design
+                # 3. Design Results
                 design_view.render_design_results(df_res, params, spans, span_props, sup_df)
             
             except Exception as e:
-                st.error(f"System Error: {e}")
-                st.write("Hint: Please check if load values are numeric.")
+                st.error(f"Critical Error: {e}")
+                st.info("Check your inputs: Ensure all Loads and Dimensions are valid numbers.")
 
 if __name__ == "__main__":
     main()
