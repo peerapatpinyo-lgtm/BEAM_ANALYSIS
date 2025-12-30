@@ -12,11 +12,15 @@ st.title("🏗️ RC Beam Design: Professional Edition")
 def main():
     params = input_handler.render_sidebar()
     
-    c_geo, c_load = st.columns([1.2, 1.5])
-    with c_geo:
-        n, spans, sup_df, stable, span_props = input_handler.render_geometry()
-    with c_load:
-        loads = input_handler.render_loads(n, spans, params)
+    # --- 1. Geometry (แก้ตรงนี้: รับแค่ 4 ค่า) ---
+    n, spans, sup_df, stable = input_handler.render_geometry()
+    
+    # 2. Loads
+    loads = input_handler.render_loads(n, spans, params)
+    
+    # --- 3. Section Properties (แยกมาไว้ตรงนี้) ---
+    st.markdown("---")
+    span_props = input_handler.render_section_inputs(n)
         
     st.markdown("---")
     
@@ -41,7 +45,6 @@ def main():
                 
                 react_data = []
                 for i in range(n_nodes):
-                    # 🔴 FIX: Force float conversion before formatting
                     ry = float(reactions[2*i])
                     mz = float(reactions[2*i+1])
                     
@@ -58,7 +61,7 @@ def main():
             
             except Exception as e:
                 st.error(f"Critical Error: {e}")
-                st.info("Check your inputs: Ensure all Loads and Dimensions are valid numbers.")
+                # st.exception(e) # Uncomment for debug if needed
 
 if __name__ == "__main__":
     main()
