@@ -17,7 +17,7 @@ def render_sidebar():
     E = st.sidebar.number_input("Elastic Modulus (E) [ksc/MPa]", value=2e6, step=1e5, format="%.2e")
     I = st.sidebar.number_input("Moment of Inertia (I) [cm^4]", value=10000.0, step=100.0)
     
-    # Unit Conversion Factors (Simplified)
+    # Unit Conversion Factors
     I_m4 = I * 1e-8 
     E_calc = E * 10000 if "kg" in u_force else E * 1000 
     
@@ -66,27 +66,38 @@ def render_loads(n_spans, spans, params):
     if 'loads' not in st.session_state:
         st.session_state['loads'] = []
 
-    # --- INPUT FORM (Add New) ---
+    # --- INPUT FORM ---
     with st.expander("➕ Add New Load", expanded=True):
-        c1, c2, c3, c4, c5 = st.columns([1.2, 1, 1, 1, 0.5])
+        c1, c2, c3, c4, c5 = st.columns([1.5, 1, 1, 1, 0.5])
         with c1:
-            l_type = st.selectbox("Type", ["Point Load (P)", "Uniform Load (w)"])
+            l_type = st.selectbox("Type", ["Point Load (P)", "Uniform Load (w)", "Moment Load (M)"])
         with c2:
             span_idx = st.selectbox("Span", range(1, n_spans+1)) - 1
             max_len = spans[span_idx]
         with c3:
-            mag = st.number_input(f"Mag ({params['u_force']})", value=1000.0, step=100.0, key="new_mag")
+            # Dynamic Label based on type
+            if "Moment" in l_type:
+                unit_label = f"{params['u_force']}-{params['u_len']}"
+            else:
+                unit_label = params['u_force']
+            mag = st.number_input(f"Mag ({unit_label})", value=1000.0, step=100.0, key="new_mag")
+            
         with c4:
-            if "Point" in l_type:
+            if "Uniform" not in l_type:
                 loc = st.number_input(f"Dist x ({params['u_len']})", min_value=0.0, max_value=float(max_len), value=float(max_len)/2, step=0.1, key="new_loc")
             else:
                 st.info("Full Span")
                 loc = 0
         with c5:
-            st.write("") # Spacer
+            st.write("") 
             st.write("") 
             if st.button("Add"):
-                new_load = {'type': 'P' if "Point" in l_type else 'U', 'span_idx': span_idx, 'mag': mag, 'x': loc}
+                # Map Type Code
+                if "Point" in l_type: code = 'P'
+                elif "Uniform" in l_type: code = 'U'
+                else: code = 'M'
+                
+                new_load = {'type': code, 'span_idx': span_idx, 'mag': mag, 'x': loc}
                 st.session_state['loads'].append(new_load)
                 st.rerun()
 
@@ -94,14 +105,17 @@ def render_loads(n_spans, spans, params):
     if st.session_state['loads']:
         st.write("**Current Loads (Edit or Delete)**")
         
-        # Prepare data for editor
         display_data = []
         for l in st.session_state['loads']:
+            t_str = "Point"
+            if l['type'] == 'U': t_str = "Uniform"
+            elif l['type'] == 'M': t_str = "Moment"
+            
             display_data.append({
-                "Type": "Point" if l['type'] == 'P' else "Uniform",
+                "Type": t_str,
                 "Span": l['span_idx'] + 1,
                 "Magnitude": l['mag'],
-                "Location": l['x'] if l['type'] == 'P' else 0, # 0 placeholder for UDL
+                "Location": l['x'] if l['type'] != 'U' else 0,
                 "Delete": False
             })
         
@@ -112,32 +126,30 @@ def render_loads(n_spans, spans, params):
             column_config={
                 "Type": st.column_config.TextColumn("Type", disabled=True),
                 "Span": st.column_config.NumberColumn("Span No.", min_value=1, max_value=n_spans, step=1, disabled=True),
-                "Magnitude": st.column_config.NumberColumn(f"Magnitude ({params['u_force']})"),
-                "Location": st.column_config.NumberColumn(f"Location x ({params['u_len']}) - (Point Load Only)", min_value=0),
+                "Magnitude": st.column_config.NumberColumn(f"Magnitude (+CW / Down)"),
+                "Location": st.column_config.NumberColumn(f"Location x ({params['u_len']})"),
                 "Delete": st.column_config.CheckboxColumn("Delete?", default=False)
             },
             hide_index=True,
             use_container_width=True
         )
 
-        # Update Session State based on Editor
+        # Update Session State
         new_loads_state = []
         for idx, row in edited_df.iterrows():
-            if not row['Delete']: # Keep if not checked
-                original_type = st.session_state['loads'][idx]['type']
-                # Validate Location for Point Load
-                current_span = row['Span'] - 1
-                max_l = spans[current_span]
-                safe_x = min(row['Location'], max_l)
+            if not row['Delete']:
+                orig_code = st.session_state['loads'][idx]['type']
+                # Safety check for location
+                curr_span = row['Span'] - 1
+                safe_x = min(row['Location'], spans[curr_span])
                 
                 new_loads_state.append({
-                    'type': original_type,
-                    'span_idx': current_span,
-                    'mag': row['Magnitude'], # Updated Value
-                    'x': safe_x if original_type == 'P' else 0 # Updated Location
+                    'type': orig_code,
+                    'span_idx': curr_span,
+                    'mag': row['Magnitude'],
+                    'x': safe_x if orig_code != 'U' else 0
                 })
         
-        # Sync if changed
         if new_loads_state != st.session_state['loads']:
             st.session_state['loads'] = new_loads_state
             st.rerun()
