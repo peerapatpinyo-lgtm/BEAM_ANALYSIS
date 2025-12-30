@@ -4,46 +4,50 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force="kg", unit_len="m"):
-    # --- 1. INPUT SUMMARY (Clean & Compact) ---
-    st.markdown("### 🏗️ Design Loads & Configuration")
+# เพิ่มตัวแปร reac เข้ามาใน arguments เพื่อแก้ Error
+def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", unit_len="m"):
     
-    col1, col2 = st.columns([2, 1])
+    # --- 1. DETAILED LOAD COMBINATION LIST (กู้คืนรายการคำนวณละเอียด) ---
+    st.markdown("### 📋 Load Calculation List")
     
-    with col1:
-        if loads:
-            load_data = []
-            for i, l in enumerate(loads):
-                span_txt = f"Span {l['span_idx']+1}"
-                if l['type'] == 'P':
-                    desc, val, loc = "Point Load (P)", f"{l['mag']:,.2f} {unit_force}", f"@ {l['x']:.2f} {unit_len} ({span_txt})"
-                elif l['type'] == 'U':
-                    desc, val, loc = "Uniform Load (w)", f"{l['mag']:,.2f} {unit_force}/{unit_len}", f"Full {span_txt}"
-                elif l['type'] == 'M':
-                    desc, val, loc = "Moment (M)", f"{l['mag']:,.2f} {unit_force}-{unit_len}", f"@ {l['x']:.2f} {unit_len} ({span_txt})"
-                
-                load_data.append([desc, val, loc])
+    if loads:
+        load_data = []
+        for i, l in enumerate(loads):
+            span_idx = int(l['span_idx'])
+            span_num = span_idx + 1
             
-            df_loads = pd.DataFrame(load_data, columns=["Type", "Magnitude", "Location"])
-            st.dataframe(df_loads, use_container_width=True, hide_index=True)
-        else:
-            st.info("ℹ️ No loads applied yet.")
+            if l['type'] == 'P':
+                type_lbl = "Point Load (P)"
+                mag_lbl = f"{l['mag']} {unit_force}"
+                # ระบุตำแหน่งละเอียด
+                pos_lbl = f"@ x = {l['x']:.2f} {unit_len} (on Span {span_num})"
+            elif l['type'] == 'U':
+                type_lbl = "Uniform Load (w)"
+                mag_lbl = f"{l['mag']} {unit_force}/{unit_len}"
+                pos_lbl = f"Full Length (Span {span_num})"
+            elif l['type'] == 'M':
+                type_lbl = "Moment (M)"
+                mag_lbl = f"{l['mag']} {unit_force}-{unit_len}"
+                pos_lbl = f"@ x = {l['x']:.2f} {unit_len} (on Span {span_num})"
+            
+            load_data.append([i+1, type_lbl, mag_lbl, pos_lbl])
+            
+        df_loads = pd.DataFrame(load_data, columns=["No.", "Load Type", "Magnitude", "Position / Detail"])
+        st.table(df_loads)
+    else:
+        st.info("No loads applied yet.")
 
-    with col2:
-        st.caption("Total Length")
-        st.markdown(f"**{sum(spans):.2f} {unit_len}**")
-        st.caption("Supports")
-        st.markdown(f"**{len(sup_df)} Nodes**")
-
-    if df is None or df.empty: return
+    if df is None or df.empty: 
+        return
 
     st.markdown("---")
-    
+    st.markdown("### 📊 Structural Analysis Diagrams")
+
     # --- 2. PREPARE PLOTTING DATA ---
     total_len = sum(spans)
     cum_spans = [0] + list(np.cumsum(spans))
     
-    # Identify Critical Key Points (Nodes + Load Locations) for Vertical Grid Lines
+    # Key Points for Grid Lines (Supports + Loads)
     key_points = set()
     for x in cum_spans: key_points.add(round(x, 3))
     for l in loads:
@@ -51,182 +55,190 @@ def draw_interactive_diagrams(df, spans, sup_df, loads, unit_force="kg", unit_le
         key_points.add(round(abs_x, 3))
     sorted_keys = sorted(list(key_points))
 
-    # Setup Subplots (Standard Engineering Layout)
+    # Create Subplots
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.06,
+        vertical_spacing=0.08,
         subplot_titles=(
             "<b>Structure Model (FBD)</b>", 
-            f"<b>Shear Force Diagram (SFD)</b> [{unit_force}]", 
-            f"<b>Bending Moment Diagram (BMD)</b> [{unit_force}-{unit_len}]", 
-            f"<b>Deflection (δ)</b> [{unit_len}]"
+            f"<b>Shear Force Diagram (SFD)</b>", 
+            f"<b>Bending Moment Diagram (BMD)</b>", 
+            f"<b>Deflection (δ)</b>"
         ),
-        row_heights=[0.18, 0.28, 0.28, 0.26]
+        row_heights=[0.15, 0.28, 0.28, 0.29]
     )
 
     # ==========================================
-    # ROW 1: FREE BODY DIAGRAM (FBD)
+    # ROW 1: STRUCTURE (FBD) - ปรับสัดส่วน Support
     # ==========================================
-    # 1. Main Beam Line
+    # Beam Line
     fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=4), hoverinfo='skip'), row=1, col=1)
     
-    # 2. Supports & Nodes
+    # Supports
     sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
     for i, x in enumerate(cum_spans):
-        # Node Bubble
+        # Node Labels
         fig.add_annotation(
-            x=x, y=0.35, text=f"N{i+1}", showarrow=False,
-            font=dict(size=10, color="#555"),
-            bgcolor="#eee", bordercolor="#ccc", borderwidth=1, borderpad=2,
-            row=1, col=1
+            x=x, y=0.3, text=f"Node {i+1}", showarrow=False,
+            font=dict(size=10, color="gray"), row=1, col=1
         )
         
-        # Support Symbol
         if i in sup_map:
             stype = sup_map[i]
             if stype == 'Fixed':
-                fig.add_shape(type="line", x0=x, y0=-0.25, x1=x, y1=0.25, line=dict(width=5, color='#333'), row=1, col=1)
+                # ปรับเส้น Fixed ให้สมส่วน (ไม่ใหญ่เวอร์)
+                fig.add_shape(type="line", x0=x, y0=-0.2, x1=x, y1=0.2, line=dict(width=5, color='black'), row=1, col=1)
             else:
                 sym = 'triangle-up' if stype == 'Pin' else 'circle'
-                # Draw marker exactly at y=0
+                # ปรับขนาด Marker (size=14) ให้พอดีกับเส้นคาน width=4
                 fig.add_trace(go.Scatter(
                     x=[x], y=[0], 
                     mode='markers', 
-                    marker=dict(symbol=sym, size=16, color='white', line=dict(color='#333', width=2)), 
+                    marker=dict(symbol=sym, size=14, color='white', line=dict(color='black', width=2)), 
                     name=stype, hoverinfo='name'
                 ), row=1, col=1)
-                # For Roller, add line below
+                
+                # ถ้าเป็น Roller ให้วาดเส้นพื้นรองรับด้านล่างเล็กน้อย
                 if stype == 'Roller':
-                    fig.add_shape(type="line", x0=x-0.1, y0=-0.08, x1=x+0.1, y1=-0.08, line=dict(width=2, color='#333'), row=1, col=1)
+                    fig.add_shape(type="line", x0=x-0.1, y0=-0.08, x1=x+0.1, y1=-0.08, line=dict(width=2, color='black'), row=1, col=1)
 
-    # 3. Loads Visualization
+    # Loads Arrows
     for l in loads:
         x_abs = cum_spans[int(l['span_idx'])] + l['x']
         if l['type'] == 'P':
-            # Arrow pointing down
-            fig.add_annotation(
-                x=x_abs, y=0, ax=0, ay=-50, 
-                arrowhead=2, arrowwidth=2, arrowcolor='#D32F2F', 
-                text=f"<b>P={l['mag']}</b>", font=dict(color='#D32F2F', size=11),
-                row=1, col=1
-            )
+            fig.add_annotation(x=x_abs, y=0, ax=0, ay=-40, arrowhead=2, arrowwidth=2, arrowcolor='red', text=f"P={l['mag']}", font=dict(color='red', size=10), row=1, col=1)
         elif l['type'] == 'U':
              xs, xe = cum_spans[int(l['span_idx'])], cum_spans[int(l['span_idx'])+1]
-             # Rectangular Block
-             fig.add_shape(type="rect", x0=xs, x1=xe, y0=0.05, y1=0.20, fillcolor="#D32F2F", opacity=0.15, line_width=0, row=1, col=1)
-             fig.add_annotation(x=(xs+xe)/2, y=0.25, text=f"<b>w={l['mag']}</b>", showarrow=False, font=dict(color="#D32F2F", size=11), row=1, col=1)
+             fig.add_shape(type="rect", x0=xs, x1=xe, y0=0.05, y1=0.15, fillcolor="red", opacity=0.15, line_width=0, row=1, col=1)
+             fig.add_annotation(x=(xs+xe)/2, y=0.2, text=f"w={l['mag']}", showarrow=False, font=dict(color="red", size=10), row=1, col=1)
         elif l['type'] == 'M':
-            fig.add_annotation(x=x_abs, y=0, text=f"<b>M={l['mag']}</b>", showarrow=True, arrowhead=1, ax=0, ay=-35, arrowcolor='#7B1FA2', font=dict(color='#7B1FA2', size=11), row=1, col=1)
+            fig.add_annotation(x=x_abs, y=0, text=f"M={l['mag']}", showarrow=True, arrowhead=1, ax=0, ay=-30, arrowcolor='purple', font=dict(size=10), row=1, col=1)
 
     # ==========================================
-    # HELPER: SMART LABELS (No Arrows, Clean Boxes)
+    # HELPER: Labels with UNITS
     # ==========================================
-    def add_smart_labels(x_series, y_series, row_idx, color_hex):
-        y_arr = np.array(y_series)
-        x_arr = np.array(x_series)
+    def add_eng_labels(x_data, y_data, row_idx, color_code, unit_suffix):
+        y_arr = np.array(y_data)
         if len(y_arr) == 0: return
 
-        # Find Indices
+        # Global Max/Min
         max_idx = np.argmax(y_arr)
         min_idx = np.argmin(y_arr)
         
-        # Helper to create label
-        def create_tag(val, x_pos, is_top):
-            return dict(
+        # Style Box
+        style = dict(
+            showarrow=False,
+            font=dict(color=color_code, size=11),
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor=color_code, borderwidth=1, borderpad=3
+        )
+
+        # Draw Label Function
+        def plot_lbl(val, x_pos, is_top):
+            # ใส่หน่วย (Unit) ใน Label
+            txt = f"<b>Max:</b> {val:.2f} {unit_suffix}<br>@ {x_pos:.2f}m" if is_top else f"<b>Min:</b> {val:.2f} {unit_suffix}<br>@ {x_pos:.2f}m"
+            shift = 20 if is_top else -20
+            fig.add_annotation(
                 x=x_pos, y=val,
-                text=f"<b>{val:.2f}</b><br><span style='font-size:9px'>@ {x_pos:.2f}m</span>",
-                showarrow=False,
-                yshift=15 if is_top else -15,
-                font=dict(color=color_hex, size=11),
-                bgcolor="rgba(255,255,255,0.9)", # High opacity background to read over grid
-                bordercolor=color_hex, borderwidth=1, borderpad=3,
-                align="center"
+                text=txt,
+                yshift=shift,
+                row=row_idx, col=1, **style
             )
 
-        # 1. Max Label
+        # Plot Max
         if abs(y_arr[max_idx]) > 1e-4:
-            fig.add_annotation(row=row_idx, col=1, **create_tag(y_arr[max_idx], x_arr[max_idx], True))
+            plot_lbl(y_arr[max_idx], x_data[max_idx], True)
 
-        # 2. Min Label (if distinct)
-        if abs(y_arr[min_idx]) > 1e-4 and abs(x_arr[max_idx] - x_arr[min_idx]) > 0.05:
-            fig.add_annotation(row=row_idx, col=1, **create_tag(y_arr[min_idx], x_arr[min_idx], False))
-
-    # ==========================================
-    # ROW 2: SHEAR (SFD) - Engineer Orange
-    # ==========================================
-    c_shear = '#E67E22' # Pumpkin Orange
-    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', mode='lines', line=dict(color=c_shear, width=2), name="Shear"), row=2, col=1)
-    add_smart_labels(df['x'], df['shear'], 2, c_shear)
+        # Plot Min
+        if abs(y_arr[min_idx]) > 1e-4 and abs(x_data[max_idx] - x_data[min_idx]) > 0.05:
+            plot_lbl(y_arr[min_idx], x_data[min_idx], False)
 
     # ==========================================
-    # ROW 3: MOMENT (BMD) - Engineer Blue
+    # ROW 2: SHEAR (V)
     # ==========================================
-    c_moment = '#2980B9' # Strong Blue
-    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', mode='lines', line=dict(color=c_moment, width=2), name="Moment"), row=3, col=1)
-    add_smart_labels(df['x'], df['moment'], 3, c_moment)
+    c_shear = '#E67E22'
+    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color=c_shear, width=2), name="Shear"), row=2, col=1)
+    # ใส่หน่วยให้ถูกต้องตามตัวแปร
+    add_eng_labels(df['x'], df['shear'], 2, c_shear, unit_force)
 
     # ==========================================
-    # ROW 4: DEFLECTION - Engineer Green
+    # ROW 3: MOMENT (M)
     # ==========================================
-    c_defl = '#27AE60' # Nephritis Green
-    fig.add_trace(go.Scatter(x=df['x'], y=df['deflection'], fill='tozeroy', mode='lines', line=dict(color=c_defl, width=2), name="Deflection"), row=4, col=1)
+    c_moment = '#2980B9'
+    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color=c_moment, width=2), name="Moment"), row=3, col=1)
+    # หน่วย Moment = Force-Length
+    add_eng_labels(df['x'], df['moment'], 3, c_moment, f"{unit_force}-{unit_len}")
+
+    # ==========================================
+    # ROW 4: DEFLECTION
+    # ==========================================
+    c_defl = '#27AE60'
+    fig.add_trace(go.Scatter(x=df['x'], y=df['deflection'], fill='tozeroy', line=dict(color=c_defl, width=2), name="Deflection"), row=4, col=1)
     
-    # Only label Absolute Max Deflection
+    # Deflection Label
     abs_d_idx = df['deflection'].abs().idxmax()
     d_val = df.loc[abs_d_idx, 'deflection']
     d_x = df.loc[abs_d_idx, 'x']
-    
     if abs(d_val) > 1e-9:
         fig.add_annotation(
             x=d_x, y=d_val,
-            text=f"<b>Max: {d_val:.2e}</b><br><span style='font-size:9px'>@ {d_x:.2f}m</span>",
-            showarrow=False, yshift=20 if d_val > 0 else -20,
+            text=f"<b>Max:</b> {d_val:.4f} {unit_len}<br>@ {d_x:.2f}m",
+            showarrow=False,
+            yshift=25 if d_val > 0 else -25,
             font=dict(color=c_defl, size=11),
-            bgcolor="rgba(255,255,255,0.9)", bordercolor=c_defl, borderwidth=1, borderpad=3,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor=c_defl, borderwidth=1, borderpad=3,
             row=4, col=1
         )
 
     # ==========================================
-    # GLOBAL STYLING & GRID
+    # LAYOUT & AXIS TITLES
     # ==========================================
-    # Draw Vertical Drop Lines at ALL Key Points
     for kp in sorted_keys:
-        fig.add_vline(x=kp, line_width=1, line_dash="dot", line_color="#bbb")
+        fig.add_vline(x=kp, line_width=1, line_dash="dash", line_color="gray", opacity=0.4)
 
     fig.update_layout(
-        height=1100, # Tall enough for clarity
+        height=1000, 
         showlegend=False,
-        template="plotly_white", # Best for engineering (subtle grids)
-        margin=dict(l=60, r=40, t=40, b=40),
-        hovermode="x unified"
+        template="simple_white",
+        margin=dict(l=60, r=20, t=40, b=50),
+        font=dict(family="Roboto, Arial", size=12)
     )
     
-    # Hide Y-axis for FBD only
+    # Axis Titles (Label แกน Y X กลับมาแล้ว)
     fig.update_yaxes(visible=False, row=1, col=1)
+    fig.update_yaxes(title_text=f"V ({unit_force})", row=2, col=1, showgrid=True, gridcolor='#EEE')
+    fig.update_yaxes(title_text=f"M ({unit_force}-{unit_len})", row=3, col=1, showgrid=True, gridcolor='#EEE')
+    fig.update_yaxes(title_text=f"δ ({unit_len})", row=4, col=1, showgrid=True, gridcolor='#EEE')
     
-    # Ensure zero lines are distinct
-    fig.update_yaxes(zeroline=True, zerolinewidth=1.5, zerolinecolor='#333')
+    # Axis X Title (Bottom only)
+    fig.update_xaxes(title_text=f"Distance along beam ({unit_len})", row=4, col=1, showgrid=True, gridcolor='#EEE')
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # --- 3. RESULT TABLE (Reactions) ---
-    st.subheader("📍 Support Reactions")
-    
+    # --- 3. REACTION TABLE (แก้ไขให้ใช้ตัวแปร reac ได้ถูกต้อง) ---
+    st.markdown("### 📍 Support Reactions")
     reac_data = []
-    for i in range(len(spans)+1):
-        ry = reac[2*i]
-        mz = reac[2*i+1]
-        
-        # Only show nodes with supports (checking Ry or Mz != 0 is a proxy, or use support map)
-        if abs(ry) > 1e-5 or abs(mz) > 1e-5:
-            reac_data.append({
-                "Node": f"{i+1}",
-                "Vertical Reaction (Ry)": f"{ry:.2f} {unit_force}",
-                "Moment Reaction (Mz)": f"{mz:.2f} {unit_force}-{unit_len}"
-            })
+    
+    # ตรวจสอบว่า reac มีค่าและขนาดถูกต้องหรือไม่
+    expected_size = (len(spans) + 1) * 2
+    if reac is not None and len(reac) >= expected_size:
+        for i in range(len(spans)+1):
+            ry = reac[2*i]
+            mz = reac[2*i+1]
             
-    if reac_data:
-        st.table(pd.DataFrame(reac_data).set_index("Node"))
+            # โชว์เฉพาะจุดที่มีแรงปฏิกิริยา (หรือเป็น Support)
+            if abs(ry) > 1e-4 or abs(mz) > 1e-4 or i in sup_map:
+                reac_data.append({
+                    "Node": i+1, 
+                    f"Vertical (Ry) [{unit_force}]": f"{ry:.2f}", 
+                    f"Moment (Mz) [{unit_force}-{unit_len}]": f"{mz:.2f}"
+                })
+        
+        if reac_data:
+            st.table(pd.DataFrame(reac_data))
+        else:
+            st.write("No significant reactions.")
     else:
-        st.write("No significant reactions.")
+        st.error("Error: Reaction data (reac) unavailable or size mismatch.")
