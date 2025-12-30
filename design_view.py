@@ -84,7 +84,6 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     
     for l in loads:
         try:
-            # FORCE FLOAT HERE
             val_w = float(l.get('w', 0))
             val_p = float(l.get('P', 0))
             
@@ -94,12 +93,10 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
                 h_draw = max(abs(h_draw), arrow_h*0.3)
                 
                 fig.add_trace(go.Scatter(x=[x1, x2, x2, x1], y=[0, 0, h_draw, h_draw], fill="toself", fillcolor="rgba(30, 136, 229, 0.3)", line_width=0, hoverinfo='skip'), row=1, col=1)
-                # FIX: format using fmt helper or explicit float
                 fig.add_annotation(x=(x1+x2)/2, y=h_draw, text=f"w={val_w:.0f}", showarrow=False, yshift=10, font=dict(color="#1565C0", size=10), row=1, col=1)
                 
             elif l['type'] == 'P':
                 px = cum_len[l['span_idx']] + float(l['x'])
-                # FIX: format using explicit float
                 fig.add_annotation(x=px, y=0, ax=0, ay=-60, text=f"P={val_p:.0f}", arrowhead=2, arrowwidth=2, arrowcolor="#D32F2F", font=dict(color="#D32F2F", size=10), row=1, col=1)
         except: continue
 
@@ -120,7 +117,6 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
 
 def render_combined_section(b, h, cover, top_bars, bot_bars):
     try:
-        # SAFETY CAST
         b, h, cover = float(b), float(h), float(cover)
     except: return go.Figure()
 
@@ -154,23 +150,24 @@ def render_design_results(df, params, spans, span_props_list, supports):
     
     for i in range(len(spans)):
         sp = span_props_list[i]
-        # 🔴 CRITICAL FIX: Cast to float immediately. 
-        # If 'b' comes from input as string "30", f"{b:.0f}" crashes.
         try:
             b_s = float(sp['b'])
             h_s = float(sp['h'])
             cv_s = float(sp['cv'])
         except:
-            b_s, h_s, cv_s = 30.0, 60.0, 3.0 # Default fallback
+            b_s, h_s, cv_s = 30.0, 60.0, 3.0
 
         mask = (df['x'] >= cum_len[i]) & (df['x'] <= cum_len[i+1])
         sub_df = df[mask]
         
         if sub_df.empty: continue
         
-        m_pos = float(max(0, sub_df['moment'].max()))
-        m_neg = float(min(0, sub_df['moment'].min()))
-        v_u = float(sub_df['shear'].abs().max())
+        try:
+            m_pos = float(max(0, sub_df['moment'].max()))
+            m_neg = float(min(0, sub_df['moment'].min()))
+            v_u = float(sub_df['shear'].abs().max())
+        except:
+            m_pos, m_neg, v_u = 0.0, 0.0, 0.0
         
         des_pos = rc_design.calculate_flexure_sdm(m_pos, "Midspan", b_s, h_s, cv_s, params)
         des_neg = rc_design.calculate_flexure_sdm(m_neg, "Support", b_s, h_s, cv_s, params)
@@ -184,7 +181,6 @@ def render_design_results(df, params, spans, span_props_list, supports):
         
         summary_data.append({
             "Span": f"{i+1}",
-            # 🔴 THIS LINE was likely causing the crash if b_s/h_s were strings
             "Size": f"{b_s:.0f}x{h_s:.0f}", 
             "Top Bar": des_neg['Bars'],
             "Bot Bar": des_pos['Bars'],
@@ -199,21 +195,31 @@ def render_design_results(df, params, spans, span_props_list, supports):
 
     # Details
     st.markdown("---")
+    if not summary_data:
+        st.info("No span data available.")
+        return
+
     tabs = st.tabs([f"Span {d['Span']}" for d in summary_data])
     for i, tab in enumerate(tabs):
         d = summary_data[i]
         sp = span_props_list[i]
-        # Recast for section drawing
         try:
             bb = float(sp['b'])
             hh = float(sp['h'])
             cc = float(sp['cv'])
-        except: bb, hh, cc = 30, 60, 3
+        except: bb, hh, cc = 30.0, 60.0, 3.0
 
         with tab:
             c1, c2 = st.columns([1, 1.5])
             with c1:
-                st.plotly_chart(render_combined_section(bb, hh, cc, d['_n']['Bars'], d['_p']['Bars']), use_container_width=True)
+                # ----------------------------------------------------
+                # 🔥 KEY FIX HERE: Added unique key argument
+                # ----------------------------------------------------
+                st.plotly_chart(
+                    render_combined_section(bb, hh, cc, d['_n']['Bars'], d['_p']['Bars']), 
+                    use_container_width=True,
+                    key=f"sec_chart_{i}" 
+                )
             with c2:
                 with st.expander("📝 Detailed Calculation", expanded=True):
                     st.markdown(f"**Flexure +M:** {d['Bot Bar']}")
@@ -259,4 +265,4 @@ def render_longitudinal_view(spans, supports, design_data):
     fig.update_xaxes(visible=False, range=[-0.5, total_len+0.5])
     fig.update_yaxes(visible=False, range=[-2, 12])
     fig.update_layout(height=250, title="<b>Longitudinal Reinforcement Profile</b>", margin=dict(t=30,b=10), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, key="long_profile_view") # Add key here too just in case
