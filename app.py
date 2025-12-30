@@ -7,7 +7,7 @@ import design_view
 st.set_page_config(page_title="RC Beam Pro", layout="wide", page_icon="🏗️")
 st.markdown("""<style>.stApp { font-family: 'Sarabun', sans-serif; } h1, h2, h3 { color: #0D47A1; } .stButton>button { background-color: #1565C0; color: white; border-radius: 8px; font-weight: bold; }</style>""", unsafe_allow_html=True)
 
-st.title("🏗️ RC Beam Design: Professional Edition (Stable)")
+st.title("🏗️ RC Beam Design: Professional Edition")
 
 def main():
     params = input_handler.render_sidebar()
@@ -27,25 +27,29 @@ def main():
                 df_res, reactions = engine.solve()
                 
                 if df_res is None:
-                    st.error("Analysis Failed: Structure is unstable (Singularity Matrix).")
+                    st.error("Analysis Failed: Structure is unstable.")
                     return
                 
                 st.success("✅ Analysis Complete!")
                 
+                # 1. Plot Diagrams
                 design_view.draw_diagrams(df_res, spans, sup_df, loads, params['u_force'], 'm')
                 
-                with st.expander("Show Reaction Forces"):
-                    n_nodes = n + 1
-                    r_vals = reactions[:n_nodes*2].reshape(-1, 2)
-                    df_r = pd.DataFrame(r_vals, columns=[f"Fy ({params['u_force']})", f"Mz ({params['u_force']}-m)"])
-                    df_r.insert(0, "Node", [f"N{i+1}" for i in range(n_nodes)])
-                    st.dataframe(df_r.style.format("{:.2f}"), hide_index=True, use_container_width=True)
+                # 2. Show Reactions Table (Explicitly shown now)
+                st.markdown("#### ⚓ Support Reactions")
+                n_nodes = n + 1
+                r_vals = reactions[:n_nodes*2].reshape(-1, 2)
+                df_r = pd.DataFrame(r_vals, columns=[f"Ry ({params['u_force']})", f"Mz ({params['u_force']}-m)"])
+                df_r.insert(0, "Node", [f"N{i+1}" for i in range(n_nodes)])
+                
+                # Highlight non-zero reactions
+                st.dataframe(df_r.style.format("{:.2f}").background_gradient(cmap="Blues", axis=None), hide_index=True, use_container_width=True)
 
+                # 3. Design Results
                 design_view.render_design_results(df_res, params, spans, span_props, sup_df)
             
             except Exception as e:
-                st.error(f"Critical System Error: {e}")
-                st.info("Please verify inputs. Ensure all span lengths and loads are valid numbers.")
+                st.error(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
