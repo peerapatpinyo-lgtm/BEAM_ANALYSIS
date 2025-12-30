@@ -10,104 +10,130 @@ def add_peak_annotations(fig, x_data, y_data, row, col, unit):
         y_vals = np.array([float(y) for y in y_data])
         x_vals = np.array([float(x) for x in x_data])
         
+        # 1. Find Max (Positive Peak)
         idx_max = np.argmax(y_vals)
         val_max = y_vals[idx_max]
-        x_max = x_vals[idx_max]
+        x_at_max = x_vals[idx_max]
 
+        # 2. Find Min (Negative Peak)
         idx_min = np.argmin(y_vals)
         val_min = y_vals[idx_min]
-        x_min = x_vals[idx_min]
+        x_at_min = x_vals[idx_min]
         
-        # Max Label
-        if abs(val_max) > 0.01:
+        # Threshold to ignore near-zero noise
+        threshold = 1.0 # Ignore small values like 0.0001
+        
+        # Draw Max Label
+        if val_max > threshold:
             fig.add_annotation(
-                x=x_max, y=val_max,
-                text=f"<b>Max: {val_max:,.0f}<br>@ {x_max:.2f}m</b>",
+                x=x_at_max, y=val_max,
+                text=f"<b>Max: {val_max:,.0f}<br>@ {x_at_max:.2f}m</b>",
                 showarrow=False, yshift=15,
-                font=dict(size=10, color="black"), bgcolor="rgba(255,255,255,0.7)",
+                font=dict(size=10, color="#1B5E20"), bgcolor="rgba(255,255,255,0.8)",
                 row=row, col=col
             )
-            fig.add_trace(go.Scatter(x=[x_max], y=[val_max], mode='markers', marker=dict(color='red', size=6), showlegend=False, hoverinfo='skip'), row=row, col=col)
+            fig.add_trace(go.Scatter(x=[x_at_max], y=[val_max], mode='markers', marker=dict(color='#1B5E20', size=6), showlegend=False, hoverinfo='skip'), row=row, col=col)
 
-        # Min Label
-        if abs(val_min) > 0.01 and idx_min != idx_max:
+        # Draw Min Label (Only if significantly different from Max or negative)
+        if val_min < -threshold:
             fig.add_annotation(
-                x=x_min, y=val_min,
-                text=f"<b>Min: {val_min:,.0f}<br>@ {x_min:.2f}m</b>",
+                x=x_at_min, y=val_min,
+                text=f"<b>Min: {val_min:,.0f}<br>@ {x_at_min:.2f}m</b>",
                 showarrow=False, yshift=-15,
-                font=dict(size=10, color="black"), bgcolor="rgba(255,255,255,0.7)",
+                font=dict(size=10, color="#B71C1C"), bgcolor="rgba(255,255,255,0.8)",
                 row=row, col=col
             )
-            fig.add_trace(go.Scatter(x=[x_min], y=[val_min], mode='markers', marker=dict(color='red', size=6), showlegend=False, hoverinfo='skip'), row=row, col=col)
-    except: pass
+            fig.add_trace(go.Scatter(x=[x_at_min], y=[val_min], mode='markers', marker=dict(color='#B71C1C', size=6), showlegend=False, hoverinfo='skip'), row=row, col=col)
+            
+    except Exception as e:
+        print(f"Annotation Error: {e}")
 
 def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     cum_len = [0] + list(np.cumsum(spans))
     L_total = cum_len[-1]
-    viz_scale = L_total / 15.0 
+    
+    # Scale calculation for drawing supports
+    viz_scale = max(L_total / 15.0, 1.0)
     
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
         subplot_titles=("<b>Structure & Loads</b>", f"<b>Shear Force ({u_force})</b>", f"<b>Bending Moment ({u_force}-{u_len})</b>"),
-        row_heights=[0.3, 0.35, 0.35]
+        row_heights=[0.25, 0.375, 0.375]
     )
     
-    # Grid Lines
-    for x_s in cum_len:
-        fig.add_vline(x=x_s, line_width=1, line_dash="dash", line_color="gray", opacity=0.5)
-
-    # Structure
+    # --- 1. Structure Plot ---
+    # Beam Line
     fig.add_trace(go.Scatter(x=[0, L_total], y=[0, 0], mode='lines', line=dict(color='black', width=4), hoverinfo='none'), row=1, col=1)
 
+    # Supports & Grid
     for i, x in enumerate(cum_len):
-        stype = supports.iloc[i]['type'] if 'type' in supports.columns else supports.iloc[i]['type']
-        fig.add_annotation(x=x, y=-viz_scale*0.8, text=f"<b>N{i+1}</b>", showarrow=False, row=1, col=1)
+        # Grid line (Vertical Dash)
+        fig.add_vline(x=x, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
+        
+        # Support Icon
+        try: stype = supports.iloc[i]['type']
+        except: stype = "Pin"
+        
+        fig.add_annotation(x=x, y=-viz_scale*0.6, text=f"<b>N{i+1}</b>", showarrow=False, font=dict(size=10), row=1, col=1)
+        
         if stype == "Pin":
-            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='triangle-up', size=15, color='#B0BEC5', line=dict(color='black', width=2)), showlegend=False, hovertext="Pin"), row=1, col=1)
+            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/4], mode='markers', marker=dict(symbol='triangle-up', size=14, color='#90A4AE', line=dict(color='black', width=1.5)), showlegend=False, hovertext="Pin"), row=1, col=1)
         elif stype == "Roller":
-            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/3], mode='markers', marker=dict(symbol='circle', size=15, color='white', line=dict(color='black', width=2)), showlegend=False, hovertext="Roller"), row=1, col=1)
-            fig.add_shape(type="line", x0=x-viz_scale/2, y0=-viz_scale/1.5, x1=x+viz_scale/2, y1=-viz_scale/1.5, line=dict(color="black", width=2), row=1, col=1)
+            fig.add_trace(go.Scatter(x=[x], y=[-viz_scale/4], mode='markers', marker=dict(symbol='circle', size=14, color='white', line=dict(color='black', width=1.5)), showlegend=False, hovertext="Roller"), row=1, col=1)
+            fig.add_shape(type="line", x0=x-viz_scale/3, y0=-viz_scale/2, x1=x+viz_scale/3, y1=-viz_scale/2, line=dict(color="black", width=2), row=1, col=1)
         elif stype == "Fixed":
-            fig.add_shape(type="rect", x0=x-viz_scale/5, y0=-viz_scale/1.5, x1=x+viz_scale/5, y1=viz_scale/1.5, line=dict(color="black", width=2), fillcolor="gray", row=1, col=1)
+            fig.add_shape(type="rect", x0=x-viz_scale/6, y0=-viz_scale/2, x1=x+viz_scale/6, y1=viz_scale/2, line=dict(color="black", width=2), fillcolor="gray", row=1, col=1)
 
     # Loads
     try:
         load_vals = [float(l.get('w',0)) for l in loads if l['type']=='U'] + [float(l.get('P',0)) for l in loads if l['type']=='P']
-        max_load = max(load_vals + [1.0])
-    except: max_load = 100
-    arrow_h = viz_scale * 1.2
+        max_load_val = max(load_vals) if load_vals else 1.0
+    except: max_load_val = 100
+    
+    arrow_scale = viz_scale * 1.5
     
     for l in loads:
-        try:
-            if l['type'] == 'U':
-                val_w = float(l.get('w', 0))
-                x1, x2 = cum_len[l['span_idx']], cum_len[l['span_idx']+1]
-                h_draw = arrow_h * (val_w / max_load) if max_load > 0 else arrow_h*0.5
-                h_draw = max(abs(h_draw), arrow_h*0.3)
-                fig.add_trace(go.Scatter(x=[x1, x2, x2, x1], y=[0, 0, h_draw, h_draw], fill="toself", fillcolor="rgba(30, 136, 229, 0.3)", line_width=0, hoverinfo='skip'), row=1, col=1)
-                fig.add_annotation(x=(x1+x2)/2, y=h_draw, text=f"w={val_w:.0f}", showarrow=False, yshift=10, font=dict(color="#1565C0", size=10), row=1, col=1)
-            elif l['type'] == 'P':
-                val_p = float(l.get('P', 0))
-                px = cum_len[l['span_idx']] + float(l['x'])
-                fig.add_annotation(x=px, y=0, ax=0, ay=-60, text=f"P={val_p:.0f}", arrowhead=2, arrowwidth=2, arrowcolor="#D32F2F", font=dict(color="#D32F2F", size=10), row=1, col=1)
-        except: continue
+        if l['type'] == 'U':
+            w = float(l['w'])
+            x1, x2 = cum_len[l['span_idx']], cum_len[l['span_idx']+1]
+            # Height proportional to load
+            h = arrow_scale * (w / max_load_val) if max_load_val > 0 else arrow_scale*0.5
+            h = max(h, viz_scale*0.3) # Minimum visibility
+            
+            fig.add_trace(go.Scatter(x=[x1, x2, x2, x1], y=[0, 0, h, h], fill="toself", fillcolor="rgba(33, 150, 243, 0.2)", line_width=0, hoverinfo='skip'), row=1, col=1)
+            fig.add_annotation(x=(x1+x2)/2, y=h, text=f"w={w:.0f}", showarrow=False, yshift=5, font=dict(color="#1565C0", size=10), row=1, col=1)
+            
+        elif l['type'] == 'P':
+            p = float(l['P'])
+            px = cum_len[l['span_idx']] + float(l['x'])
+            fig.add_annotation(x=px, y=0, ax=0, ay=-50, text=f"P={p:.0f}", arrowhead=2, arrowwidth=2, arrowcolor="#D32F2F", font=dict(color="#D32F2F", size=10), row=1, col=1)
 
-    fig.update_yaxes(visible=False, range=[-viz_scale*1.5, arrow_h*2.5], row=1, col=1)
+    fig.update_yaxes(visible=False, range=[-viz_scale, arrow_scale*2], row=1, col=1)
 
-    # Shear
-    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#D32F2F', width=2), name="Shear", hovertemplate='V: %{y:,.0f}'), row=2, col=1)
+    # --- 2. Shear Force ---
+    # ใช้ step='hv' หรือ line ปกติ แต่เนื่องจากเรามีจุด shear discontinuity (+-epsilon) แล้ว ใช้ line ปกติจะเห็นเส้นดิ่งสวยงาม
+    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#E53935', width=2), name="Shear", hovertemplate='V: %{y:,.0f}'), row=2, col=1)
     add_peak_annotations(fig, df['x'].values, df['shear'].values, 2, 1, u_force)
-    fig.update_yaxes(title_text=f"Shear ({u_force})", showticklabels=True, visible=True, row=2, col=1)
+    fig.update_yaxes(title_text=f"Shear ({u_force})", showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', row=2, col=1)
 
-    # Moment
-    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1976D2', width=2), name="Moment", hovertemplate='M: %{y:,.0f}'), row=3, col=1)
+    # --- 3. Bending Moment ---
+    # Invert Y axis for Moment Diagram? (Optional: American standard flips, but typically we plot positive up in simple software. Let's keep normal but clear)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1E88E5', width=2), name="Moment", hovertemplate='M: %{y:,.0f}'), row=3, col=1)
     add_peak_annotations(fig, df['x'].values, df['moment'].values, 3, 1, f"{u_force}-{u_len}")
-    fig.update_yaxes(title_text=f"Moment", showticklabels=True, visible=True, row=3, col=1)
+    fig.update_yaxes(title_text=f"Moment", showgrid=True, zeroline=True, zerolinewidth=2, zerolinecolor='black', row=3, col=1)
 
-    fig.update_layout(height=700, template="plotly_white", showlegend=False, hovermode="x unified", margin=dict(t=40, b=20, l=60, r=20))
+    fig.update_layout(height=800, template="plotly_white", showlegend=False, hovermode="x unified", margin=dict(t=30, b=30, l=60, r=20))
     st.plotly_chart(fig, use_container_width=True, key="main_diagram")
 
+# (ส่วน render_design_results และอื่นๆ เหมือนเดิม ไม่ต้องแก้)
+# ... Include render_design_results ...
+# ... Include render_combined_section ...
+# ... Include render_longitudinal_view ...
+# COPY ฟังก์ชัน design view เดิมมาต่อท้ายตรงนี้ได้เลยครับ 
+# แต่เพื่อให้โค้ดสมบูรณ์ ผมจะใส่ Stub ไว้ให้ ถ้าคุณมีโค้ดเดิมอยู่แล้วใช้ต่อได้เลย
+
 def render_combined_section(b, h, cover, top_bars, bot_bars):
+    # (ใช้ Code เดิมจากคำตอบก่อนหน้า)
     try: b, h, cover = float(b), float(h), float(cover)
     except: return go.Figure()
     fig = go.Figure()
@@ -130,6 +156,7 @@ def render_combined_section(b, h, cover, top_bars, bot_bars):
     return fig
 
 def render_design_results(df, params, spans, span_props_list, supports):
+    # (ใช้ Code เดิมจากคำตอบก่อนหน้า)
     cum_len = [0] + list(np.cumsum(spans))
     summary_data = []
     
@@ -175,6 +202,7 @@ def render_design_results(df, params, spans, span_props_list, supports):
     render_longitudinal_view(spans, supports, long_data)
 
 def render_longitudinal_view(spans, supports, design_data):
+    # (ใช้ Code เดิมจากคำตอบก่อนหน้า)
     total_len = sum(spans)
     cum_len = [0] + list(np.cumsum(spans))
     fig = go.Figure()
