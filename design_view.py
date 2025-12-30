@@ -4,16 +4,50 @@ from plotly.subplots import make_subplots
 import numpy as np
 import rc_design 
 
+def add_peak_annotations(fig, x_data, y_data, row, col, unit_label=""):
+    """Helper function to find and annotate Max/Min values on the curve"""
+    # Find Max
+    idx_max = np.argmax(y_data)
+    val_max = y_data[idx_max]
+    x_max = x_data[idx_max]
+    
+    # Find Min
+    idx_min = np.argmin(y_data)
+    val_min = y_data[idx_min]
+    x_min = x_data[idx_min]
+    
+    # Annotate Max
+    if abs(val_max) > 0.01:
+        fig.add_annotation(
+            x=x_max, y=val_max,
+            text=f"Max: {val_max:,.2f} {unit_label}",
+            showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2,
+            ax=0, ay=-40, bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
+            row=row, col=col
+        )
+        # Mark point
+        fig.add_trace(go.Scatter(x=[x_max], y=[val_max], mode='markers', marker=dict(color='black', size=8), showlegend=False, hoverinfo='skip'), row=row, col=col)
+
+    # Annotate Min
+    if abs(val_min) > 0.01 and idx_min != idx_max:
+        fig.add_annotation(
+            x=x_min, y=val_min,
+            text=f"Min: {val_min:,.2f} {unit_label}",
+            showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2,
+            ax=0, ay=40, bgcolor="rgba(255,255,255,0.8)", bordercolor="black",
+            row=row, col=col
+        )
+        # Mark point
+        fig.add_trace(go.Scatter(x=[x_min], y=[val_min], mode='markers', marker=dict(color='black', size=8), showlegend=False, hoverinfo='skip'), row=row, col=col)
+
 def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     cum_len = [0] + list(np.cumsum(spans))
     L_total = cum_len[-1]
     
-    # Scale Helpers
     val_list = [abs(l['w']) for l in loads if l['type']=='U'] + [abs(l['P']) for l in loads if l['type']=='P']
     max_load = max(val_list) if val_list else 100
     viz_h = max_load * 1.5 
     
-    # Create Subplots
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.08,
                         subplot_titles=("<b>Load Model</b>", "<b>Shear Force (SFD)</b>", "<b>Bending Moment (BMD)</b>"),
                         row_heights=[0.25, 0.375, 0.375])
@@ -21,7 +55,6 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
     # -- Row 1: Beam --
     fig.add_trace(go.Scatter(x=[0, L_total], y=[0, 0], mode='lines', line=dict(color='black', width=4), hoverinfo='none'), row=1, col=1)
 
-    # Feature: Correct Support Visuals (ใช้ Markers เพื่อไม่ให้เบี้ยว)
     sup_h = viz_h * 0.15 
     for i, x in enumerate(cum_len):
         stype = supports.iloc[i]['type']
@@ -34,13 +67,10 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
                                      marker=dict(symbol='circle', size=15, color='white', line=dict(width=2, color='black')), 
                                      showlegend=False, hoverinfo='text', text="Roller"), row=1, col=1)
         elif stype == "Fixed":
-            # Fixed ใช้ shape rectangle
             fig.add_shape(type="rect", x0=x-0.1, y0=-sup_h, x1=x+0.1, y1=sup_h, fillcolor="black", line_width=0, row=1, col=1)
-            # Hatch
             for h_line in np.linspace(-sup_h, sup_h, 5):
                 fig.add_shape(type="line", x0=x, y0=h_line, x1=x-0.3, y1=h_line-0.1, line=dict(color="black", width=1), row=1, col=1)
 
-    # Loads
     for l in loads:
         if l['type'] == 'U':
             x1, x2 = cum_len[l['span_idx']], cum_len[l['span_idx']+1]
@@ -54,29 +84,35 @@ def draw_diagrams(df, spans, supports, loads, u_force, u_len):
 
     fig.update_yaxes(visible=False, range=[-sup_h*2, viz_h*1.2], row=1, col=1)
 
-    # -- Row 2 & 3: SFD & BMD --
+    # -- Row 2: SFD --
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color='#D32F2F', width=2), name="Shear", hovertemplate='V: %{y:,.2f}'), row=2, col=1)
-    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1565C0', width=2), name="Moment", hovertemplate='M: %{y:,.2f}'), row=3, col=1)
+    # FIX: Add Peak Annotations for SFD
+    add_peak_annotations(fig, df['x'].values, df['shear'].values, 2, 1, u_force)
 
-    # Feature: Spike Lines & Unified Hover (สำคัญมาก)
+    # -- Row 3: BMD --
+    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], fill='tozeroy', line=dict(color='#1565C0', width=2), name="Moment", hovertemplate='M: %{y:,.2f}'), row=3, col=1)
+    # FIX: Add Peak Annotations for BMD
+    add_peak_annotations(fig, df['x'].values, df['moment'].values, 3, 1, f"{u_force}-{u_len}")
+
+    # Layout Updates
     fig.update_layout(height=800, template="plotly_white", showlegend=False, hovermode="x unified")
     fig.update_xaxes(showspikes=True, spikemode='across', spikethickness=1, spikedash='dash', spikecolor='#546E7A')
-    fig.update_yaxes(showspikes=True, spikemode='across', spikethickness=1, spikedash='dash', spikecolor='#546E7A')
+    
+    # Ensure Y-axes are auto-ranged to fit the annotations
+    fig.update_yaxes(autorange=True, row=2, col=1)
+    fig.update_yaxes(autorange=True, row=3, col=1)
     
     st.plotly_chart(fig, use_container_width=True)
 
 def render_cross_section(b, h, cover, bars, label=""):
     fig = go.Figure()
-    # Concrete
     fig.add_shape(type="rect", x0=0, y0=0, x1=b, y1=h, line=dict(color="black", width=2), fillcolor="#ECEFF1")
-    # Stirrup
     fig.add_shape(type="rect", x0=cover, y0=cover, x1=b-cover, y1=h-cover, line=dict(color="#43A047", width=2, dash="dash"))
     
     parsed = rc_design.parse_bars(bars)
     if parsed:
         num, db = parsed
         xs = np.linspace(cover, b-cover, num) if num > 1 else [b/2]
-        # Top or Bottom logic
         y_pos = cover + 1.5 if "Bot" in label else h - cover - 1.5
         color = "#1565C0" if "Bot" in label else "#D32F2F"
         
@@ -85,7 +121,7 @@ def render_cross_section(b, h, cover, bars, label=""):
             fig.add_shape(type="circle", x0=x-r, y0=y_pos-r, x1=x+r, y1=y_pos+r, fillcolor=color, line_color="black")
 
     fig.update_xaxes(visible=False, range=[-2, b+2])
-    fig.update_yaxes(visible=False, range=[-2, h+2], scaleanchor="x", scaleratio=1) # Aspect Ratio Fixed
+    fig.update_yaxes(visible=False, range=[-2, h+2], scaleanchor="x", scaleratio=1)
     fig.update_layout(width=160, height=220, margin=dict(l=5, r=5, t=30, b=5), 
                       title=dict(text=label, y=0.95, x=0.5, font=dict(size=12)),
                       paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
@@ -96,10 +132,8 @@ def render_longitudinal_view(spans, supports, design_data):
     cum_len = [0] + list(np.cumsum(spans))
     fig = go.Figure()
     
-    # Beam
     fig.add_shape(type="rect", x0=0, y0=0, x1=total_len, y1=10, line=dict(color="black", width=2), fillcolor="#FAFAFA", layer="below")
     
-    # Supports
     for i, x in enumerate(cum_len):
         if supports.iloc[i]['type'] != "None":
             fig.add_shape(type="path", path=f"M {x} 0 L {x-0.25} -1.5 L {x+0.25} -1.5 Z", fillcolor="#B0BEC5", line_color="black")
@@ -109,14 +143,11 @@ def render_longitudinal_view(spans, supports, design_data):
         x_end = cum_len[i+1]
         data = design_data[i]
         
-        # Feature: Longitudinal Bars Drawing
-        # Bottom Bar (Blue) - Full Span
         if data['bot_bars']:
             fig.add_trace(go.Scatter(x=[x_start+0.1, x_end-0.1], y=[1.5, 1.5], mode="lines", 
                                      line=dict(color="#1565C0", width=4), hoverinfo='text', text=f"Bot: {data['bot_bars']}"))
             fig.add_annotation(x=x_start+span_len/2, y=1.5, text=data['bot_bars'], yshift=-15, showarrow=False, font=dict(color="#1565C0", size=10))
 
-        # Top Bar (Red) - At Supports (Approx 1/3)
         if data['top_bars']:
             cut = span_len/3.0
             fig.add_trace(go.Scatter(x=[x_start, x_start+cut], y=[8.5, 8.5], mode="lines", 
@@ -124,7 +155,6 @@ def render_longitudinal_view(spans, supports, design_data):
             fig.add_trace(go.Scatter(x=[x_end-cut, x_end], y=[8.5, 8.5], mode="lines", 
                                      line=dict(color="#C62828", width=4), showlegend=False, hoverinfo='text', text=f"Top: {data['top_bars']}"))
 
-        # Stirrups Text
         if "None" not in data['stirrups']:
             fig.add_annotation(x=x_start+span_len/2, y=5.0, text=f"<b>{data['stirrups']}</b>", 
                                showarrow=False, bgcolor="white", bordercolor="#43A047", font=dict(color="#2E7D32", size=10))
@@ -140,7 +170,6 @@ def render_design_results(df, params, spans, supports):
     cum_len = [0] + list(np.cumsum(spans))
     span_data = []
     
-    # Feature: Separate Tabs per Span
     tabs = st.tabs([f"Span {i+1}" for i in range(len(spans))])
 
     for i, tab in enumerate(tabs):
@@ -155,7 +184,6 @@ def render_design_results(df, params, spans, supports):
         m_neg = min(0, sub_df['moment'].min())
         v_u = sub_df['shear'].abs().max()
         
-        # Calculate using rc_design
         des_pos = rc_design.calculate_flexure_sdm(m_pos, "Midspan (+)", params)
         des_neg = rc_design.calculate_flexure_sdm(m_neg, "Support (-)", params)
         v_act, v_cap, stir_txt = rc_design.calculate_shear_capacity(v_u, params)
@@ -164,7 +192,6 @@ def render_design_results(df, params, spans, supports):
 
         with tab:
             c1, c2, c3 = st.columns(3)
-            # Section Views
             with c1:
                 st.markdown("**Top Support (-M)**")
                 st.caption(f"Mu = {abs(des_neg['Mu']):.2f}")
@@ -188,5 +215,4 @@ def render_design_results(df, params, spans, supports):
                 if v_act > v_cap: st.error("Shear Fail!")
 
     st.markdown("---")
-    # Feature: Longitudinal Profile View
     render_longitudinal_view(spans, supports, span_data)
