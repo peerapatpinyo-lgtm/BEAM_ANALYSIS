@@ -2,25 +2,29 @@ import streamlit as st
 import pandas as pd
 
 def render_sidebar():
-    st.sidebar.header("⚙️ Design Standards")
-    unit = st.sidebar.radio("Units", ["Metric (kg, cm)", "SI (kN, m)"])
+    st.sidebar.markdown("## ⚙️ Settings")
     
-    st.sidebar.markdown("---")
-    st.sidebar.header("🧱 Material Properties")
+    # 1. Unit System
+    with st.sidebar.expander("📏 Units & Standards", expanded=True):
+        unit = st.radio("System", ["Metric (kg, cm)", "SI (kN, m)"])
     
-    if "Metric" in unit:
-        fc = st.sidebar.number_input("f'c (ksc)", value=240, step=10)
-        fy = st.sidebar.number_input("fy (Main) (ksc)", value=4000, step=100)
-        fys = st.sidebar.number_input("fy (Stirrup) (ksc)", value=2400, step=100)
-        u_force, u_len = "kg", "m"
-    else:
-        fc = st.sidebar.number_input("f'c (MPa)", value=25, step=5)
-        fy = st.sidebar.number_input("fy (Main) (MPa)", value=400, step=10)
-        fys = st.sidebar.number_input("fy (Stirrup) (MPa)", value=240, step=10)
-        u_force, u_len = "kN", "m"
-        
-    db_main = st.sidebar.selectbox("Main Bar DB", [12, 16, 20, 25, 28, 32], index=1)
-    db_stir = st.sidebar.selectbox("Stirrup Bar RB/DB", [6, 9, 10, 12], index=0)
+    # 2. Material Properties
+    with st.sidebar.expander("🧱 Materials", expanded=True):
+        if "Metric" in unit:
+            fc = st.number_input("f'c (ksc)", value=240, step=10)
+            fy = st.number_input("fy Main (ksc)", value=4000, step=100)
+            fys = st.number_input("fy Stirrup (ksc)", value=2400, step=100)
+            u_force, u_len = "kg", "m"
+        else:
+            fc = st.number_input("f'c (MPa)", value=25, step=5)
+            fy = st.number_input("fy Main (MPa)", value=400, step=10)
+            fys = st.number_input("fy Stirrup (MPa)", value=240, step=10)
+            u_force, u_len = "kN", "m"
+            
+        st.markdown("---")
+        c1, c2 = st.columns(2)
+        db_main = c1.selectbox("Main DB", [12, 16, 20, 25, 28], index=1)
+        db_stir = c2.selectbox("Stirrup RB", [6, 9, 10, 12], index=0)
     
     return {
         "unit": unit, "fc": fc, "fy": fy, "fys": fys,
@@ -28,80 +32,76 @@ def render_sidebar():
         "u_force": u_force, "u_len": u_len
     }
 
-def render_geometry():
-    st.subheader("1️⃣ Beam Geometry & Supports")
-    n_spans = st.number_input("Number of Spans", min_value=1, max_value=10, value=2)
-    
-    spans = []
-    supports = []
-    
-    c1, c2 = st.columns([1, 1])
-    c1.markdown("**Span Length (m)**")
-    c2.markdown("**Support Type (Right Side)**")
-    
-    st.markdown("**Leftmost Support (Start)**")
-    first_sup = st.selectbox("Type", ["Pin", "Roller", "Fixed", "None"], key="sup_0")
-    supports.append({"id": 0, "type": first_sup})
-    
-    for i in range(int(n_spans)):
-        c1, c2 = st.columns([1, 1])
-        l = c1.number_input(f"L{i+1}", min_value=0.1, value=5.0, key=f"span_len_{i}")
-        s = c2.selectbox(f"S{i+1}", ["Pin", "Roller", "Fixed", "None"], index=1, key=f"sup_{i+1}")
+def render_model_inputs(params):
+    # ใช้ Container เพื่อจัดกลุ่ม Input ให้สวยงาม
+    with st.container():
+        st.subheader("1️⃣ Geometry & Supports")
         
-        spans.append(l)
-        supports.append({"id": i+1, "type": s})
+        c_main, c_dummy = st.columns([2, 1])
+        with c_main:
+            n_spans = st.number_input("Number of Spans", min_value=1, max_value=10, value=2)
+
+        spans = []
+        supports = []
         
-    return int(n_spans), spans, pd.DataFrame(supports), True
+        # Table Header-like layout
+        cols = st.columns([0.5, 1.5, 1.5]) 
+        cols[0].markdown("##### No.")
+        cols[1].markdown("##### Length (m)")
+        cols[2].markdown("##### Support (Right)")
 
-def render_loads(n_spans, spans, params):
-    st.subheader("2️⃣ Defined Loads")
-    u_f = params['u_force']
-    
-    if "loads" not in st.session_state:
-        st.session_state.loads = []
-
-    with st.expander("➕ Add New Load", expanded=True):
-        c1, c2, c3, c4 = st.columns([1, 1, 1, 0.5])
-        l_type = c1.selectbox("Type", ["Uniform (U)", "Point (P)"])
-        span_idx = c2.selectbox("Span Index", range(1, n_spans+1)) - 1
+        # First Support
+        supports.append({"id": 0, "type": "Pin"}) # Default start with Pin for simplicity or make editable if needed
         
-        if "Uniform" in l_type:
-            val = c3.number_input(f"w ({u_f}/m)", value=1000.0)
-            if c4.button("Add", key="add_u"):
-                st.session_state.loads.append({"type": "U", "span_idx": span_idx, "w": val})
-        else:
-            val = c3.number_input(f"P ({u_f})", value=1000.0)
-            loc = c3.number_input(f"Distance x from left (m)", min_value=0.0, max_value=spans[span_idx], value=spans[span_idx]/2)
-            if c4.button("Add", key="add_p"):
-                st.session_state.loads.append({"type": "P", "span_idx": span_idx, "P": val, "x": loc})
-
-    if st.session_state.loads:
-        for i, l in enumerate(st.session_state.loads):
-            txt = f"Span {l['span_idx']+1}: "
-            if l['type'] == 'U': txt += f"Uniform w={l['w']} {u_f}/m"
-            else: txt += f"Point P={l['P']} {u_f} @ x={l['x']}m"
+        for i in range(int(n_spans)):
+            c = st.columns([0.5, 1.5, 1.5])
+            c[0].markdown(f"**Span {i+1}**")
+            l = c[1].number_input(f"L{i+1}", min_value=0.5, value=5.0, step=0.5, key=f"len_{i}", label_visibility="collapsed")
+            s = c[2].selectbox(f"S{i+1}", ["Pin", "Roller", "Fixed", "None"], index=1, key=f"sup_{i}", label_visibility="collapsed")
             
-            c_txt, c_del = st.columns([4, 1])
-            c_txt.text(txt)
-            if c_del.button("❌", key=f"del_{i}"):
-                st.session_state.loads.pop(i)
-                st.rerun()
+            spans.append(l)
+            supports.append({"id": i+1, "type": s})
+            
+        # Leftmost support options (Minimal UI)
+        st.caption("Start Node (Left): Pin Support (Default)")
+
+    st.markdown("---")
+
+    with st.container():
+        st.subheader("2️⃣ Loads Setup")
+        u_f = params['u_force']
+        
+        if "loads" not in st.session_state: st.session_state.loads = []
+        
+        # Add Load UI
+        with st.expander("➕ Add Loads", expanded=True):
+            c1, c2, c3 = st.columns([1, 1, 1])
+            l_type = c1.selectbox("Type", ["Uniform Load", "Point Load"])
+            span_idx = c2.selectbox("Span No.", range(1, int(n_spans)+1)) - 1
+            
+            if "Uniform" in l_type:
+                val = c3.number_input(f"Magnitude ({u_f}/m)", value=1000.0, step=100.0)
+                if st.button("Add Uniform Load", use_container_width=True):
+                    st.session_state.loads.append({"type": "U", "span_idx": span_idx, "w": val})
+            else:
+                val = c3.number_input(f"Magnitude ({u_f})", value=2000.0, step=100.0)
+                loc = c3.number_input(f"Location x (m)", value=spans[span_idx]/2, max_value=float(spans[span_idx]))
+                if st.button("Add Point Load", use_container_width=True):
+                    st.session_state.loads.append({"type": "P", "span_idx": span_idx, "P": val, "x": loc})
+
+        # Load List (Chips style)
+        if st.session_state.loads:
+            st.markdown("###### Current Loads:")
+            for i, l in enumerate(st.session_state.loads):
+                txt = f"Span {l['span_idx']+1}: "
+                txt += f"Uniform {l['w']}" if l['type']=='U' else f"Point {l['P']} @ {l['x']}m"
                 
-    return st.session_state.loads
+                col_txt, col_del = st.columns([4, 1])
+                col_txt.info(txt)
+                if col_del.button("❌", key=f"del_load_{i}"):
+                    st.session_state.loads.pop(i)
+                    st.rerun()
+        else:
+            st.warning("No loads defined yet.")
 
-def render_section_inputs(n_spans):
-    st.subheader("3️⃣ Section Design Properties")
-    st.info("Define the beam cross-section size for each span.")
-    
-    span_props = []
-    cols = st.columns(n_spans)
-    
-    for i in range(n_spans):
-        with cols[i]:
-            st.markdown(f"**Span {i+1}**")
-            b = st.number_input(f"b (cm)", min_value=10.0, value=30.0, key=f"b_{i}")
-            h = st.number_input(f"h (cm)", min_value=20.0, value=60.0, key=f"h_{i}")
-            cv = st.number_input(f"Cover (cm)", min_value=2.0, value=3.0, key=f"cv_{i}")
-            span_props.append({"b": b, "h": h, "cv": cv})
-            
-    return span_props
+    return int(n_spans), spans, pd.DataFrame(supports), True
