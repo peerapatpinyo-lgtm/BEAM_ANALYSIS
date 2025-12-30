@@ -1,72 +1,94 @@
 import numpy as np
 import pandas as pd
-from scipy import linalg
+from indetermbeam import Beam, Support, PointLoadV, DistributedLoadV
 
 class BeamAnalysisEngine:
     def __init__(self, spans, supports, loads):
         self.spans = spans
         self.supports = supports
         self.loads = loads
-        self.n_nodes = len(spans) + 1
-        self.cum_len = [0] + list(np.cumsum(spans))
+        self.beam = Beam(sum(spans))
+        self._setup_structure()
+
+    def _setup_structure(self):
+        # 1. Supports
+        cum_len = [0] + list(np.cumsum(self.spans))
+        for _, row in self.supports.iterrows():
+            pos = cum_len[int(row['id'])]
+            stype = row['type']
+            
+            # Map UI Types to IndetermBeam Types
+            if stype == "Pin":
+                self.beam.add_supports(Support(pos, (1,1,0))) # Fix x,y
+            elif stype == "Roller":
+                self.beam.add_supports(Support(pos, (0,1,0))) # Fix y
+            elif stype == "Fixed":
+                self.beam.add_supports(Support(pos, (1,1,1))) # Fix x,y,m
+
+        # 2. Loads
+        for l in self.loads:
+            span_start = cum_len[l['span_idx']]
+            if l['type'] == 'U':
+                # Uniform Load (start, end, val)
+                # Note: Indetermbeam uses negative for downward if consistent
+                # But here we assume input positive = gravity downward, handle sign later
+                start = span_start
+                end = cum_len[l['span_idx']+1]
+                self.beam.add_loads(DistributedLoadV(-l['w'], (start, end)))
+            elif l['type'] == 'P':
+                pos = span_start + l['x']
+                self.beam.add_loads(PointLoadV(-l['P'], pos))
 
     def solve(self):
-        x_eval = []
-        for i, L in enumerate(self.spans):
-            x_start = self.cum_len[i]
-            pts = [0, L]
-            for l in self.loads:
-                if l['span_idx'] == i and l['type'] == 'P': pts.append(l['x'])
-            pts = sorted(list(set(pts)))
-            for j in range(len(pts)-1):
-                seg = np.linspace(pts[j], pts[j+1], 25) 
-                if j > 0: seg = seg[1:]
-                x_eval.extend(x_start + seg)
-        x_eval = np.array(sorted(list(set(x_eval))))
-        
-        NDOF = 2 * self.n_nodes
-        K = np.zeros((NDOF, NDOF))
-        F = np.zeros(NDOF)
-        E, I = 2e10, 1e-4 
-        
-        for i, L in enumerate(self.spans):
-            idx = 2*i
-            k_el = (E*I/L**3) * np.array([[12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2], [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]])
-            K[idx:idx+4, idx:idx+4] += k_el
-            
-            fem = np.zeros(4)
-            for l in [load for load in self.loads if load['span_idx']==i]:
-                if l['type']=='U': w=l['w']; fem+=[w*L/2, w*L**2/12, w*L/2, -w*L**2/12]
-                elif l['type']=='P': P=l['P']; a=l['x']; b=L-a; fem+=[P*b**2*(3*a+b)/L**3, P*a*b**2/L**2, P*a**2*(a+3*b)/L**3, -P*a**2*b/L**2]
-            F[idx:idx+4] += fem
-
-        fixed = []
-        for i, row in self.supports.iterrows():
-            if row['type'] in ['Pin', 'Roller']: fixed.append(2*i)
-            elif row['type'] == 'Fixed': fixed.extend([2*i, 2*i+1])
-        active = [d for d in range(NDOF) if d not in fixed]
-        if not active: return None, None
-
         try:
-            D_a = linalg.solve(K[np.ix_(active, active)], -F[active])
-            D = np.zeros(NDOF); D[active] = D_a
-            R = K @ D + F
-        except linalg.LinAlgError: return None, None
+            self.beam.analyze()
             
-        shear, moment = [], []
-        for x in x_eval:
-            V, M = 0, 0
-            for i in range(self.n_nodes): 
-                xn = self.cum_len[i]
-                if xn < x: V += R[2*i]; M += R[2*i]*(x-xn) - R[2*i+1]
-            for l in self.loads: 
-                xs = self.cum_len[l['span_idx']]
-                if l['type']=='U':
-                    xe = min(x, xs+self.spans[l['span_idx']])
-                    if x>xs: len_a=xe-xs; V-=l['w']*len_a; M-=l['w']*len_a*(x-(xs+len_a/2))
-                elif l['type']=='P':
-                    xl = xs+l['x']
-                    if x>xl: V-=l['P']; M-=l['P']*(x-xl)
-            shear.append(V); moment.append(M)
+            # --- CRITICAL FIX: SMART SAMPLING ---
+            # สร้างจุด x ที่ละเอียดเป็นพิเศษตรง Support และ Load เพื่อจับ Peak
             
-        return pd.DataFrame({'x': x_eval, 'shear': shear, 'moment': moment}), R
+            x_points = set()
+            cum_len = [0] + list(np.cumsum(self.spans))
+            
+            # 1. Add Span ends (Supports) with tiny offsets for Shear jumps
+            for x in cum_len:
+                x_points.add(x)
+                x_points.add(x - 1e-5) # Just left
+                x_points.add(x + 1e-5) # Just right
+
+            # 2. Add Point Load locations
+            for l in self.loads:
+                span_start = cum_len[l['span_idx']]
+                if l['type'] == 'P':
+                    px = span_start + l['x']
+                    x_points.add(px)
+                    x_points.add(px - 1e-5)
+                    x_points.add(px + 1e-5)
+
+            # 3. Add regular intervals (High resolution)
+            n_segments = 200 # increase resolution
+            total_len = sum(self.spans)
+            regular = np.linspace(0, total_len, n_segments)
+            x_points.update(regular)
+
+            # Sort and filter valid
+            x_final = sorted([x for x in x_points if 0 <= x <= total_len])
+            x_arr = np.array(x_final)
+
+            # Calculate Forces
+            shear = self.beam.get_shear(x_arr)
+            moment = self.beam.get_bending_moment(x_arr)
+            
+            # DataFrame for plotting
+            df = pd.DataFrame({
+                'x': x_arr,
+                'shear': shear,
+                'moment': moment
+            })
+            
+            # Get Reactions
+            reactions = self.beam.get_reaction_forces()
+            
+            return df, reactions
+
+        except Exception as e:
+            return None, None
