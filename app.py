@@ -5,63 +5,89 @@ import input_handler
 import design_view
 
 st.set_page_config(page_title="RC Beam Pro", layout="wide", page_icon="🏗️")
-st.markdown("""<style>.stApp { font-family: 'Sarabun', sans-serif; } h1, h2, h3 { color: #0D47A1; } .stButton>button { background-color: #1565C0; color: white; border-radius: 8px; font-weight: bold; }</style>""", unsafe_allow_html=True)
 
-st.title("🏗️ RC Beam Design: Professional Edition")
+# Custom CSS for cleaner look
+st.markdown("""
+<style>
+    .stApp { font-family: 'Sarabun', sans-serif; background-color: #F8F9FA; }
+    h1, h2, h3 { color: #1565C0; }
+    .stButton>button { background-color: #1565C0; color: white; border-radius: 6px; height: 3em; }
+    div[data-testid="stExpander"] { background-color: white; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+</style>
+""", unsafe_allow_html=True)
 
 def main():
+    st.title("🏗️ RC Beam Analysis & Design")
+    
+    # 1. Sidebar Settings
     params = input_handler.render_sidebar()
     
-    # --- 1. Geometry (แก้ตรงนี้: รับแค่ 4 ค่า) ---
-    n, spans, sup_df, stable = input_handler.render_geometry()
+    # 2. Model Inputs (Left & Right layout for desktop)
+    col_input, col_preview = st.columns([1, 1.5])
     
-    # 2. Loads
-    loads = input_handler.render_loads(n, spans, params)
-    
-    # --- 3. Section Properties (แยกมาไว้ตรงนี้) ---
-    st.markdown("---")
-    span_props = input_handler.render_section_inputs(n)
+    with col_input:
+        n, spans, sup_df, stable = input_handler.render_model_inputs(params)
         
-    st.markdown("---")
-    
-    if st.button("🚀 RUN ANALYSIS & DESIGN", type="primary", use_container_width=True, disabled=not stable):
-        with st.spinner("Processing..."):
+        st.markdown("###")
+        btn_analyze = st.button("🚀 Run Analysis", type="primary", use_container_width=True, disabled=not stable)
+
+    # 3. Logic Control with Session State
+    if btn_analyze:
+        with st.spinner("Analyzing structure..."):
             try:
-                engine = beam_analysis.BeamAnalysisEngine(spans, sup_df, loads)
+                # Run Analysis (Assume constant EI for force finding)
+                engine = beam_analysis.BeamAnalysisEngine(spans, sup_df, st.session_state.loads)
                 df_res, reactions = engine.solve()
                 
-                if df_res is None:
-                    st.error("Structure is unstable.")
-                    return
-                
-                st.success("✅ Analysis Complete!")
-                
-                # 1. Plot Diagrams
-                design_view.draw_diagrams(df_res, spans, sup_df, loads, params['u_force'], 'm')
-                
-                # 2. Show Reactions Table
-                st.markdown(f"#### ⚓ Support Reactions ({params['u_force']})")
-                n_nodes = n + 1
-                
-                react_data = []
-                for i in range(n_nodes):
-                    ry = float(reactions[2*i])
-                    mz = float(reactions[2*i+1])
-                    
-                    react_data.append({
-                        "Node": f"N{i+1}",
-                        f"Fy": f"{ry:,.2f}" if abs(ry)>0.01 else "-",
-                        f"Mz": f"{mz:,.2f}" if abs(mz)>0.01 else "-"
-                    })
-                
-                st.table(pd.DataFrame(react_data))
-
-                # 3. Design Results
-                design_view.render_design_results(df_res, params, spans, span_props, sup_df)
-            
+                if df_res is not None:
+                    # Save results to session state
+                    st.session_state['analysis_done'] = True
+                    st.session_state['df_res'] = df_res
+                    st.session_state['reactions'] = reactions
+                    st.session_state['spans'] = spans
+                    st.session_state['sup_df'] = sup_df
+                else:
+                    st.error("Unstable Structure!")
             except Exception as e:
-                st.error(f"Critical Error: {e}")
-                # st.exception(e) # Uncomment for debug if needed
+                st.error(f"Analysis Error: {e}")
+
+    # 4. Display Results (Only if analysis exists)
+    if st.session_state.get('analysis_done'):
+        df = st.session_state['df_res']
+        
+        with col_preview:
+            # Show Diagrams immediately next to inputs
+            st.subheader("📊 Analysis Results")
+            design_view.draw_diagrams(df, st.session_state['spans'], st.session_state['sup_df'], 
+                                      st.session_state.loads, params['u_force'], params['u_len'])
+        
+        # --- NEW SECTION: Design Parameters (Bottom) ---
+        st.markdown("---")
+        st.header("✨ Section Design & Detailing")
+        
+        # 4.1 Define Sections (Interactive)
+        st.info("👇 Adjust beam sizes here. Reinforcement will update automatically.")
+        
+        # Create interactive columns for inputs
+        n_spans = len(st.session_state['spans'])
+        cols = st.columns(n_spans)
+        span_props = []
+        
+        for i in range(n_spans):
+            with cols[i]:
+                st.markdown(f"**Span {i+1}**")
+                with st.container(border=True):
+                    b = st.number_input(f"Width b (cm)", value=25.0, step=5.0, key=f"des_b_{i}")
+                    h = st.number_input(f"Depth h (cm)", value=50.0, step=5.0, key=f"des_h_{i}")
+                    cv = st.number_input(f"Cover (cm)", value=3.0, step=0.5, key=f"des_c_{i}")
+                    span_props.append({"b": b, "h": h, "cv": cv})
+
+        # 4.2 Show Design Tables & Details
+        design_view.render_design_results(df, params, st.session_state['spans'], span_props, st.session_state['sup_df'])
+        
+    else:
+        with col_preview:
+            st.info("👈 Please define geometry and loads, then click 'Run Analysis'.")
 
 if __name__ == "__main__":
     main()
