@@ -50,11 +50,11 @@ class BeamSolver:
                 elif load['type'] == 'M':
                     M_app = val 
                     a = load['x']; b = L - a
-                    # Correct FEM for Moment Load
+                    # Correct FEM for Moment Load (CCW +)
                     fem[0] += -6 * M_app * a * b / L**3
                     fem[1] += M_app * b * (2*a - b) / L**2
                     fem[2] += 6 * M_app * a * b / L**3
-                    fem[3] += M_app * a * (2*b - a) / L**2  # Fixed syntax here
+                    fem[3] += M_app * a * (2*b - a) / L**2  # Correct formula 2*b
             
             F_global[idx] -= fem 
 
@@ -76,6 +76,15 @@ class BeamSolver:
 
         # 4. Process Results
         results = []
+        
+        # --- FIX SCIPY VERSION ISSUE ---
+        # Check carefully to avoid AttributeError on newer SciPy versions
+        if hasattr(integrate, 'cumulative_trapezoid'):
+            trapz_func = integrate.cumulative_trapezoid
+        else:
+            trapz_func = integrate.cumtrapz
+        # -------------------------------
+
         for i, L in enumerate(self.spans):
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             u_el = U_global[idx]
@@ -131,10 +140,8 @@ class BeamSolver:
                             V_x -= mag
                             M_x -= mag * (x - lx)
                     elif load['type'] == 'U':
-                        if x > 0: # Simple integration for full UDL
-                            # For partial UDL this needs adjustment, but assuming full span for now based on UI
-                            # Or simple logic: UDL starts at 0
-                            d = x
+                        if x > 0: 
+                            d = x 
                             V_x -= mag * d
                             M_x -= mag * d * d / 2
                     elif load['type'] == 'M':
@@ -145,11 +152,11 @@ class BeamSolver:
                 V_vals.append(V_x)
                 M_vals.append(M_x)
                 
-            # Deflection (Double Integration)
+            # Deflection (Double Integration) using safe trapz_func
             curv = np.array(M_vals) / (self.E * self.I)
-            trapz = getattr(integrate, 'cumulative_trapezoid', integrate.cumtrapz)
-            theta = u_el[1] + trapz(curv, x_eval, initial=0)
-            defl = u_el[0] + trapz(theta, x_eval, initial=0)
+            
+            theta = u_el[1] + trapz_func(curv, x_eval, initial=0)
+            defl = u_el[0] + trapz_func(theta, x_eval, initial=0)
             
             for k in range(len(x_eval)):
                 results.append({
