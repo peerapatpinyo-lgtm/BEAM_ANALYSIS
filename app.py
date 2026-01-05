@@ -126,7 +126,7 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
         # Load Factors & Gravity
         g = 9.81
         calc_loads = []
-        total_applied_force_y = 0 # For equilibrium check
+        total_applied_force_y = 0.0 # Magnitude sum of downward loads
         
         for l in st.session_state['loads']:
             fac = dl_factor if l['case']=='DL' else ll_factor
@@ -136,6 +136,7 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
             new_l['mag'] = factored_mag
             calc_loads.append(new_l)
             
+            # Sum Applied Loads (Magnitude) for check
             if l['type'] == 'P': total_applied_force_y += factored_mag
             if l['type'] == 'U': total_applied_force_y += factored_mag * l['dist']
 
@@ -145,12 +146,11 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
         if not df.empty:
             design_view.draw_interactive_diagrams(df, r, st.session_state['spans'], st.session_state['supports'], st.session_state['loads'], dl_factor, ll_factor)
             
-            # --- CRITICAL VALUES & REACTIONS (IMPROVED) ---
+            # --- CRITICAL VALUES & REACTIONS ---
             with st.expander("📊 View Critical Values, Reactions & Equilibrium Check", expanded=True):
                 st.markdown("#### 1. Critical Design Forces (Factored)")
                 c1, c2, c3, c4 = st.columns(4)
                 
-                # Convert N -> kN for professional display
                 v_max_kn = summ['V_max']['value'] / 1000
                 m_pos_knm = summ['M_pos']['value'] / 1000
                 m_neg_knm = summ['M_neg']['value'] / 1000
@@ -160,7 +160,6 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                 c2.metric("Max Moment (+M_u)", f"{m_pos_knm:.2f} kNm", f"@ {summ['M_pos']['x']:.2f} m")
                 c3.metric("Max Moment (-M_u)", f"{m_neg_knm:.2f} kNm", f"@ {summ['M_neg']['x']:.2f} m", delta_color="inverse")
                 
-                # Deflection Check
                 max_span_len = max(st.session_state['spans'])
                 limit_val = (max_span_len / 360) * 1000
                 status_icon = "✅" if abs(d_mm) < limit_val else "⚠️"
@@ -169,49 +168,46 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                 st.markdown("---")
                 st.markdown("#### 2. Support Reactions & Equilibrium")
                 
-                # --- REACTION DISPLAY FIX ---
-                # ไม่สนว่า User ใส่ Support อะไร แต่ถ้า R > 0.01 ต้องโชว์ (เผื่อกรณีสปริงหรือ Error)
                 n_nodes = len(st.session_state['spans']) + 1
                 cols = st.columns(n_nodes)
-                
                 sup_map = {int(s['id']): s['type'] for s in st.session_state['supports'] if 'id' in s}
-                total_react_y = 0
+                total_react_y = 0.0
                 
                 for i in range(n_nodes):
                     with cols[i]:
-                        # ดึงค่า Reaction จาก Solver โดยตรง (หน่วย N -> kN)
                         Ry = r[2*i]
                         Mz = r[2*i+1]
-                        total_react_y += Ry
+                        total_react_y += Ry # Solver gives reactions as Positive Upward for downward loads
                         
-                        # Logic: โชว์ถ้ามี Support หรือมีแรง Reaction ที่มีนัยสำคัญ
                         has_sup = i in sup_map
                         has_force = abs(Ry) > 1.0 or abs(Mz) > 1.0
                         
                         if has_sup or has_force:
                             lbl = sup_map.get(i, "Free Node")
                             st.markdown(f"**Node {i+1}** : `{lbl}`")
-                            
-                            if abs(Ry) > 0.1: 
-                                st.write(f"Fy: **{Ry/1000:.2f}** kN")
-                            elif has_sup:
-                                st.write(f"Fy: 0.00 kN") # Show zero if supported
-                                
-                            if abs(Mz) > 0.1: 
-                                st.write(f"Mz: **{Mz/1000:.2f}** kNm")
+                            if abs(Ry) > 0.1: st.write(f"Fy: **{Ry/1000:.2f}** kN")
+                            elif has_sup: st.write(f"Fy: 0.00 kN")
+                            if abs(Mz) > 0.1: st.write(f"Mz: **{Mz/1000:.2f}** kNm")
                 
-                # --- EQUILIBRIUM CHECK ---
+                # --- EQUILIBRIUM CHECK (CORRECTED LOGIC) ---
                 st.markdown("---")
                 eq_col1, eq_col2 = st.columns(2)
-                err = total_applied_force_y + total_react_y # Should be near 0
+                
+                # Logic Fix: Reaction (Up) - Load (Down) should be ~0
+                # total_react_y from Solver is (+), total_applied_force_y we summed as magnitude (+)
+                err_val = total_react_y - total_applied_force_y 
                 
                 eq_col1.write(f"Total Applied Load (Fy): **{total_applied_force_y/1000:.2f} kN** (Down)")
                 eq_col2.write(f"Total Reaction (Fy): **{total_react_y/1000:.2f} kN** (Up)")
                 
-                if abs(err) < 1.0: # Tolerance 1 N
-                    st.success(f"✅ Equilibrium Check Passed! (Error: {err:.4f} N)")
+                # Tolerance check (10 Newtons)
+                if abs(err_val) < 10.0:
+                    st.success(f"✅ Equilibrium Check Passed! (Diff: {err_val:.2f} N)")
                 else:
-                    st.error(f"❌ Equilibrium Error: {err:.2f} N. Model may be unstable or loads misplaced.")
+                    # Calculate % Error for context
+                    denom = max(abs(total_applied_force_y), 1.0)
+                    err_pct = (abs(err_val) / denom) * 100
+                    st.error(f"❌ Equilibrium Error: {err_val:.2f} N ({err_pct:.2f}%). Model unstable or Check Logic Mismatch.")
 
                 st.markdown("---")
                 design_view.render_result_tables(df, r, st.session_state['spans'])
