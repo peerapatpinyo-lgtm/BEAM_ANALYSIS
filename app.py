@@ -93,14 +93,15 @@ with tab2:
     
     for i in range(num_nodes):
         stype = existing_sups.get(i, "None")
-        sup_data.append({"Node ID": i, "Support Type": stype})
+        # Display as Node 1, 2, 3... in the table for consistency
+        sup_data.append({"Node ID": i + 1, "Support Type": stype})
     
     df_sup = pd.DataFrame(sup_data)
     
     edited_df = st.data_editor(
         df_sup,
         column_config={
-            "Node ID": st.column_config.NumberColumn(disabled=True),
+            "Node ID": st.column_config.NumberColumn(disabled=True, format="%d"),
             "Support Type": st.column_config.SelectboxColumn(
                 "Type", options=["None", "Pin", "Roller", "Fixed"], required=True
             )
@@ -109,11 +110,13 @@ with tab2:
         use_container_width=True
     )
     
-    # Save back to session state
+    # Save back to session state (Internal logic still needs 0-based index)
     new_sups = []
     for index, row in edited_df.iterrows():
         if row['Support Type'] != "None":
-            new_sups.append({'id': int(row['Node ID']), 'type': row['Support Type']})
+            # Convert back to 0-based index for calculation
+            internal_id = int(row['Node ID']) - 1
+            new_sups.append({'id': internal_id, 'type': row['Support Type']})
     st.session_state['supports'] = new_sups
 
 # --- TAB 3: LOADS ---
@@ -187,7 +190,7 @@ with tab3:
                 end_pos = l['x'] + l.get('dist', 0)
                 pos_desc = f"x={l['x']:.2f} to {end_pos:.2f} m"
             display_data.append({
-                "Index": i, "Span": s_num, "Type": l_t, 
+                "Index": i+1, "Span": s_num, "Type": l_t, 
                 "Mag": l['mag'], "Case": l['case'], "Position": pos_desc
             })
         df_loads = pd.DataFrame(display_data)
@@ -195,10 +198,12 @@ with tab3:
         
         col_del, _ = st.columns([1, 3])
         with col_del:
-            idx_to_del = st.number_input("Remove Load Index", min_value=0, max_value=max(0, len(st.session_state['loads'])-1), step=1)
+            # Adjust remove index to be 1-based for user friendliness
+            idx_to_del = st.number_input("Remove Load #", min_value=1, max_value=max(1, len(st.session_state['loads'])), step=1)
             if st.button("🗑️ Remove Load"):
-                if 0 <= idx_to_del < len(st.session_state['loads']):
-                    st.session_state['loads'].pop(idx_to_del)
+                internal_idx = idx_to_del - 1
+                if 0 <= internal_idx < len(st.session_state['loads']):
+                    st.session_state['loads'].pop(internal_idx)
                     st.rerun()
 
 # --- CALCULATION & RESULTS ---
@@ -230,7 +235,7 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
             else:
                 st.markdown("### 🎯 Analysis Results")
 
-                # --- 1. กราฟ (Diagrams) แสดงบนสุด ---
+                # --- 1. กราฟ (Diagrams) ---
                 design_view.draw_interactive_diagrams(
                     df_res, reactions, spans, supports_df, 
                     st.session_state['loads'], 
@@ -240,7 +245,6 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                 # --- 2. Drop Down (View Results) ---
                 with st.expander("📊 View Critical Values & Reactions Details", expanded=False):
                     
-                    # --- A. Critical Values & Deflection Check ---
                     if summary:
                         st.markdown("#### 1. Critical Design Values (Envelope)")
                         
@@ -249,7 +253,7 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                         col_c2.metric("Max Moment (+)", f"{summary['M_pos']['value']:.2f}", f"@ {summary['M_pos']['x']:.2f} m")
                         col_c3.metric("Max Moment (-)", f"{summary['M_neg']['value']:.2f}", f"@ {summary['M_neg']['x']:.2f} m", delta_color="inverse")
                         
-                        # Deflection Check Logic (ที่คุณชอบ)
+                        # Deflection Check Logic
                         with col_c4:
                             limit_val = max(spans)/360 * 1000 # mm
                             actual_val_mm = summary['D_max']['value'] * 1000
@@ -263,11 +267,7 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                         
                         st.markdown("#### 2. Support Reactions")
                         
-                        # --- แก้ไขตรงนี้: ดึง Reaction ตาม Support ID จริงๆ ไม่ซ่อน Node ---
                         support_ids = supports_df['id'].tolist()
-                        
-                        # สร้าง Container แสดงผล
-                        # ใช้ List เพื่อจัดกลุ่มแล้วแสดงทีเดียว จะได้ไม่ตกหล่น
                         r_cols = st.columns(len(support_ids))
                         
                         for idx, node_id in enumerate(support_ids):
@@ -276,7 +276,8 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                             sup_type = supports_df[supports_df['id'] == node_id]['type'].values[0]
                             
                             with r_cols[idx]:
-                                st.markdown(f"**Node {node_id} ({sup_type})**")
+                                # --- แก้ไข: แสดงผลเป็น Node + 1 ---
+                                st.markdown(f"**Node {node_id + 1} ({sup_type})**")
                                 st.write(f"Fy: `{fy:.2f}` N")
                                 if sup_type == 'Fixed' or abs(mz) > 0.01:
                                     st.write(f"Mz: `{mz:.2f}` Nm")
