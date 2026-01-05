@@ -56,7 +56,7 @@ class BeamSolver:
         K = np.zeros((n_dof, n_dof))
         F_node = np.zeros(n_dof) 
         
-        # 1. Assemble
+        # Assemble
         for i, L in enumerate(self.spans):
             k = self.E * self.I / L**3
             k_el = k * np.array([
@@ -77,14 +77,14 @@ class BeamSolver:
                     reactions = self._get_fixed_end_reactions(L, l)
                     F_node[idx] -= reactions
 
-        # 2. Boundary Conditions
+        # Boundary Conditions
         active_dof = list(range(n_dof))
         for _, s in self.supports.iterrows():
             node_idx = int(s['id'])
             if 2*node_idx in active_dof: active_dof.remove(2*node_idx)
             if s['type'] == 'Fixed' and 2*node_idx+1 in active_dof: active_dof.remove(2*node_idx+1)
 
-        # 3. Solve
+        # Solve
         U = np.zeros(n_dof)
         if len(active_dof) > 0:
             try:
@@ -97,8 +97,6 @@ class BeamSolver:
 
     def _post_process(self, U, R):
         x_plot, v_plot, m_plot, d_plot = [], [], [], []
-        
-        # [แก้ไข 1] เพิ่มจำนวนจุดคำนวณเป็น 500 เพื่อลด error จากการอินทิเกรต
         num_points = 500 
         
         if hasattr(integrate, 'cumulative_trapezoid'): cumtrapz = integrate.cumulative_trapezoid
@@ -107,29 +105,34 @@ class BeamSolver:
         for i, L in enumerate(self.spans):
             base_points = np.linspace(0, L, num_points)
             
+            # [แก้ไข] เพิ่มจุด "เงา" (+1e-9) เพื่อรองรับ Vertical Jump ของ Shear
             crit_points = [0.0, L]
             if not self.loads.empty:
                 span_loads = self.loads[self.loads['span_idx'] == i]
                 for _, l in span_loads.iterrows():
                     crit_points.append(l['x'])
+                    crit_points.append(l['x'] + 1e-9) # Shadow point for vertical drop
+                    
                     if l['type'] == 'U':
                         dist = l.get('dist', L - l['x'])
-                        crit_points.append(l['x'] + dist)
+                        end_x = l['x'] + dist
+                        crit_points.append(end_x)
+                        crit_points.append(end_x + 1e-9) # Shadow point for end of UDL
             
-            # [แก้ไข 2] Round จุดทศนิยมเหลือ 5 ตำแหน่ง เพื่อให้จุดที่ใกล้กันมากๆ (2.5000001 กับ 2.5) รวมเป็นจุดเดียวกัน
             merged_points = np.concatenate((base_points, crit_points))
-            x_local = np.unique(np.round(merged_points, 5))
+            # Round 8 ตำแหน่ง เพื่อให้ 1e-9 ยังอยู่ แต่จุดซ้ำซ้อนระดับ 1e-15 หายไป
+            x_local = np.unique(np.round(merged_points, 9))
             
             x_global = self.nodes[i] + x_local
             
-            # --- Calculation (Exact Statics) ---
+            # --- Calculation ---
             v_seg = []
             m_seg = []
             
             for k, xg in enumerate(x_global):
                 V_val, M_val = 0, 0
                 for n_idx, nx in enumerate(self.nodes):
-                    if nx <= xg + 1e-5: 
+                    if nx <= xg + 1e-9: 
                         V_val += R[2*n_idx]
                         M_val += R[2*n_idx] * (xg - nx) + R[2*n_idx+1]
                 
@@ -137,12 +140,16 @@ class BeamSolver:
                     for _, l in self.loads.iterrows():
                         lx = self.nodes[int(l['span_idx'])] + l['x']
                         if l['type'] == 'P':
-                            if lx <= xg - 1e-5:
+                            # [Logic] ถ้า x อยู่ที่ load พอดี (xg == lx) ยังไม่ลบ
+                            # ถ้า x อยู่เลย load มานิดนึง (xg > lx) ค่อยลบ
+                            # จุด 2.500000 -> ไม่ลบ -> ได้ค่า Shear ซ้าย
+                            # จุด 2.500001 -> ลบ -> ได้ค่า Shear ขวา
+                            if lx <= xg - 1e-9:
                                 V_val -= l['mag']
                                 M_val -= l['mag'] * (xg - lx)       
                         elif l['type'] == 'U':
                             l_start = lx
-                            if xg > l_start + 1e-5:
+                            if xg > l_start + 1e-9:
                                 dist = l.get('dist', self.spans[int(l['span_idx'])] - l['x'])
                                 l_end = l_start + dist
                                 eff_end = min(xg, l_end)
