@@ -5,12 +5,13 @@ class BeamSolver:
     def __init__(self, spans, supports, loads, E, I):
         """
         spans: list of span lengths [L1, L2, ...]
-        supports: DataFrame or list of dicts
+        supports: DataFrame or list of dicts [{'id': node_idx, 'type': 'Pin'/'Roller'/'Fixed'}]
         loads: DataFrame of loads
         E: Elastic Modulus
         I: Moment of Inertia
         """
         self.spans = spans
+        # Ensure supports is a DataFrame
         self.supports = supports if isinstance(supports, pd.DataFrame) else pd.DataFrame(supports)
         self.loads = loads
         self.E = float(E)
@@ -45,7 +46,7 @@ class BeamSolver:
                 span_loads = []
             
             for load in span_loads:
-                # Get Equivalent Nodal Loads
+                # Get Equivalent Nodal Loads (Forces applied TO nodes)
                 f_equiv = self._calc_equivalent_nodal_forces(load, L)
                 # Add to Global F
                 F[idx[0]] += f_equiv[0]
@@ -74,17 +75,15 @@ class BeamSolver:
         try:
             u_f = np.linalg.solve(K_ff, F_f)
         except np.linalg.LinAlgError:
-            return pd.DataFrame(), np.zeros(num_dof) # Return empty on error
+            return pd.DataFrame(), np.zeros(num_dof) # Singular matrix
 
         U_global = np.zeros(num_dof)
         U_global[free_dofs] = u_f
         
         # Calculate Global Reactions: R = K*U - F_applied
-        # Note: F vector constructed above contains Equivalent Nodal Loads.
-        # R = K*U - F_equiv
         Reactions = K @ U_global - F
 
-        # 5. Post-Processing (Internal Forces)
+        # 5. Post-Processing (Internal Forces Calculation)
         results = []
         x_cursor = 0
         
@@ -99,52 +98,48 @@ class BeamSolver:
             else:
                 span_loads = []
 
-            # --- CRITICAL FIX: CALCULATE MEMBER END FORCES CORRECTLY ---
-            # F_member = k_local * u_local + Fixed_End_Actions
-            # Fixed_End_Actions = - Equivalent_Nodal_Forces
+            # --- KEY FIX: Calculate Member End Forces correctly ---
+            # F_member_elastic = k_local * u_local
+            # Total F_member_start = F_member_elastic + Fixed_End_Actions
             
             k_loc = self._get_element_stiffness(L)
             f_elastic = k_loc @ u_elem
             
-            # Sum Fixed End Actions (Reaction from support to beam if fixed)
+            # Fixed End Actions = - Equivalent Nodal Forces
             f_fea = np.zeros(4)
             for load in span_loads:
-                # _calc_equivalent_nodal_forces returns forces ON NODES.
-                # Fixed End Actions (Forces ON BEAM ENDS) are opposite.
                 f_eq = self._calc_equivalent_nodal_forces(load, L)
                 f_fea -= f_eq 
             
             f_total_start = f_elastic + f_fea
             
-            # Initial Forces at x=0 of the element
-            # V_start (Up+) = F_y_start
-            # M_start (CCW+) = M_z_start. 
-            # Note: CCW Moment at left end causes HOGGING (Negative Moment).
-            # So Internal Moment = - M_z_start
+            # Extract Start Forces for Statics Walk
+            # Node Forces: Fy (Up+), M (CCW+)
+            # Beam Internal Forces at x=0:
+            # Shear V = Fy_start (Up is positive Shear on left face)
+            # Moment M = - M_start (CCW Moment at left support causes HOGGING/Tension Top. 
+            #                       Standard sign convention: Sagging/Tension Bottom is Positive.
+            #                       Therefore, Internal Moment = - Node Moment)
             
             V0 = f_total_start[0]
-            M0 = -f_total_start[1] # Convert CCW node moment to Beam Sign (Sagging+)
+            M0 = -f_total_start[1] 
             
-            # Discretize for plotting
+            # Create evaluation points (add load locations for precision)
             num_points = 50
             x_eval = np.linspace(0, L, num_points)
             
-            # Add points at load locations for sharp diagrams
+            # Add critical points
             load_locs = [float(l['x']) for l in span_loads]
-            # Add UDL start/end
             for l in span_loads:
                 if l['type'] == 'U':
                     load_locs.append(float(l['x']) + float(l.get('dist', L)))
             
-            # Merge and sort unique points
-            x_eval = sorted(list(set(list(x_eval) + [0, L] + [loc for loc in load_locs if 0 <= loc <= L])))
+            unique_points = sorted(list(set(list(x_eval) + [0, L] + [loc for loc in load_locs if 0 <= loc <= L])))
             
-            for x in x_eval:
+            for x in unique_points:
                 V, M = self._calculate_statics_at_x(x, V0, M0, span_loads)
                 
-                # Deflection (Approximate via Shape Function)
-                # Note: This is purely elastic deflection from nodal displacement. 
-                # Does not include local load curvature (bubble function), but sufficient for visualization.
+                # Simple elastic deflection curve (good approximation)
                 D = self._get_deflection(x, L, u_elem)
                 
                 results.append({
@@ -169,44 +164,22 @@ class BeamSolver:
         return k
 
     def _calc_equivalent_nodal_forces(self, load, L):
-        # Calculates Equivalent Nodal Loads (Forces applied TO NODES)
-        # Based on Fixed End Reactions formulas
+        # Calculates forces applied TO NODES to represent the load
         f = np.zeros(4)
-        mag = float(load['mag'])
+        mag = float(load['mag']) # Assumed Input: + for Downward Gravity Load
         a = float(load['x']) 
-        b = L - a
         
-        # Note: Input mag positive = Downward usually?
-        # Let's assume User Input: (+) = Gravity Load (Down)
-        # FEM Y-axis: (+) = Up.
-        # So Load Force F_y = -mag
+        # Convert to FEM Coordinate System (Up +, Down -)
+        # If input 1000 means 1000kg Down, then Force F = -1000
+        F_load = -mag 
         
         if load['type'] == 'P': 
-            P = mag # Magnitude
-            # Reactions for Downward Load P:
-            # RA (Up) = Pb^2(3a+b)/L^3
-            # MA (CCW+) = -Pab^2/L^2
-            # But we want Equivalent Nodal Loads.
-            # Equiv Load = - Fixed End Reaction.
-            # If P is Down, Reaction is Up. Equiv Load is Down.
-            
-            # Let's verify standard FEF formulas for DOWNWARD load P:
-            # FEM_A = -Pab^2/L^2 (CCW is -? No, usually Standard is -)
-            # Let's stick to strict derivation:
-            # Force vector P_vec is [0, -P, 0, 0] at x=a.
-            # Equiv Nodal Force = Integ(N_transpose * P_vec).
-            # Fy1 = N1(a) * (-P)
-            # M1  = N2(a) * (-P)
-            # Fy2 = N3(a) * (-P)
-            # M2  = N4(a) * (-P)
-            
+            # Use Shape Functions for Exact Nodal Load allocation
             xi = a/L
             N1 = 1 - 3*xi**2 + 2*xi**3
             N2 = L * (xi - 2*xi**2 + xi**3)
             N3 = 3*xi**2 - 2*xi**3
             N4 = L * (-xi**2 + xi**3)
-            
-            F_load = -P # Downward force in FEM coord
             
             f[0] = N1 * F_load
             f[1] = N2 * F_load
@@ -214,87 +187,84 @@ class BeamSolver:
             f[3] = N4 * F_load
 
         elif load['type'] == 'U': 
-            w_mag = mag # N/m (Down)
-            # Full span UDL approximation for robustness
-            # Equiv Loads for Uniform Load w (Down):
+            # Uniform Load w (Force/Length)
+            # Total Force = w * L
+            # Equivalent Nodal Forces for Full UDL:
+            # Fy = F_total / 2
+            # M = F_total * L / 12 (Check signs: Left is -M, Right is +M for Down load)
+            
+            w_total = F_load * L # Total force
+            f[0] = w_total / 2
+            f[1] = w_total * L / 12  # FEM Moment at node 1 (CCW is +). Down load causes CCW reaction? No.
+                                     # Fixed End Reaction for Down load: M_A = +wL^2/12 (CCW).
+                                     # Equiv Load = - Reaction = -wL^2/12.
+            
+            # Let's double check Fixed End Moment Signs.
+            # Downward Load (-w). 
+            # Fixed End Reaction Moment at Left (MA): Positive (CCW) to resist rotation.
+            # Equivalent Load Moment = - Reaction. So Negative.
+            
+            # Correct Standard Formula for Equiv Nodal Load of Downward UDL:
             # Fy = -wL/2
             # M1 = -wL^2/12
+            # Fy2 = -wL/2
             # M2 = +wL^2/12
             
-            F_total = -w_mag * L
-            f[0] = F_total / 2
-            f[1] = -w_mag * L**2 / 12
-            f[2] = F_total / 2
-            f[3] = +w_mag * L**2 / 12
-            
-            # Note: If Partial UDL is needed, use integration of Shape Func
-            # But for this fix, Full UDL logic prevents crash.
-
-        elif load['type'] == 'M': 
-            M_ext = mag # CCW +
-            # Moment is tricky with shape functions (derivative).
-            # Simplified: FEF for Moment M at a.
-            # For now, ignore FEF of Moment load to prevent error, 
-            # or treat as couple?
-            # Let's leave 0 for M load FEF to imply applied at nearest node 
-            # manually by user, or implement exact later.
-            pass
+            f[0] = F_load * L / 2
+            f[1] = -abs(F_load) * L**2 / 12 # Force negative, so this ensures -
+            f[2] = F_load * L / 2
+            f[3] = +abs(F_load) * L**2 / 12
 
         return f
 
     def _calculate_statics_at_x(self, x, V0, M0, loads):
-        # Walk from x=0 to x using Statics
-        # V(x) = V0 + Sum(Loads Up)
-        # M(x) = M0 + V0*x + Sum(Load * arm)
+        # Calculate V and M at distance x from left node using Statics
+        # V(x) = V_start + Sum(Forces)
+        # M(x) = M_start + V_start*x + Sum(Moment of Forces)
         
+        # Start with Reaction effects
         V_x = V0
-        M_x = M0 + V_x * x # Contribution from initial shear
+        M_x = M0 + V0 * x 
         
         for load in loads:
             lx = float(load['x'])
-            mag = float(load['mag']) # User input (+) = Down
+            mag = float(load['mag']) # Input (+ = Down)
             
             if x > lx:
                 if load['type'] == 'P':
-                    # Point Load
-                    # Force = -mag (Down)
-                    # V changes by -mag
-                    # M changes by -mag * (x - lx)
-                    
+                    # Point Load P (Down)
+                    # V drops by P
                     V_x -= mag
+                    # M drops by P * arm
                     M_x -= mag * (x - lx)
                     
                 elif load['type'] == 'U':
-                    # UDL
-                    w = mag # Down
-                    dist = float(load.get('dist', 0))
-                    if dist == 0: dist = 1e9 # treat as long if 0
+                    # UDL w (Down)
+                    w = mag
+                    dist = float(load.get('dist', 1e9)) # Full length if not specified
                     
-                    # Overlap
+                    # Calculate overlap length
+                    start_load = lx
                     end_load = lx + dist
-                    x_overlap_end = min(x, end_load)
                     
-                    if x_overlap_end > lx:
-                        length = x_overlap_end - lx
-                        load_force = w * length
+                    # Where does the load effectively act relative to x?
+                    if x > start_load:
+                        x_eff_end = min(x, end_load)
+                        length = x_eff_end - start_load
                         
-                        V_x -= load_force
-                        
-                        # Moment arm from centroid of load block to x
-                        # Centroid is at lx + length/2
-                        centroid = lx + length/2
-                        arm = x - centroid
-                        M_x -= load_force * arm
-                        
-                elif load['type'] == 'M':
-                    # Moment Load (CCW +)
-                    # Directly adds to Moment diagram
-                    M_x += mag
-                    
+                        if length > 0:
+                            force = w * length
+                            V_x -= force
+                            
+                            # Moment arm: distance from x to centroid of the load block
+                            # Centroid of block is at (start + length/2)
+                            centroid = start_load + length/2
+                            arm = x - centroid
+                            M_x -= force * arm
+        
         return V_x, M_x
 
     def _get_deflection(self, x, L, u_elem):
-        # Hermite Interpolation
         xi = x/L
         N_vec = np.array([
             1 - 3*xi**2 + 2*xi**3,
