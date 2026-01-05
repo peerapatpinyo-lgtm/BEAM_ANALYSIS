@@ -15,47 +15,60 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     st.markdown("---")
 
     # Data Sanitization
-    if isinstance(spans, (pd.DataFrame, pd.Series)): spans_val = spans.values.flatten().tolist()
-    elif isinstance(spans, list): spans_val = spans
-    else: spans_val = []
+    if isinstance(spans, (pd.DataFrame, pd.Series)): 
+        spans_val = spans.values.flatten().tolist()
+    elif isinstance(spans, list): 
+        spans_val = spans
+    else: 
+        spans_val = []
 
     cum_spans = [0] + list(np.cumsum(spans_val))
     total_len = cum_spans[-1] if cum_spans else 0
 
-    # [Priority List Creation]
+    # [Priority List Creation] for Smart Snapping
     priority_x = set(cum_spans)
     clean_loads = []
     
     if loads is not None:
-        if isinstance(loads, pd.DataFrame): loads_data = loads.to_dict('records')
-        else: loads_data = loads
+        # Normalize loads to list of dicts
+        if isinstance(loads, pd.DataFrame): 
+            loads_data = loads.to_dict('records')
+        else: 
+            loads_data = loads
         
         if len(loads_data) > 0:
             for l in loads_data:
                 if isinstance(l, dict):
                     try:
-                        abs_x = cum_spans[int(l.get('span_idx', 0))] + float(l.get('x', 0))
-                        priority_x.add(abs_x)
-                        
-                        if str(l.get('type')) == 'U':
-                            dist = float(l.get('dist', 0)) if l.get('dist') is not None else 0
-                            if dist == 0: dist = spans_val[int(l.get('span_idx', 0))] - float(l.get('x', 0))
-                            priority_x.add(abs_x + dist)
+                        # Calculate absolute X based on span index
+                        span_idx = int(l.get('span_idx', 0))
+                        if span_idx < len(cum_spans):
+                            abs_x = cum_spans[span_idx] + float(l.get('x', 0))
+                            priority_x.add(abs_x)
+                            
+                            # Handle UDL End position for priority snapping
+                            if str(l.get('type')) == 'U':
+                                dist = float(l.get('dist', 0)) if l.get('dist') is not None else 0
+                                if dist == 0 and span_idx < len(spans_val): 
+                                    dist = spans_val[span_idx] - float(l.get('x', 0))
+                                priority_x.add(abs_x + dist)
 
-                        clean_loads.append({
-                            'span_idx': int(l.get('span_idx', 0)),
-                            'mag': float(l.get('mag', 0)),
-                            'x': float(l.get('x', 0)),
-                            'type': str(l.get('type', 'P')),
-                            'case': str(l.get('case', 'DL')),
-                            'dist': float(l.get('dist', 0)) if l.get('dist') is not None else None
-                        })
-                    except (ValueError, TypeError): continue
+                            clean_loads.append({
+                                'span_idx': span_idx,
+                                'mag': float(l.get('mag', 0)),
+                                'x': float(l.get('x', 0)),
+                                'type': str(l.get('type', 'P')),
+                                'case': str(l.get('case', 'DL')),
+                                'dist': float(l.get('dist', 0)) if l.get('dist') is not None else None
+                            })
+                    except (ValueError, TypeError): 
+                        continue
     
+    # Add mid-spans to priority
     for i, slen in enumerate(spans_val):
         priority_x.add(cum_spans[i] + slen/2)
 
-    # --- 1. Load List ---
+    # --- 1. Load List Table ---
     st.markdown("### 📋 Applied Loads List (Unfactored Input)")
     if len(clean_loads) > 0:
         load_table_data = []
@@ -65,6 +78,8 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             x_local = l['x']
             l_type = l['type']
             l_case = l['case']
+            
+            # Calculate Factored Load
             factor = dl_factor if l_case == 'DL' else ll_factor
             factored_mag = mag * factor
             
@@ -84,9 +99,12 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                 pos_lbl = f"@ x = {x_local:.2f} m (Span {span_num})"
             
             load_table_data.append([i+1, type_lbl, l_case, f"{mag}", f"{factored_mag:.2f}", pos_lbl])
+        
         st.table(pd.DataFrame(load_table_data, columns=["No.", "Type", "Case", f"Service Load", f"Factored Load", "Position Detail"]))
-    else: st.info("No loads applied yet.")
+    else: 
+        st.info("No loads applied yet.")
 
+    # Check if results exist
     if df is None or (isinstance(df, pd.DataFrame) and df.empty): return
 
     st.markdown("---")
@@ -108,12 +126,13 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         row_heights=[0.20, 0.26, 0.26, 0.28]
     )
 
-    # Row 1: Structure
+    # --- Row 1: Structure Visualization ---
     if isinstance(sup_df, list): sup_df = pd.DataFrame(sup_df)
     sup_map = {}
     if sup_df is not None and not sup_df.empty and 'id' in sup_df.columns:
         sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
 
+    # Draw Supports & Nodes
     for i, x in enumerate(cum_spans):
         fig.add_annotation(x=x, y=-0.55, text=f"Node {i+1}", showarrow=False, font=dict(size=10, color="gray"), row=1, col=1)
         if i in sup_map:
@@ -130,8 +149,10 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                 fig.add_trace(go.Scatter(x=[x], y=[-0.15], mode='markers', marker=dict(symbol='circle', size=18, color='white', line=dict(color='black', width=2)), showlegend=False, hoverinfo='skip'), row=1, col=1)
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.30, x1=x+0.2, y1=-0.30, line=dict(width=2, color='black'), row=1, col=1)
 
+    # Beam Line
     fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=5), hoverinfo='skip', showlegend=False), row=1, col=1)
 
+    # Draw Loads on Structure
     for l in clean_loads:
         x_abs_start = cum_spans[l['span_idx']] + l['x']
         mag = l['mag']; l_type = l['type']; l_case = l['case']
@@ -145,6 +166,8 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             if dist is None or dist == 0: dist = span_len - l['x']
             dist = min(dist, span_len - l['x'])
             x_abs_end = x_abs_start + dist
+            
+            # Draw UDL Block
             fig.add_shape(type="rect", x0=x_abs_start, x1=x_abs_end, y0=0.05, y1=0.20, fillcolor=l_color, opacity=0.15, line_width=0, row=1, col=1)
             fig.add_shape(type="line", x0=x_abs_start, y0=0.20, x1=x_abs_end, y1=0.20, line=dict(color=l_color, width=2), row=1, col=1)
             mid_x = (x_abs_start + x_abs_end) / 2
@@ -153,7 +176,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             fig.add_annotation(x=x_abs_start, y=0, text=f"M={mag}", showarrow=True, arrowhead=1, ax=0, ay=-40, arrowcolor='purple', font=dict(size=10), row=1, col=1)
 
     # ==========================================
-    # SMART LABELS LOGIC
+    # SMART LABELS LOGIC (Function)
     # ==========================================
     def add_eng_labels(x_data, y_data, row_idx, color_code, unit_suffix, invert_sign=False):
         y_arr = np.array(y_data, dtype=float)
@@ -162,10 +185,13 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         
         def get_smart_info(is_max):
             target_val = np.max(y_arr) if is_max else np.min(y_arr)
-            if invert_sign: target_val = np.min(y_arr) if is_max else np.max(y_arr)
+            # Invert comparison if we are inverting sign for display
+            if invert_sign: 
+                target_val = np.min(y_arr) if is_max else np.max(y_arr)
             
             candidates = np.where(np.isclose(y_arr, target_val, rtol=1e-4))[0]
-            
+            if len(candidates) == 0: return 0, 0 
+
             best_idx = candidates[0]
             snapped_x = x_arr[best_idx]
             min_dist = float('inf')
@@ -183,9 +209,9 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                     curr_dist = abs(curr_x - closest_px)
                     best_px = closest_px
                 
-                # [แก้ไข] เพิ่ม Tolerance เป็น 0.05 (5cm) เพื่อดักจับ 2.51 ให้เข้าหา 2.50
+                # Tolerance 5cm
                 if curr_dist < 0.05:
-                    return idx, best_px # Return snapped X
+                    return idx, best_px # Return snapped X immediately if match found
                 
                 if curr_dist < min_dist:
                     min_dist = curr_dist
@@ -194,8 +220,9 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             
             return best_idx, snapped_x
 
+        # Calculate Max/Min
         if invert_sign:
-            max_idx, max_x_display = get_smart_info(is_max=False)
+            max_idx, max_x_display = get_smart_info(is_max=False) # Logic inverted inside
             min_idx, min_x_display = get_smart_info(is_max=True)
         else:
             max_idx, max_x_display = get_smart_info(is_max=True)
@@ -210,26 +237,27 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
 
         def plot_lbl(idx, x_display, is_top):
             val = y_arr[idx]
-            # ใช้ x_display ที่ Snap มาแล้วในการแสดงผล Text
+            # Format text
             txt = f"<b>{val:.2f}</b><br><span style='font-size:9px'>@ {x_display:.2f}m</span>" if abs(val) >= 0.01 else f"<b>{val:.4f}</b>"
             
             y_plot = -val if invert_sign else val
             ay_val = -40 if is_top else 40 
-            # ตำแหน่งลูกศรชี้ (x) ยังคงใช้ตำแหน่งจริง (x_arr[idx]) เพื่อความถูกต้องของกราฟ
+            # Note: Arrow X uses real data x_arr[idx], Text shows x_display
             fig.add_annotation(x=x_arr[idx], y=y_plot, text=txt, ax=0, ay=ay_val, row=row_idx, col=1, **style)
 
+        # Plot labels if significant
         if abs(y_arr[max_idx]) > 1e-9: plot_lbl(max_idx, max_x_display, True)
         if abs(y_arr[min_idx]) > 1e-9 and abs(x_arr[max_idx] - x_arr[min_idx]) > 0.1:
              plot_lbl(min_idx, min_x_display, False)
 
-    # --- ROW 2: SHEAR ---
+    # --- ROW 2: SHEAR FORCE ---
     c_shear = '#E67E22'
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color=c_shear, width=2), name="Shear"), row=2, col=1)
     add_eng_labels(df['x'], df['shear'], 2, c_shear, unit_force)
 
-    # --- ROW 3: MOMENT ---
+    # --- ROW 3: BENDING MOMENT ---
     c_moment = '#2980B9'
-    moment_plot = -df['moment']
+    moment_plot = -df['moment'] # Invert for tension positive
     fig.add_trace(go.Scatter(x=df['x'], y=moment_plot, fill='tozeroy', line=dict(color=c_moment, width=2), name="Moment"), row=3, col=1)
     add_eng_labels(df['x'], df['moment'], 3, c_moment, f"{unit_force}-{unit_len}", invert_sign=True)
 
@@ -237,41 +265,42 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     c_defl = '#27AE60'
     fig.add_trace(go.Scatter(x=df['x'], y=df['deflection_plot'], fill='tozeroy', line=dict(color=c_defl, width=2), name="Deflection"), row=4, col=1)
     
+    # Custom Logic for Deflection Max Label
     if not df.empty:
         y_scaled = df['deflection_plot'].values
-        # ใช้ Logic Snap แบบเดียวกันกับข้างบน
+        # Use same smart logic
         target_val = np.max(np.abs(y_scaled))
         candidates = np.where(np.isclose(np.abs(y_scaled), target_val, rtol=1e-4))[0]
         
-        best_d_idx = candidates[0]
-        d_x_display = df['x'].values[best_d_idx]
+        if len(candidates) > 0:
+            best_d_idx = candidates[0]
+            d_x_display = df['x'].values[best_d_idx]
 
-        for idx in candidates:
-            curr_x = df['x'].values[idx]
-            best_px = curr_x
-            if priority_x:
-                closest_px = min(priority_x, key=lambda p: abs(curr_x - p))
-                curr_dist = abs(curr_x - closest_px)
-                if curr_dist < 0.05:
-                    best_d_idx = idx
-                    d_x_display = closest_px
-                    break
-        
-        d_val_scaled = y_scaled[best_d_idx]
-        d_x_real = df['x'].values[best_d_idx]
-        
-        if abs(d_val_scaled) > 1e-5:
-             fig.add_annotation(
-                x=d_x_real, y=d_val_scaled,
-                text=f"<b>Max: {d_val_scaled:.2f} {defl_unit}</b><br><span style='font-size:9px'>@ {d_x_display:.2f}m</span>",
-                showarrow=True, arrowhead=2, ax=0, ay=35 if d_val_scaled < 0 else -35,
-                font=dict(color=c_defl, size=10),
-                bgcolor="rgba(255,255,255,0.9)",
-                bordercolor=c_defl, borderwidth=1, borderpad=2,
-                row=4, col=1
-            )
+            for idx in candidates:
+                curr_x = df['x'].values[idx]
+                if priority_x:
+                    closest_px = min(priority_x, key=lambda p: abs(curr_x - p))
+                    curr_dist = abs(curr_x - closest_px)
+                    if curr_dist < 0.05:
+                        best_d_idx = idx
+                        d_x_display = closest_px
+                        break
+            
+            d_val_scaled = y_scaled[best_d_idx]
+            d_x_real = df['x'].values[best_d_idx]
+            
+            if abs(d_val_scaled) > 1e-5:
+                 fig.add_annotation(
+                    x=d_x_real, y=d_val_scaled,
+                    text=f"<b>Max: {d_val_scaled:.2f} {defl_unit}</b><br><span style='font-size:9px'>@ {d_x_display:.2f}m</span>",
+                    showarrow=True, arrowhead=2, ax=0, ay=35 if d_val_scaled < 0 else -35,
+                    font=dict(color=c_defl, size=10),
+                    bgcolor="rgba(255,255,255,0.9)",
+                    bordercolor=c_defl, borderwidth=1, borderpad=2,
+                    row=4, col=1
+                )
 
-    # Grids
+    # Grids & Styling
     for node_x in cum_spans:
         for r_idx in [2, 3, 4]:
             fig.add_vline(x=node_x, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, row=r_idx, col=1)
