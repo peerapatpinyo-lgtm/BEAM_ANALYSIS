@@ -1,238 +1,248 @@
 import streamlit as st
-import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import PIL 
+import numpy as np
 
-# Fix Image Size Limit (Prevention)
-PIL.Image.MAX_IMAGE_PIXELS = None 
-
+# Import modules (ตรวจสอบว่าไฟล์ solver.py และ design_view.py อยู่ในโฟลเดอร์เดียวกัน)
 from solver import BeamSolver
+import design_view
 
-st.set_page_config(page_title="Beam Analysis", layout="wide")
+# --- Page Config ---
+st.set_page_config(page_title="Beam Analysis Pro", layout="wide", page_icon="🏗️")
 
-# --- CUSTOM CSS ---
-st.markdown("""
-<style>
-    .stButton>button { width: 100%; border-radius: 5px; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] { height: 50px; background-color: #f0f2f6; border-radius: 5px 5px 0px 0px; gap: 1px; padding-top: 10px; padding-bottom: 10px; }
-    .stTabs [aria-selected="true"] { background-color: #ffffff; border-bottom: 2px solid #4e8cff; }
-</style>
-""", unsafe_allow_html=True)
+# --- Session State Init ---
+if 'spans' not in st.session_state:
+    st.session_state['spans'] = [5.0, 5.0] # Default 2 spans
+if 'supports' not in st.session_state:
+    # Default: Pin at start, Roller at ends
+    st.session_state['supports'] = [
+        {'id': 0, 'type': 'Pin'},
+        {'id': 1, 'type': 'Roller'},
+        {'id': 2, 'type': 'Roller'}
+    ]
+if 'loads' not in st.session_state:
+    st.session_state['loads'] = []
 
-st.title("🏗️ Beam Analysis")
+# --- Sidebar ---
+st.sidebar.title("🏗️ Beam Settings")
+st.sidebar.markdown("---")
+# Reset Button
+if st.sidebar.button("Reset Project", type="primary"):
+    st.session_state['spans'] = [5.0]
+    st.session_state['supports'] = [{'id': 0, 'type': 'Pin'}, {'id': 1, 'type': 'Roller'}]
+    st.session_state['loads'] = []
+    st.rerun()
 
-# --- SIDEBAR: SETTINGS ---
-with st.sidebar:
-    st.header("Properties")
-    E = st.number_input("Elastic Modulus (E) [Pa]", value=2.0e11, format="%.2e")
-    I = st.number_input("Moment of Inertia (I) [m^4]", value=1.0e-4, format="%.2e")
-    
-    st.markdown("---")
-    beam_type = st.selectbox("Beam Theory", ["Euler", "Timoshenko"])
-    if beam_type == "Timoshenko":
-        A = st.number_input("Cross-sectional Area (A) [m^2]", value=0.01, format="%.4f")
-    else:
-        A = 0.01
+st.sidebar.markdown("### Design Parameters")
+E = st.sidebar.number_input("Elastic Modulus (E)", value=2e6, format="%.2e")
+I = st.sidebar.number_input("Moment of Inertia (I)", value=5e-4, format="%.2e")
 
-# --- INPUTS (3 TABS) ---
-tab1, tab2, tab3 = st.tabs(["1. Geometry", "2. Supports", "3. Loads"])
+st.sidebar.markdown("### Load Factors")
+dl_factor = st.sidebar.number_input("Dead Load Factor", value=1.4, step=0.1)
+ll_factor = st.sidebar.number_input("Live Load Factor", value=1.7, step=0.1)
 
-# --- TAB 1: GEOMETRY ---
+# --- Main Interface ---
+st.title("🏗️ Structural Beam Analysis (Exact FEM)")
+
+# Tabs for input steps
+tab1, tab2, tab3 = st.tabs(["1️⃣ Geometry (Spans)", "2️⃣ Supports", "3️⃣ Applied Loads"])
+
+# --- TAB 1: SPANS ---
 with tab1:
-    st.subheader("Span Configuration")
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        spans_input = st.text_input("Span Lengths (m, comma separated)", "5, 5")
-        try:
-            spans = [float(x.strip()) for x in spans_input.split(',')]
-            node_locs = np.concatenate(([0], np.cumsum(spans)))
-            st.success(f"Total Length: {sum(spans)} m | Nodes: {len(node_locs)}")
-        except:
-            st.error("Invalid format")
-            spans = []
-            node_locs = []
+    st.subheader("Define Beam Spans")
+    col_s1, col_s2 = st.columns([2, 1])
+    with col_s1:
+        num_spans = st.number_input("Number of Spans", min_value=1, max_value=10, value=len(st.session_state['spans']))
+        
+        # Adjust list size
+        current_spans = st.session_state['spans']
+        if len(current_spans) < num_spans:
+            current_spans.extend([5.0] * (num_spans - len(current_spans)))
+        elif len(current_spans) > num_spans:
+            st.session_state['spans'] = current_spans[:num_spans]
+            
+        # Inputs for each span
+        new_spans = []
+        cols = st.columns(min(num_spans, 4))
+        for i in range(num_spans):
+            with cols[i % 4]:
+                val = st.number_input(f"Span {i+1} Length (m)", value=float(current_spans[i]), min_value=0.1, key=f"span_{i}")
+                new_spans.append(val)
+        st.session_state['spans'] = new_spans
+        
+    st.info(f"Total Length: {sum(new_spans):.2f} m")
 
 # --- TAB 2: SUPPORTS ---
 with tab2:
-    st.subheader("Support Conditions")
+    st.subheader("Define Supports")
+    num_nodes = len(st.session_state['spans']) + 1
     
-    if 'supports_list' not in st.session_state:
-        st.session_state.supports_list = [
-            {'id': 0, 'type': 'Pin', 'settlement': 0.0, 'k_spring': 0.0},
-            {'id': len(spans) if spans else 1, 'type': 'Roller', 'settlement': 0.0, 'k_spring': 0.0}
-        ]
+    # Create a DataFrame for editing
+    sup_data = []
+    existing_sups = {s['id']: s['type'] for s in st.session_state['supports']}
     
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.markdown("**Add Support**")
-        if len(node_locs) > 0:
-            s_node = st.selectbox("Node Index", range(len(node_locs)))
-            s_type = st.selectbox("Type", ["Pin", "Roller", "Fixed"])
-            s_settlement = st.number_input("Settlement (m)", value=0.0, step=0.001, format="%.4f")
-            
-            if st.button("Add Support"):
-                st.session_state.supports_list = [s for s in st.session_state.supports_list if s['id'] != s_node]
-                st.session_state.supports_list.append({
-                    'id': s_node, 'type': s_type, 
-                    'settlement': s_settlement, 'k_spring': 0.0
-                })
-                st.rerun()
-                
-    with c2:
-        st.markdown("**Current Supports**")
-        if st.session_state.supports_list:
-            df_sup = pd.DataFrame(st.session_state.supports_list)
-            if 'settlement' not in df_sup.columns: df_sup['settlement'] = 0.0
-            df_sup = df_sup.sort_values(by='id')
-            st.dataframe(df_sup[['id', 'type', 'settlement']], hide_index=True, use_container_width=True)
-            if st.button("Clear Supports"):
-                st.session_state.supports_list = []
-                st.rerun()
+    for i in range(num_nodes):
+        stype = existing_sups.get(i, "None")
+        sup_data.append({"Node ID": i, "Support Type": stype})
+    
+    df_sup = pd.DataFrame(sup_data)
+    
+    edited_df = st.data_editor(
+        df_sup,
+        column_config={
+            "Node ID": st.column_config.NumberColumn(disabled=True),
+            "Support Type": st.column_config.SelectboxColumn(
+                "Type", options=["None", "Pin", "Roller", "Fixed"], required=True
+            )
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+    
+    # Save back to session state
+    new_sups = []
+    for index, row in edited_df.iterrows():
+        if row['Support Type'] != "None":
+            new_sups.append({'id': int(row['Node ID']), 'type': row['Support Type']})
+    st.session_state['supports'] = new_sups
 
-# --- TAB 3: LOADS ---
+# --- TAB 3: LOADS (UPDATED with Start/End for UDL) ---
 with tab3:
-    st.subheader("Applied Loads")
+    st.subheader("Add Applied Loads")
     
-    if 'loads_list' not in st.session_state:
-        st.session_state.loads_list = [{'span_idx': 0, 'type': 'U', 'mag': 10000, 'x': 0, 'dist': 5}]
-
-    c1, c2 = st.columns([1, 2])
+    c1, c2, c3 = st.columns([1, 1, 2])
+    
     with c1:
-        st.markdown("**Add Load**")
-        if spans:
-            l_span = st.selectbox("Span Index", range(len(spans)))
-            l_type = st.selectbox("Load Type", ["Point (P)", "Uniform (U)", "Moment (M)"])
-            l_mag = st.number_input("Magnitude", value=1000.0)
-            l_x = st.number_input("Location x (from left)", value=2.5)
-            
-            l_dist = 0.0
-            if "Uniform" in l_type:
-                l_dist = st.number_input("Dist (Length)", value=1.0)
-            
-            if st.button("Add Load"):
-                l_code = 'P' if "Point" in l_type else ('U' if "Uniform" in l_type else 'M')
-                new_load = {'span_idx': l_span, 'type': l_code, 'mag': l_mag, 'x': l_x}
-                if l_code == 'U': new_load['dist'] = l_dist
-                st.session_state.loads_list.append(new_load)
-                st.rerun()
-                
+        span_idx_load = st.selectbox("Select Span", options=list(range(len(st.session_state['spans']))), format_func=lambda x: f"Span {x+1}")
+        current_span_len = st.session_state['spans'][span_idx_load]
+        st.caption(f"Span Length: {current_span_len} m")
+        
     with c2:
-        st.markdown("**Current Loads**")
-        if st.session_state.loads_list:
-            df_load = pd.DataFrame(st.session_state.loads_list)
-            st.dataframe(df_load, hide_index=True, use_container_width=True)
-            if st.button("Clear Loads"):
-                st.session_state.loads_list = []
-                st.rerun()
+        load_type = st.selectbox("Load Type", ["Point Load (P)", "Uniform Load (U)", "Moment (M)"])
+        load_case = st.selectbox("Load Case", ["DL", "LL"])
 
-# --- PLOTTING FUNCTION (EXACTLY LIKE FIRST VERSION) ---
-def plot_beam_diagram(ax, spans, supports, loads):
-    total_len = sum(spans)
-    node_x = np.concatenate(([0], np.cumsum(spans)))
-    
-    # Draw Beam
-    ax.plot([0, total_len], [0, 0], 'k-', linewidth=3)
-    ax.set_ylim(-2, 2)
-    ax.set_xlim(-0.5, total_len + 0.5)
-    ax.axis('off')
-    
-    # Draw Nodes
-    ax.plot(node_x, np.zeros_like(node_x), 'ko', markersize=4)
-    
-    # Draw Supports (Green Style)
-    for s in supports:
-        if int(s['id']) < len(node_x):
-            x_pos = node_x[int(s['id'])]
-            if s['type'] == 'Pin':
-                ax.plot(x_pos, -0.2, marker='^', color='green', markersize=12)
-            elif s['type'] == 'Roller':
-                ax.plot(x_pos, -0.2, marker='o', color='green', markersize=10)
-            elif s['type'] == 'Fixed':
-                rect = patches.Rectangle((x_pos-0.1, -0.4), 0.2, 0.8, color='green', alpha=0.5)
-                ax.add_patch(rect)
+    with c3:
+        mag = st.number_input("Magnitude (kg, kg/m, kg-m)", value=1000.0)
+        
+        # --- UI LOGIC FOR LOAD POSITION ---
+        if "Uniform" in load_type:
+            # 🟢 UPDATED: Start and End Inputs for Uniform Load
+            cols_pos = st.columns(2)
+            with cols_pos[0]:
+                x_start = st.number_input("Start Position (x1) [m]", 
+                                          min_value=0.0, max_value=float(current_span_len), value=0.0)
+            with cols_pos[1]:
+                x_end = st.number_input("End Position (x2) [m]", 
+                                        min_value=0.0, max_value=float(current_span_len), value=float(current_span_len))
             
-    # Draw Loads (Red/Orange/Purple Style)
-    max_load = 1.0
-    if loads: max_load = max([abs(l['mag']) for l in loads]) if loads else 1.0
-    if max_load == 0: max_load = 1.0
-    
-    for l in loads:
-        if int(l['span_idx']) < len(spans):
-            x_start = node_x[int(l['span_idx'])] + l['x']
+            # Validation logic handled during 'Add Load'
+            dist_val = x_end - x_start
+            x_loc = x_start
             
-            if l['type'] == 'P':
-                ax.arrow(x_start, 1.0, 0, -0.8, head_width=0.2, head_length=0.2, fc='red', ec='red')
-                ax.text(x_start, 1.1, f"P={l['mag']}", ha='center', color='red')
-            elif l['type'] == 'U':
-                dist = l.get('dist', spans[int(l['span_idx'])] - l['x'])
-                rect = patches.Rectangle((x_start, 0), dist, 0.5, facecolor='orange', alpha=0.3, edgecolor='orange')
-                ax.add_patch(rect)
-                ax.text(x_start + dist/2, 0.6, f"w={l['mag']}", ha='center', color='orange')
-            elif l['type'] == 'M':
-                style = "Simple,tail_width=0.5,head_width=4,head_length=8"
-                kw = dict(arrowstyle=style, color="purple")
-                arc = patches.FancyArrowPatch((x_start-0.2, 0.5), (x_start+0.2, 0.5), connectionstyle="arc3,rad=.5", **kw)
-                ax.add_patch(arc)
-                ax.text(x_start, 0.8, f"M={l['mag']}", ha='center', color='purple')
+            if x_end < x_start:
+                st.warning("⚠️ End position must be greater than Start position.")
+        
+        else:
+            # Point Load or Moment
+            x_loc = st.number_input("Position x (m) from left of span", 
+                                    min_value=0.0, max_value=float(current_span_len), value=float(current_span_len)/2)
+            dist_val = 0 # Not used for Point/Moment
+            
+    if st.button("➕ Add Load", type="primary"):
+        # Validate Uniform Load
+        valid = True
+        if "Uniform" in load_type:
+            if dist_val <= 0:
+                st.error("Error: Uniform load length must be greater than 0.")
+                valid = False
+        
+        if valid:
+            l_type_code = 'P'
+            if 'Uniform' in load_type: l_type_code = 'U'
+            elif 'Moment' in load_type: l_type_code = 'M'
+            
+            new_load = {
+                'span_idx': span_idx_load,
+                'type': l_type_code,
+                'mag': mag,
+                'x': x_loc,
+                'dist': dist_val, # Save the calculated distance
+                'case': load_case
+            }
+            st.session_state['loads'].append(new_load)
+            st.success("Load added!")
+            st.rerun()
 
-# --- MAIN CALCULATION ---
-st.markdown("###")
-if st.button("🚀 Calculate Analysis", type="primary"):
-    if not spans:
-        st.error("Please enter span lengths.")
+    # Display Loads Table
+    if st.session_state['loads']:
+        st.markdown("##### Current Loads List")
+        # Process data for display
+        display_data = []
+        for i, l in enumerate(st.session_state['loads']):
+            s_num = l['span_idx'] + 1
+            l_t = l['type']
+            
+            pos_desc = f"x={l['x']:.2f} m"
+            if l_t == 'U':
+                end_pos = l['x'] + l.get('dist', 0)
+                pos_desc = f"x={l['x']:.2f} to {end_pos:.2f} m"
+                
+            display_data.append({
+                "Index": i,
+                "Span": s_num,
+                "Type": l_t,
+                "Mag": l['mag'],
+                "Case": l['case'],
+                "Position": pos_desc
+            })
+            
+        df_loads = pd.DataFrame(display_data)
+        st.dataframe(df_loads, use_container_width=True, hide_index=True)
+        
+        # Remove Load
+        col_del, _ = st.columns([1, 3])
+        with col_del:
+            idx_to_del = st.number_input("Remove Load Index", min_value=0, max_value=max(0, len(st.session_state['loads'])-1), step=1)
+            if st.button("🗑️ Remove Load"):
+                if 0 <= idx_to_del < len(st.session_state['loads']):
+                    st.session_state['loads'].pop(idx_to_del)
+                    st.rerun()
+
+# --- CALCULATION & RESULTS ---
+st.markdown("---")
+if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
+    
+    # Prepare Data
+    spans = st.session_state['spans']
+    supports_df = pd.DataFrame(st.session_state['supports'])
+    loads_df = pd.DataFrame(st.session_state['loads'])
+    
+    # Check minimum stability (Basic check)
+    if len(supports_df) < 2:
+        st.error("Structure unstable: Need at least 2 supports.")
     else:
         try:
-            # Prepare Data for Solver
-            beam_props = {'E': E, 'I': I, 'A': A, 'type': beam_type}
+            # FACTORED LOADS CALCULATION
+            # Create a copy of loads to apply factors before sending to solver
+            calc_loads = loads_df.copy()
+            if not calc_loads.empty:
+                # Apply factors based on 'case'
+                # row['mag'] * factor
+                def apply_factor(row):
+                    f = dl_factor if row['case'] == 'DL' else ll_factor
+                    return row['mag'] * f
+                
+                calc_loads['mag'] = calc_loads.apply(apply_factor, axis=1)
             
-            # Call Solver
-            solver = BeamSolver(spans, st.session_state.supports_list, st.session_state.loads_list, beam_props)
-            results, R = solver.solve()
+            # Initialize Solver
+            solver = BeamSolver(spans, supports_df, calc_loads, E, I)
             
-            # --- PLOTTING (EXACTLY LIKE FIRST VERSION) ---
-            st.success("Analysis Complete!")
+            # Solve
+            df_res, reactions = solver.solve()
             
-            # Use specific layout from first version
-            fig, ax = plt.subplots(4, 1, figsize=(10, 14), gridspec_kw={'height_ratios': [1, 2, 2, 2]})
-            
-            # 1. Physical Diagram
-            plot_beam_diagram(ax[0], spans, st.session_state.supports_list, st.session_state.loads_list)
-            ax[0].set_title("Beam Structure Diagram")
-            
-            # 2. Shear Force
-            ax[1].plot(results['x'], results['shear'], 'b-', linewidth=1.5)
-            ax[1].fill_between(results['x'], results['shear'], color='blue', alpha=0.1)
-            ax[1].set_ylabel("Shear (N)")
-            ax[1].grid(True, linestyle=':', alpha=0.6)
-            ax[1].axhline(0, color='black', linewidth=0.8)
-            
-            # 3. Bending Moment
-            ax[2].plot(results['x'], results['moment'], 'r-', linewidth=1.5)
-            ax[2].fill_between(results['x'], results['moment'], color='red', alpha=0.1)
-            ax[2].set_ylabel("Moment (N-m)")
-            ax[2].grid(True, linestyle=':', alpha=0.6)
-            ax[2].axhline(0, color='black', linewidth=0.8)
-
-            # 4. Deflection
-            ax[3].plot(results['x'], results['deflection'], 'g-', linewidth=2)
-            ax[3].set_ylabel("Deflection (m)")
-            ax[3].set_xlabel("Position (m)")
-            ax[3].grid(True, linestyle=':', alpha=0.6)
-            ax[3].axhline(0, color='black', linewidth=0.8)
-            
-            # Mark max deflection
-            min_y = results['deflection'].min() 
-            # Use absolute max for label
-            abs_max_idx = results['deflection'].abs().idxmax()
-            abs_max_val = results.iloc[abs_max_idx]['deflection']
-            ax[3].plot(results.iloc[abs_max_idx]['x'], abs_max_val, 'ko')
-            ax[3].text(results.iloc[abs_max_idx]['x'], abs_max_val, f" Max: {abs_max_val:.2e} m", va='bottom')
-
-            plt.tight_layout()
-            st.pyplot(fig, dpi=100)
+            # Visualization
+            design_view.draw_interactive_diagrams(df_res, reactions, spans, supports_df, st.session_state['loads'], dl_factor=dl_factor, ll_factor=ll_factor)
+            design_view.render_result_tables(df_res, reactions, spans)
             
         except Exception as e:
-            st.error(f"Error: {e}")
+            st.error(f"Analysis Failed: {str(e)}")
+            st.code(e)
