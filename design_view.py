@@ -239,7 +239,9 @@ def render_result_tables(df_res, reactions, spans, unit_force="kg", unit_len="m"
     with col1:
         st.markdown(f"**📍 แรงปฏิกิริยาที่จุดรองรับ ({unit_force})**")
         
-        if reactions:
+        # --- แก้ไขตรงนี้ (FIXED) ---
+        # ใช้ len() เช็คความยาวแทนการเช็คค่าตรงๆ เพื่อรองรับ NumPy Array
+        if reactions is not None and len(reactions) > 0:
             react_data = []
             for i, r in enumerate(reactions):
                 react_data.append({
@@ -258,7 +260,7 @@ def render_result_tables(df_res, reactions, spans, unit_force="kg", unit_len="m"
             # จัดรูปแบบตัวเลขทศนิยม 2 ตำแหน่ง
             st.dataframe(df_res.style.format({
                 "Value": "{:,.2f}",
-                # "Position": "{:.2f}" # บรรทัดนี้อาจต้อง comment ออกถ้าคอลัมน์ชื่อไม่ตรงเป๊ะ
+                # "Position": "{:.2f}" 
             }))
         else:
             st.info("No result data to display.")
