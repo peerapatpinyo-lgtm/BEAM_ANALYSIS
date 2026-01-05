@@ -152,18 +152,15 @@ class BeamSolver:
 
         R = K @ U - F
 
-        # 6. Post-Processing with "Micro-stepping" for Exact SFD Shape
-        # สร้างจุด Evaluation ที่ละเอียด + จุด Discontinuity
+        # 6. Post-Processing with "Micro-stepping"
         base_x = np.linspace(0, nodes[-1], 400)
         critical_x = []
         for n in nodes:
-            # เพิ่มจุดก่อนและหลัง Node นิดเดียว เพื่อให้กราฟ Shear ตัดฉับพลัน (Vertical Line)
             critical_x.extend([n - 1e-6, n, n + 1e-6])
         
-        # รวมจุดและเรียงลำดับ
         all_x = np.concatenate([base_x, critical_x])
         all_x = np.unique(np.sort(all_x))
-        all_x = all_x[(all_x >= 0) & (all_x <= nodes[-1])] # ตัดส่วนเกิน
+        all_x = all_x[(all_x >= 0) & (all_x <= nodes[-1])] 
         
         results = []
         for x in all_x:
@@ -189,14 +186,13 @@ class BeamSolver:
             # Loads
             for _, l in self.loads_df.iterrows():
                 lx, mag = l['x'], l['mag']
-                # Point Load: คิดเมื่อ x เลยจุด load มาแล้ว (x >= lx)
                 if l['type'] == 'P':
                     if lx <= x + 1e-5: 
                         V -= mag
                         M -= mag * (x - lx)
                 elif l['type'] == 'M':
                     if lx <= x + 1e-5:
-                        M -= mag # CW convention
+                        M -= mag 
                 elif l['type'] == 'U':
                     start, end = lx, lx + l['dist']
                     if start < x:
