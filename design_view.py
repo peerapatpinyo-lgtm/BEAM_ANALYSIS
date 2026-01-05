@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 
 def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", unit_len="m", dl_factor=1.4, ll_factor=1.7):
     
-    # --- 0. Design Criteria ---
+    # --- 0. Design Criteria & Setup ---
     st.markdown("### ⚙️ Design Criteria & Load Combination")
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
@@ -19,17 +19,25 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
 
     # --- Data Sanitization ---
     if isinstance(spans, (pd.DataFrame, pd.Series)):
-        spans = spans.values.flatten().tolist()
-    elif spans is None:
-        spans = []
-        
+        spans_val = spans.values.flatten().tolist()
+    elif isinstance(spans, list):
+        spans_val = spans
+    else:
+        spans_val = []
+
+    # Calculate Node Positions (Cumulative Spans)
+    cum_spans = [0] + list(np.cumsum(spans_val))
+    total_len = cum_spans[-1] if cum_spans else 0
+
     clean_loads = []
     if loads is not None:
         if isinstance(loads, pd.DataFrame):
-             loads = loads.to_dict('records')
+             loads_data = loads.to_dict('records')
+        else:
+             loads_data = loads
         
-        if len(loads) > 0:
-            for l in loads:
+        if len(loads_data) > 0:
+            for l in loads_data:
                 if isinstance(l, dict):
                     try:
                         clean_loads.append({
@@ -38,12 +46,12 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                             'x': float(l.get('x', 0)),
                             'type': str(l.get('type', 'P')),
                             'case': str(l.get('case', 'DL')),
-                            'dist': float(l.get('dist', 0)) if l.get('dist') else None # Keep dist if available
+                            'dist': float(l.get('dist', 0)) if l.get('dist') is not None else None
                         })
                     except (ValueError, TypeError):
                         continue
 
-    # --- 1. Load Calculation List ---
+    # --- 1. Load Calculation List (Updated UDL Display) ---
     st.markdown("### 📋 Applied Loads List (Unfactored Input)")
     
     if len(clean_loads) > 0:
@@ -51,26 +59,36 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         for i, l in enumerate(clean_loads):
             span_num = l['span_idx'] + 1
             mag = l['mag']
-            x_pos = l['x']
+            x_local = l['x']
             l_type = l['type']
             l_case = l['case']
             
+            # Factor Load
             factor = dl_factor if l_case == 'DL' else ll_factor
             factored_mag = mag * factor
             
+            # Position Description
             if l_type == 'P':
                 type_lbl = "Point (P)"
-                pos_lbl = f"@ x={x_pos:.2f} (Span {span_num})"
+                pos_lbl = f"@ x = {x_local:.2f} m (Span {span_num})"
             elif l_type == 'U':
                 type_lbl = "Uniform (w)"
-                pos_lbl = f"Start x={x_pos:.2f} (Span {span_num})"
+                # Calculate End position based on distance
+                dist = l['dist']
+                if dist is None or dist == 0: 
+                    # Fallback if dist is missing (assume full remaining span)
+                    span_len = spans_val[l['span_idx']]
+                    dist = span_len - x_local
+                
+                x_end = x_local + dist
+                pos_lbl = f"From x={x_local:.2f} to x={x_end:.2f} m (Len={dist:.2f})"
             elif l_type == 'M':
                 type_lbl = "Moment (M)"
-                pos_lbl = f"@ x={x_pos:.2f} (Span {span_num})"
+                pos_lbl = f"@ x = {x_local:.2f} m (Span {span_num})"
             
             load_table_data.append([i+1, type_lbl, l_case, f"{mag}", f"{factored_mag:.2f}", pos_lbl])
             
-        st.table(pd.DataFrame(load_table_data, columns=["No.", "Type", "Case", f"Service Load ({unit_force})", f"Factored Load", "Position"]))
+        st.table(pd.DataFrame(load_table_data, columns=["No.", "Type", "Case", f"Service Load", f"Factored Load", "Position Detail"]))
     else:
         st.info("No loads applied yet.")
 
@@ -80,22 +98,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     st.markdown("---")
     st.markdown("### 📊 Structural Analysis Diagrams (Ultimate Limit State)")
 
-    # --- 2. PREPARE PLOTTING DATA ---
-    try:
-        spans_val = [float(s) for s in spans]
-    except:
-        spans_val = []
-
-    total_len = sum(spans_val)
-    cum_spans = [0] + list(np.cumsum(spans_val))
-    
-    # 🔴 FIX 2: Grid Lines - Only show at Supports (Nodes) for consistency
-    # Removed load positions from grid lines to avoid "incomplete" look on empty spans
-    key_points = set()
-    for x in cum_spans: key_points.add(round(x, 3))
-    sorted_keys = sorted(list(key_points))
-
-    # Create Subplots
+    # --- 2. PLOTTING SETUP ---
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
@@ -103,26 +106,30 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         subplot_titles=(
             "<b>Structure Model & Loads</b>", 
             f"<b>Shear Force (Vu)</b>", 
-            f"<b>Bending Moment (Mu) - Tension Side</b>", # Updated Title
+            f"<b>Bending Moment (Mu) - Tension Side Positive</b>", 
             f"<b>Deflection (δ)</b>"
         ),
         row_heights=[0.20, 0.26, 0.26, 0.28]
     )
 
     # ==========================================
-    # ROW 1: STRUCTURE (FBD)
+    # ROW 1: STRUCTURE DIAGRAM (FBD)
     # ==========================================
+    # Prepare Support Map
     if isinstance(sup_df, list): sup_df = pd.DataFrame(sup_df)
     sup_map = {}
     if sup_df is not None and not sup_df.empty and 'id' in sup_df.columns:
         sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
 
+    # Draw Nodes and Supports
     for i, x in enumerate(cum_spans):
+        # Node Label
         fig.add_annotation(
             x=x, y=0, ax=0, ay=-15,
             text=f"Node {i+1}", showarrow=False,
             font=dict(size=9, color="gray"), row=1, col=1
         )
+        # Support Symbol
         if i in sup_map:
             stype = sup_map[i]
             if stype == 'Fixed':
@@ -131,17 +138,20 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                 for h in np.linspace(x-0.15, x+0.15, 5):
                       fig.add_shape(type="line", x0=h, y0=-0.3, x1=h-0.05, y1=-0.4, line=dict(width=1, color='black'), row=1, col=1)
             elif stype == 'Pin':
-                fig.add_trace(go.Scatter(x=[x], y=[-0.15], mode='markers', marker=dict(symbol='triangle-up', size=18, color='white', line=dict(color='black', width=2)), showlegend=False), row=1, col=1)
+                fig.add_trace(go.Scatter(x=[x], y=[-0.15], mode='markers', marker=dict(symbol='triangle-up', size=18, color='white', line=dict(color='black', width=2)), showlegend=False, hoverinfo='skip'), row=1, col=1)
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.25, x1=x+0.2, y1=-0.25, line=dict(width=2, color='black'), row=1, col=1)
             elif stype == 'Roller':
-                fig.add_trace(go.Scatter(x=[x], y=[-0.15], mode='markers', marker=dict(symbol='circle', size=18, color='white', line=dict(color='black', width=2)), showlegend=False), row=1, col=1)
+                fig.add_trace(go.Scatter(x=[x], y=[-0.15], mode='markers', marker=dict(symbol='circle', size=18, color='white', line=dict(color='black', width=2)), showlegend=False, hoverinfo='skip'), row=1, col=1)
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.30, x1=x+0.2, y1=-0.30, line=dict(width=2, color='black'), row=1, col=1)
 
+    # Main Beam Line
     fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=5), hoverinfo='skip', showlegend=False), row=1, col=1)
 
-    # Draw Loads
+    # Draw Loads on Structure
     for l in clean_loads:
-        x_abs = cum_spans[l['span_idx']] + l['x']
+        # Calculate Global X
+        x_abs_start = cum_spans[l['span_idx']] + l['x']
+        
         mag = l['mag']
         l_type = l['type']
         l_case = l['case']
@@ -149,30 +159,31 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         
         if l_type == 'P':
             fig.add_annotation(
-                x=x_abs, y=0, ax=0, ay=-50,
+                x=x_abs_start, y=0, ax=0, ay=-50,
                 arrowhead=2, arrowwidth=2, arrowcolor=l_color, 
                 text=f"P={mag}", 
                 font=dict(color=l_color, size=10, family="Arial"),
                 yshift=10, row=1, col=1
             )
         elif l_type == 'U':
-            # 🔴 FIX 3: Improved UDL Visual
-            # Calculate end based on dist or default to span end
-            span_end = cum_spans[l['span_idx']+1]
+            # Visual Logic for Partial UDL
+            span_idx = l['span_idx']
+            span_len = spans_val[span_idx]
             dist = l.get('dist')
-            if dist is None:
-                xe = span_end # Default to end of span
-            else:
-                xe = min(x_abs + dist, span_end) # Clamp to span end
-                
-            xs = x_abs
+            if dist is None or dist == 0:
+                dist = span_len - l['x'] # Default to end of span if not specified
             
-            # Draw UDL Block
-            fig.add_shape(type="rect", x0=xs, x1=xe, y0=0.05, y1=0.20, fillcolor=l_color, opacity=0.15, line_width=0, row=1, col=1)
-            fig.add_shape(type="line", x0=xs, y0=0.20, x1=xe, y1=0.20, line=dict(color=l_color, width=2), row=1, col=1)
+            # Ensure it doesn't exceed span visually
+            dist = min(dist, span_len - l['x'])
             
-            # Add Arrows inside block for better visual
-            mid_x = (xs + xe) / 2
+            x_abs_end = x_abs_start + dist
+            
+            # Draw Rectangle Block
+            fig.add_shape(type="rect", x0=x_abs_start, x1=x_abs_end, y0=0.05, y1=0.20, fillcolor=l_color, opacity=0.15, line_width=0, row=1, col=1)
+            fig.add_shape(type="line", x0=x_abs_start, y0=0.20, x1=x_abs_end, y1=0.20, line=dict(color=l_color, width=2), row=1, col=1)
+            
+            # Label
+            mid_x = (x_abs_start + x_abs_end) / 2
             fig.add_annotation(
                 x=mid_x, y=0.20, 
                 text=f"w={mag}", showarrow=False, 
@@ -180,24 +191,21 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             )
             
         elif l_type == 'M':
-            fig.add_annotation(x=x_abs, y=0, text=f"M={mag}", showarrow=True, arrowhead=1, ax=0, ay=-40, arrowcolor='purple', font=dict(size=10), row=1, col=1)
+            fig.add_annotation(x=x_abs_start, y=0, text=f"M={mag}", showarrow=True, arrowhead=1, ax=0, ay=-40, arrowcolor='purple', font=dict(size=10), row=1, col=1)
 
     # ==========================================
-    # HELPER & GRAPHS
+    # GRAPHS & LABELS (Rows 2, 3, 4)
     # ==========================================
     def add_eng_labels(x_data, y_data, row_idx, color_code, unit_suffix, invert_sign=False):
         y_arr = np.array(y_data, dtype=float)
         x_arr = np.array(x_data, dtype=float)
         if len(y_arr) == 0: return
 
-        # If inverted, the visual Max is the mathematical Min
+        # Peak Detection Logic
+        # If Inverted (Moment): Visual Top is Min(Y), Visual Bottom is Max(Y)
         if invert_sign:
-            # We want to label the PEAKS on the graph.
-            # Graph Y = -1 * Real Y.
-            # Visual Top = Max(-Y) = Min(Y) -> Hogging
-            # Visual Bottom = Min(-Y) = Max(Y) -> Sagging
-            max_idx = np.argmax(-y_arr) # Visual Peak (Top)
-            min_idx = np.argmin(-y_arr) # Visual Valley (Bottom)
+            max_idx = np.argmax(-y_arr) # Highest point on graph (Top)
+            min_idx = np.argmin(-y_arr) # Lowest point on graph (Bottom)
         else:
             max_idx = np.argmax(y_arr)
             min_idx = np.argmin(y_arr)
@@ -205,79 +213,87 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         style = dict(
             showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1,
             font=dict(color=color_code, size=10),
-            bgcolor="rgba(255,255,255,0.95)",
-            bordercolor=color_code, borderwidth=1, borderpad=4
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor=color_code, borderwidth=1, borderpad=2
         )
 
         def plot_lbl(idx, is_top):
-            val = y_arr[idx] # Original Value
+            val = y_arr[idx]
             x_pos = x_arr[idx]
+            y_plot = -val if invert_sign else val # Plotting coordinate
             
-            # For Plotting position:
-            y_plot = -val if invert_sign else val
+            txt = f"<b>{val:.2f}</b>"
             
-            lbl = "Max" if is_top else "Min" # Or specific text
-            txt = f"<b>{val:.2f}</b> {unit_suffix}<br>@ {x_pos:.2f}m"
-            
-            ay_val = -30 if (is_top) else 30
+            # Offset direction
+            ay_val = -30 if is_top else 30
             fig.add_annotation(x=x_pos, y=y_plot, text=txt, ax=0, ay=ay_val, row=row_idx, col=1, **style)
 
-        # Plot Peak and Valley
+        # Plot labels
         plot_lbl(max_idx, True) # Visual Top
-        if abs(x_arr[max_idx] - x_arr[min_idx]) > 0.05: # Avoid overlap
+        if abs(x_arr[max_idx] - x_arr[min_idx]) > 0.1: # Don't overlap if same point
              plot_lbl(min_idx, False) # Visual Bottom
 
-    # Shear
+    # --- ROW 2: SHEAR (V) ---
     c_shear = '#E67E22'
     fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], fill='tozeroy', line=dict(color=c_shear, width=2), name="Shear"), row=2, col=1)
     add_eng_labels(df['x'], df['shear'], 2, c_shear, unit_force)
 
-    # Moment
-    # 🔴 FIX 1: BMD Tension Side Positive
-    # Plotting Negative Moment (Hogging) on Top (+Y)
-    # Plotting Positive Moment (Sagging) on Bottom (-Y)
+    # --- ROW 3: MOMENT (M) - Tension Side Positive ---
     c_moment = '#2980B9'
-    moment_plot = -df['moment'] # Invert for plotting
+    # Invert Data for Plotting: Negative Moment (Hogging) -> Up (+Y), Positive (Sagging) -> Down (-Y)
+    moment_plot = -df['moment'] 
     
     fig.add_trace(go.Scatter(x=df['x'], y=moment_plot, fill='tozeroy', line=dict(color=c_moment, width=2), name="Moment"), row=3, col=1)
-    
-    # Pass invert_sign=True to helper so it finds peaks correctly on the inverted graph
+    # Pass invert_sign=True so labels attach to the correct visual peaks
     add_eng_labels(df['x'], df['moment'], 3, c_moment, f"{unit_force}-{unit_len}", invert_sign=True)
 
-    # Deflection
+    # --- ROW 4: DEFLECTION (d) ---
     c_defl = '#27AE60'
     fig.add_trace(go.Scatter(x=df['x'], y=df['deflection'], fill='tozeroy', line=dict(color=c_defl, width=2), name="Deflection"), row=4, col=1)
     
     if not df.empty:
+        # Find max deflection magnitude
         abs_d_idx = df['deflection'].abs().idxmax()
         d_val = float(df.iloc[abs_d_idx]['deflection'])
         d_x = float(df.iloc[abs_d_idx]['x'])
         if abs(d_val) > 1e-9:
              fig.add_annotation(
                 x=d_x, y=d_val,
-                text=f"<b>Max:</b> {d_val:.4f} {unit_len}<br>@ {d_x:.2f}m",
+                text=f"<b>Max: {d_val:.4f}</b>",
                 showarrow=True, arrowhead=2, ax=0, ay=30 if d_val < 0 else -30,
                 font=dict(color=c_defl, size=10),
-                bgcolor="rgba(255,255,255,0.95)",
-                bordercolor=c_defl, borderwidth=1, borderpad=4,
+                bgcolor="rgba(255,255,255,0.9)",
+                bordercolor=c_defl, borderwidth=1, borderpad=2,
                 row=4, col=1
             )
 
-    # Add Grid Lines (Only at Supports)
-    for kp in sorted_keys:
-        fig.add_vline(x=kp, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, layer="below", row="all", col=1)
+    # ==========================================
+    # GRID LINES (FIXED)
+    # ==========================================
+    # Force add vertical lines at EVERY Node location for ALL graph subplots
+    for node_x in cum_spans:
+        # Loop through rows 2, 3, 4 (Graphs)
+        for r_idx in [2, 3, 4]:
+            fig.add_shape(
+                type="line",
+                x0=node_x, y0=0, x1=node_x, y1=1, # y0,y1 in 'paper' coordinates ref
+                xref=f"x{r_idx}", yref=f"paper", # Use mixed reference if needed, but simple vline is better
+                line=dict(color="gray", width=1, dash="dash"),
+                row=r_idx, col=1
+            )
+            # Alternative robust method: add_vline
+            fig.add_vline(x=node_x, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, row=r_idx, col=1)
 
-    fig.update_layout(height=1000, showlegend=False, template="plotly_white", margin=dict(l=60, r=30, t=40, b=50), font=dict(family="Roboto, Arial", size=12), hovermode="x unified")
+    # Layout Updates
+    fig.update_layout(height=1000, showlegend=False, template="plotly_white", margin=dict(l=60, r=30, t=40, b=50), hovermode="x unified")
+    
+    # Hide Y-axis for Structure Diagram
     fig.update_yaxes(visible=False, range=[-0.6, 0.8], row=1, col=1)
     
-    for r, title in zip([2,3,4], [f"Vu ({unit_force})", f"Mu ({unit_force}-{unit_len})", f"δ ({unit_len})"]):
-        fig.update_yaxes(title_text=title, row=r, col=1, showgrid=True, gridcolor='#F0F0F0')
-        fig.update_xaxes(showgrid=True, gridcolor='#F0F0F0', row=r, col=1)
-        
-    # Invert Y-axis label for Moment to indicate Convention? 
-    # Actually, we plotted -M on +Y axis. So +Y means Hogging.
-    # No need to invert axis object, just the data flip is enough for visual.
-    
+    # Axis Labels
+    fig.update_yaxes(title_text=f"Vu ({unit_force})", row=2, col=1)
+    fig.update_yaxes(title_text=f"Mu ({unit_force}-{unit_len})", row=3, col=1)
+    fig.update_yaxes(title_text=f"δ ({unit_len})", row=4, col=1)
     fig.update_xaxes(title_text=f"Distance ({unit_len})", row=4, col=1)
 
     st.plotly_chart(fig, use_container_width=True)
