@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 
 def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", unit_len="m", dl_factor=1.4, ll_factor=1.7):
     
-    # --- 0. Design Criteria & Setup ---
+    # --- 0. Design Criteria & Setup (คงเดิม) ---
     st.markdown("### ⚙️ Design Criteria & Load Combination")
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
@@ -17,7 +17,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         st.info(f"**Factored Load Analysis:**\n\nAll results (V, M, Deflection) shown below include safety factors.")
     st.markdown("---")
 
-    # --- Data Sanitization ---
+    # --- Data Sanitization (คงเดิม) ---
     if isinstance(spans, (pd.DataFrame, pd.Series)):
         spans_val = spans.values.flatten().tolist()
     elif isinstance(spans, list):
@@ -25,7 +25,6 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     else:
         spans_val = []
 
-    # Calculate Node Positions (Cumulative Spans)
     cum_spans = [0] + list(np.cumsum(spans_val))
     total_len = cum_spans[-1] if cum_spans else 0
 
@@ -51,9 +50,8 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                     except (ValueError, TypeError):
                         continue
 
-    # --- 1. Load Calculation List ---
+    # --- 1. Load Calculation List (คงเดิม) ---
     st.markdown("### 📋 Applied Loads List (Unfactored Input)")
-    
     if len(clean_loads) > 0:
         load_table_data = []
         for i, l in enumerate(clean_loads):
@@ -63,11 +61,9 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             l_type = l['type']
             l_case = l['case']
             
-            # Factor Load
             factor = dl_factor if l_case == 'DL' else ll_factor
             factored_mag = mag * factor
             
-            # Position Description
             if l_type == 'P':
                 type_lbl = "Point (P)"
                 pos_lbl = f"@ x = {x_local:.2f} m (Span {span_num})"
@@ -77,7 +73,6 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                 if dist is None or dist == 0: 
                     span_len = spans_val[l['span_idx']]
                     dist = span_len - x_local
-                
                 x_end = x_local + dist
                 pos_lbl = f"From x={x_local:.2f} to x={x_end:.2f} m (Len={dist:.2f})"
             elif l_type == 'M':
@@ -96,19 +91,13 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     st.markdown("---")
     st.markdown("### 📊 Structural Analysis Diagrams (Ultimate Limit State)")
 
-    # --- 2. DEFLECTION UNIT AUTO-SCALING ---
-    # Check max deflection to determine unit (m vs mm)
+    # --- 2. DEFLECTION UNIT AUTO-SCALING (คงเดิม จากรอบที่แล้ว) ---
     max_defl = df['deflection'].abs().max() if not df['deflection'].empty else 0
-    
     defl_unit = unit_len
     defl_scale = 1.0
-    
-    # If deflection is small (< 1 cm), switch to mm for visualization
     if max_defl > 0 and max_defl < 0.01:
         defl_unit = "mm"
         defl_scale = 1000.0
-    
-    # Create scaled deflection column for plotting
     df['deflection_plot'] = df['deflection'] * defl_scale
 
     # --- 3. PLOTTING SETUP ---
@@ -120,14 +109,12 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             "<b>Structure Model & Loads</b>", 
             f"<b>Shear Force (Vu)</b>", 
             f"<b>Bending Moment (Mu) - Tension Side Positive</b>", 
-            f"<b>Deflection (δ)</b>" # Unit added later in axis title
+            f"<b>Deflection (δ)</b>"
         ),
         row_heights=[0.20, 0.26, 0.26, 0.28]
     )
 
-    # ==========================================
-    # ROW 1: STRUCTURE DIAGRAM (FBD)
-    # ==========================================
+    # --- ROW 1: STRUCTURE DIAGRAM (คงเดิม) ---
     if isinstance(sup_df, list): sup_df = pd.DataFrame(sup_df)
     sup_map = {}
     if sup_df is not None and not sup_df.empty and 'id' in sup_df.columns:
@@ -218,9 +205,10 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             x_pos = x_arr[idx]
             y_plot = -val if invert_sign else val
             
-            txt = f"<b>{val:.2f}</b>" if abs(val) >= 0.01 else f"<b>{val:.4f}</b>"
+            # --- แก้ไข 1: เพิ่มระยะ @ x=... ---
+            txt = f"<b>{val:.2f}</b><br><span style='font-size:9px'>@ {x_pos:.2f}m</span>" if abs(val) >= 0.01 else f"<b>{val:.4f}</b>"
             
-            ay_val = -30 if is_top else 30
+            ay_val = -40 if is_top else 40 # เพิ่มระยะ ay นิดหน่อยเพื่อให้ข้อความไม่ทับเส้น
             fig.add_annotation(x=x_pos, y=y_plot, text=txt, ax=0, ay=ay_val, row=row_idx, col=1, **style)
 
         if abs(y_arr[max_idx]) > 1e-9: plot_lbl(max_idx, True)
@@ -238,23 +226,22 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     fig.add_trace(go.Scatter(x=df['x'], y=moment_plot, fill='tozeroy', line=dict(color=c_moment, width=2), name="Moment"), row=3, col=1)
     add_eng_labels(df['x'], df['moment'], 3, c_moment, f"{unit_force}-{unit_len}", invert_sign=True)
 
-    # --- ROW 4: DEFLECTION (SCALED) ---
+    # --- ROW 4: DEFLECTION ---
     c_defl = '#27AE60'
-    # Plot using the SCALED data
     fig.add_trace(go.Scatter(x=df['x'], y=df['deflection_plot'], fill='tozeroy', line=dict(color=c_defl, width=2), name="Deflection"), row=4, col=1)
     
     if not df.empty:
-        # Calculate labels based on SCALED values for display, but keep original if needed
         y_scaled = df['deflection_plot'].values
         abs_d_idx = np.abs(y_scaled).argmax()
         d_val_scaled = y_scaled[abs_d_idx]
         d_x = df['x'].values[abs_d_idx]
         
         if abs(d_val_scaled) > 1e-5:
+             # Deflection Label (ก็เพิ่มระยะ @ ให้ด้วยเพื่อความสม่ำเสมอ)
              fig.add_annotation(
                 x=d_x, y=d_val_scaled,
-                text=f"<b>Max: {d_val_scaled:.2f} {defl_unit}</b>",
-                showarrow=True, arrowhead=2, ax=0, ay=30 if d_val_scaled < 0 else -30,
+                text=f"<b>Max: {d_val_scaled:.2f} {defl_unit}</b><br><span style='font-size:9px'>@ {d_x:.2f}m</span>",
+                showarrow=True, arrowhead=2, ax=0, ay=35 if d_val_scaled < 0 else -35,
                 font=dict(color=c_defl, size=10),
                 bgcolor="rgba(255,255,255,0.9)",
                 bordercolor=c_defl, borderwidth=1, borderpad=2,
@@ -262,27 +249,34 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             )
 
     # ==========================================
-    # GRID LINES (FIXED & CLEAN)
+    # GRID LINES (SUPPORT & MID-SPAN)
     # ==========================================
+    # 1. Support Lines (Existing)
     for node_x in cum_spans:
         for r_idx in [2, 3, 4]:
-            # Use simple vertical line, avoid 'paper' ref to prevent scaling issues
             fig.add_vline(x=node_x, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, row=r_idx, col=1)
+    
+    # 2. Mid-Span Lines (--- แก้ไข 2: เพิ่มเส้นกึ่งกลางคาน ---)
+    for i, span_len in enumerate(spans_val):
+        start_x = cum_spans[i]
+        mid_x = start_x + (span_len / 2)
+        for r_idx in [2, 3, 4]:
+            # ใช้เส้นประจุด (dot) ให้ต่างจากเส้น Support เพื่อไม่ให้สับสน
+            fig.add_vline(x=mid_x, line_width=1, line_dash="dot", line_color="silver", opacity=0.5, row=r_idx, col=1)
 
-    # Layout Updates
+    # Layout Updates (คงเดิม)
     fig.update_layout(height=1000, showlegend=False, template="plotly_white", margin=dict(l=60, r=30, t=40, b=50), hovermode="x unified")
     fig.update_yaxes(visible=False, range=[-0.6, 0.8], row=1, col=1)
     
     fig.update_yaxes(title_text=f"Vu ({unit_force})", row=2, col=1)
     fig.update_yaxes(title_text=f"Mu ({unit_force}-{unit_len})", row=3, col=1)
-    
-    # Updated Deflection Axis Title with correct unit
-    fig.update_yaxes(title_text=f"δ ({defl_unit})", row=4, col=1, autorange=True) # Force auto-range
+    fig.update_yaxes(title_text=f"δ ({defl_unit})", row=4, col=1, autorange=True)
     fig.update_xaxes(title_text=f"Distance ({unit_len})", row=4, col=1)
 
     st.plotly_chart(fig, use_container_width=True)
 
 def render_result_tables(df, reac, spans, unit_force="kg", unit_len="m"):
+    # (ส่วนนี้คงเดิม ไม่มีการแก้ไข)
     st.markdown("### 📍 Support Reactions (Factored)")
     reac_data = []
     if reac is not None and len(reac) > 0 and spans is not None:
