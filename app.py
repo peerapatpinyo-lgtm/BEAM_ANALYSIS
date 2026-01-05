@@ -22,7 +22,7 @@ if 'supports' not in st.session_state:
 if 'loads' not in st.session_state:
     st.session_state['loads'] = []
 
-# --- Sidebar ---
+# --- Sidebar: Settings ---
 st.sidebar.title("🏗️ Beam Settings")
 st.sidebar.markdown("---")
 
@@ -33,7 +33,7 @@ if st.sidebar.button("Reset Project", type="primary"):
     st.session_state['loads'] = []
     st.rerun()
 
-st.sidebar.markdown("### Design Parameters")
+st.sidebar.markdown("### 1. Section Properties")
 E = st.sidebar.number_input("Elastic Modulus (E) [Pa]", value=2e11, format="%.2e")
 I = st.sidebar.number_input("Moment of Inertia (I) [m^4]", value=5e-5, format="%.2e")
 
@@ -47,7 +47,7 @@ else:
     A, G = None, None # ให้ Solver คำนวณ Default เอง
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("### Load Factors")
+st.sidebar.markdown("### 2. Load Factors")
 dl_factor = st.sidebar.number_input("Dead Load Factor", value=1.4, step=0.1)
 ll_factor = st.sidebar.number_input("Live Load Factor", value=1.7, step=0.1)
 
@@ -136,7 +136,6 @@ with tab3:
         
         # --- UI LOGIC FOR LOAD POSITION ---
         if "Uniform" in load_type:
-            # Inputs for Uniform Load Start/End
             cols_pos = st.columns(2)
             with cols_pos[0]:
                 x_start = st.number_input("Start Position (x1) [m]", 
@@ -144,27 +143,20 @@ with tab3:
             with cols_pos[1]:
                 x_end = st.number_input("End Position (x2) [m]", 
                                         min_value=0.0, max_value=float(current_span_len), value=float(current_span_len))
-            
-            # Calculation for internal logic
             dist_val = x_end - x_start
             x_loc = x_start
-            
             if x_end < x_start:
                 st.warning("⚠️ End position must be greater than Start position.")
-        
         else:
-            # Point Load or Moment
             x_loc = st.number_input("Position x (m) from left of span", 
                                     min_value=0.0, max_value=float(current_span_len), value=float(current_span_len)/2)
-            dist_val = 0 # Not used for Point/Moment
+            dist_val = 0 
             
     if st.button("➕ Add Load", type="primary"):
-        # Validate Uniform Load
         valid = True
-        if "Uniform" in load_type:
-            if dist_val <= 0:
-                st.error("Error: Uniform load length must be greater than 0.")
-                valid = False
+        if "Uniform" in load_type and dist_val <= 0:
+            st.error("Error: Uniform load length must be greater than 0.")
+            valid = False
         
         if valid:
             l_type_code = 'P'
@@ -176,7 +168,7 @@ with tab3:
                 'type': l_type_code,
                 'mag': mag,
                 'x': x_loc,
-                'dist': dist_val, # Save the calculated distance
+                'dist': dist_val,
                 'case': load_case
             }
             st.session_state['loads'].append(new_load)
@@ -186,30 +178,21 @@ with tab3:
     # Display Loads Table
     if st.session_state['loads']:
         st.markdown("##### Current Loads List")
-        # Process data for display
         display_data = []
         for i, l in enumerate(st.session_state['loads']):
             s_num = l['span_idx'] + 1
             l_t = l['type']
-            
             pos_desc = f"x={l['x']:.2f} m"
             if l_t == 'U':
                 end_pos = l['x'] + l.get('dist', 0)
                 pos_desc = f"x={l['x']:.2f} to {end_pos:.2f} m"
-                
             display_data.append({
-                "Index": i,
-                "Span": s_num,
-                "Type": l_t,
-                "Mag": l['mag'],
-                "Case": l['case'],
-                "Position": pos_desc
+                "Index": i, "Span": s_num, "Type": l_t, 
+                "Mag": l['mag'], "Case": l['case'], "Position": pos_desc
             })
-            
         df_loads = pd.DataFrame(display_data)
         st.dataframe(df_loads, use_container_width=True, hide_index=True)
         
-        # Remove Load
         col_del, _ = st.columns([1, 3])
         with col_del:
             idx_to_del = st.number_input("Remove Load Index", min_value=0, max_value=max(0, len(st.session_state['loads'])-1), step=1)
@@ -222,71 +205,86 @@ with tab3:
 st.markdown("---")
 if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
     
-    # Prepare Data
     spans = st.session_state['spans']
     supports_df = pd.DataFrame(st.session_state['supports'])
     loads_df = pd.DataFrame(st.session_state['loads'])
     
-    # Check minimum stability (Basic check)
     if len(supports_df) < 2:
         st.error("Structure unstable: Need at least 2 supports.")
     else:
         try:
-            # FACTORED LOADS CALCULATION
-            # Create a copy of loads to apply factors before sending to solver
+            # Factored Loads
             calc_loads = loads_df.copy()
             if not calc_loads.empty:
-                # Apply factors based on 'case'
                 def apply_factor(row):
                     f = dl_factor if row['case'] == 'DL' else ll_factor
                     return row['mag'] * f
-                
                 calc_loads['mag'] = calc_loads.apply(apply_factor, axis=1)
             
-            # Initialize Solver (With A and G for Timoshenko)
+            # Solve (Timoshenko & A/G included)
             solver = BeamSolver(spans, supports_df, calc_loads, E, I, A, G)
+            df_res, reactions, summary = solver.solve() # Unpack 3 values
             
-            # Solve (รับค่า 3 ตัว: df, reactions, summary)
-            df_res, reactions, summary = solver.solve()
-            
-            # --- 1. แสดง Dashboard สรุปค่า Critical ---
-            if summary:
-                st.markdown("### 📊 Critical Design Values (Envelope)")
-                col1, col2, col3, col4 = st.columns(4)
+            if df_res.empty:
+                 st.error("Structure is Unstable or Error in calculation.")
+            else:
+                st.markdown("### 🎯 Analysis Results")
                 
-                # Max Shear
-                col1.metric("Max Shear", 
-                            f"{summary['V_max']['value']:.2f}", 
-                            f"@ x = {summary['V_max']['x']:.2f} m")
-                
-                # Max Moment (+)
-                col2.metric("Max Moment (+)", 
-                            f"{summary['M_pos']['value']:.2f}", 
-                            f"@ x = {summary['M_pos']['x']:.2f} m")
-                
-                # Max Moment (-)
-                col3.metric("Max Moment (-)", 
-                            f"{summary['M_neg']['value']:.2f}", 
-                            f"@ x = {summary['M_neg']['x']:.2f} m", 
-                            delta_color="inverse")
-                
-                # Max Deflection
-                col4.metric("Max Deflection", 
-                            f"{summary['D_max']['value']*1000:.4f} mm", # แปลงเป็น mm
-                            f"@ x = {summary['D_max']['x']:.2f} m")
-                
-                st.divider()
+                # --- NEW DASHBOARD LAYOUT ---
+                if summary:
+                    # แบ่ง 2 คอลัมน์: ค่าวิกฤต (70%) | แรงปฏิกิริยา (30%)
+                    col_res_1, col_res_2 = st.columns([2.5, 1])
+                    
+                    with col_res_1:
+                        with st.container(border=True):
+                            st.markdown("**📊 Critical Design Values (Envelope)**")
+                            
+                            c1, c2, c3 = st.columns(3)
+                            c1.metric("Max Shear (V)", f"{summary['V_max']['value']:.2f}", f"@ {summary['V_max']['x']:.2f} m")
+                            c2.metric("Max Moment (+)", f"{summary['M_pos']['value']:.2f}", f"@ {summary['M_pos']['x']:.2f} m")
+                            c3.metric("Max Moment (-)", f"{summary['M_neg']['value']:.2f}", f"@ {summary['M_neg']['x']:.2f} m", delta_color="inverse")
+                            
+                            st.divider()
+                            
+                            c4, c5 = st.columns([1, 1.5])
+                            with c4:
+                                st.metric("Max Deflection", f"{summary['D_max']['value']*1000:.4f} mm", f"@ {summary['D_max']['x']:.2f} m")
+                            with c5:
+                                # Quick Check L/360
+                                limit = max(spans)/360 * 1000
+                                passed = abs(summary['D_max']['value']*1000) < limit
+                                status = "✅ PASS" if passed else "⚠️ CHECK"
+                                st.caption(f"Serviceability Limit (L/360 = {limit:.2f} mm)")
+                                st.markdown(f"**Status: {status}**")
 
-            # --- 2. เรียกใช้การวาดกราฟแบบเดิม (design_view) ---
-            design_view.draw_interactive_diagrams(
-                df_res, reactions, spans, supports_df, 
-                st.session_state['loads'], # Original inputs
-                dl_factor=dl_factor, ll_factor=ll_factor
-            )
-            
-            # --- 3. ตารางสรุป Reaction ---
-            design_view.render_result_tables(df_res, reactions, spans)
+                    with col_res_2:
+                        with st.container(border=True):
+                            st.markdown("**📍 Key Reactions**")
+                            # แสดงเฉพาะ Node ที่มีแรงกระทำจริงๆ
+                            has_reaction = False
+                            for i in range(len(spans)+1):
+                                fy = reactions[2*i]
+                                mz = reactions[2*i+1]
+                                if abs(fy) > 0.01 or abs(mz) > 0.01:
+                                    has_reaction = True
+                                    st.markdown(f"**Node {i}:**")
+                                    if abs(fy) > 0.01: st.write(f"Fy = `{fy:.2f}`")
+                                    if abs(mz) > 0.01: st.write(f"Mz = `{mz:.2f}`")
+                                    st.markdown("---")
+                            if not has_reaction:
+                                st.write("No major reactions.")
+
+                # --- PLOTTING (Original Design) ---
+                design_view.draw_interactive_diagrams(
+                    df_res, reactions, spans, supports_df, 
+                    st.session_state['loads'], 
+                    dl_factor=dl_factor, ll_factor=ll_factor
+                )
+                
+                # --- Detailed Table (Hidden by default) ---
+                with st.expander("📄 Detailed Calculation Tables"):
+                    design_view.render_result_tables(df_res, reactions, spans)
             
         except Exception as e:
-            st.error(f"Analysis Failed: {str(e)}")
+            st.error(f"Analysis Error: {str(e)}")
             st.code(e)
