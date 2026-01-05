@@ -10,29 +10,26 @@ class BeamSolver:
         self.E = E
         self.I = I
         self.nodes = [0] + list(np.cumsum(spans))
-        self.n_nodes = len(self.nodes)
         self.total_len = self.nodes[-1]
         
     def solve(self):
-        # 1. Global Stiffness Matrix
-        n_dof = 2 * self.n_nodes
+        n_dof = 2 * len(self.nodes)
         K = np.zeros((n_dof, n_dof))
         F = np.zeros(n_dof)
         
         for i, L in enumerate(self.spans):
-            k = self.E * self.I / L**3
-            k_el = k * np.array([
-                [12, 6*L, -12, 6*L],
-                [6*L, 4*L**2, -6*L, 2*L**2],
-                [-12, -6*L, 12, -6*L],
-                [6*L, 2*L**2, -6*L, 4*L**2]
+            # Element Stiffness
+            k_val = self.E * self.I / L**3
+            k_el = k_val * np.array([
+                [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
             ])
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             for r in range(4):
                 for c in range(4):
                     K[idx[r], idx[c]] += k_el[r, c]
-                    
-            # Fixed End Moments (FEM)
+            
+            # FEM Calculation
             fem = np.zeros(4)
             if not self.loads.empty:
                 span_loads = self.loads[self.loads['span_idx'] == i]
@@ -41,89 +38,90 @@ class BeamSolver:
                     if l['type'] == 'P':
                         a = l['x']; b = L - a
                         fem += val * np.array([
-                            (b**2 * (3*a+b))/L**3, (a * b**2)/L**2,
-                            (a**2 * (a+3*b))/L**3, -(a**2 * b)/L**2
+                            (b**2*(3*a+b))/L**3, (a*b**2)/L**2,
+                            (a**2*(a+3*b))/L**3, -(a**2*b)/L**2
                         ])
                     elif l['type'] == 'U':
-                        # Assuming full span uniform for simplicity
-                        fem += val * np.array([L/2, L**2/12, L/2, -L**2/12])
-            
+                        # Partial Uniform Load Formula
+                        # Load from a to c (relative to span start)
+                        a = l['x']
+                        c = l.get('end', L)
+                        w = val
+                        # Integration method for exact FEM of partial load is complex
+                        # Approximation: discretized point loads or integration
+                        # Let's use Integration for precision:
+                        # Fixed End Moment Left = Integral( w(x) * x * (L-x)^2 / L^2 ) dx
+                        # This is heavy. Let's use simple logic:
+                        # If Full Span:
+                        if abs(a) < 1e-3 and abs(c-L) < 1e-3:
+                            fem += w * np.array([L/2, L**2/12, L/2, -L**2/12])
+                        else:
+                            # Simplified: Discretize to 10 point loads (Good enough for this scale)
+                            pts = np.linspace(a, c, 10)
+                            dx = (c - a) / 10
+                            for px in pts:
+                                P_sub = w * dx
+                                pa = px; pb = L - px
+                                fem += P_sub * np.array([
+                                    (pb**2*(3*pa+pb))/L**3, (pa*pb**2)/L**2,
+                                    (pa**2*(pa+3*pb))/L**3, -(pa**2*pb)/L**2
+                                ])
+
             F[idx] -= fem
 
-        # 2. Boundary Conditions
-        free_dof = list(range(n_dof))
+        # BCs
+        free = list(range(n_dof))
         for _, s in self.supports.iterrows():
-            node = int(s['id'])
-            if 2*node in free_dof: free_dof.remove(2*node) # Fix Y
-            if s['type'] == 'Fixed' and (2*node+1 in free_dof):
-                free_dof.remove(2*node+1) # Fix Rotation
-
-        # 3. Solve
+            nid = int(s['id'])
+            if 2*nid in free: free.remove(2*nid)
+            if s['type'] == 'Fixed' and 2*nid+1 in free: free.remove(2*nid+1)
+            
         U = np.zeros(n_dof)
-        if free_dof:
+        if free:
             try:
-                U[free_dof] = np.linalg.solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
+                U[free] = np.linalg.solve(K[np.ix_(free, free)], F[free])
             except:
                 return None, None
-                
-        # 4. Reactions
+        
         R = K @ U - F
         
-        # 5. Internal Forces (Integration Method)
-        # Create dense points
-        x_vals = sorted(list(set(
-            list(np.linspace(0, self.total_len, 500)) + 
-            self.nodes + 
-            [n + 0.001 for n in self.nodes] + [n - 0.001 for n in self.nodes]
-        )))
-        # Add load points
-        if not self.loads.empty:
-            for _, l in self.loads.iterrows():
-                lx = self.nodes[int(l['span_idx'])] + l['x']
-                x_vals.extend([lx, lx-0.001, lx+0.001])
-        x_vals = sorted(list(set([x for x in x_vals if 0 <= x <= self.total_len])))
+        # Post-Process (Diagrams)
+        x_eval = np.linspace(0, self.total_len, 500)
+        V, M = [], []
         
-        V_res, M_res = [], []
-        
-        for x in x_vals:
+        for x in x_eval:
             v, m = 0, 0
-            # Reactions contribution
-            for i, node_x in enumerate(self.nodes):
-                if node_x <= x + 1e-6:
-                    v += R[2*i]
-                    m += R[2*i] * (x - node_x) + R[2*i+1]
-            
-            # Loads contribution
+            # Reactions
+            for n_i, nx in enumerate(self.nodes):
+                if nx <= x:
+                    v += R[2*n_i]
+                    m += R[2*n_i]*(x-nx) + R[2*n_i+1]
+            # Loads
             if not self.loads.empty:
                 for _, l in self.loads.iterrows():
-                    l_start = self.nodes[int(l['span_idx'])]
+                    lx = self.nodes[int(l['span_idx'])] + l['x']
                     if l['type'] == 'P':
-                        lp = l_start + l['x']
-                        if lp <= x + 1e-6:
+                        if lx <= x:
                             v -= l['mag']
-                            m -= l['mag'] * (x - lp)
+                            m -= l['mag']*(x-lx)
                     elif l['type'] == 'U':
-                        l_end = self.nodes[int(l['span_idx']) + 1]
-                        # Effective length of load to the left of x
-                        eff_start = l_start
-                        eff_end = min(x, l_end)
-                        if eff_end > eff_start:
-                            dist = eff_end - eff_start
+                        l_start = lx
+                        l_end = self.nodes[int(l['span_idx'])] + l.get('end', self.spans[int(l['span_idx'])])
+                        if x > l_start:
+                            eff_end = min(x, l_end)
+                            dist = eff_end - l_start
                             load = l['mag'] * dist
-                            centroid = eff_start + dist/2
+                            cent = l_start + dist/2
                             v -= load
-                            m -= load * (x - centroid)
-                            
-            V_res.append(v)
-            M_res.append(m)
-            
-        # Deflection (Double Integration of M/EI)
-        # Numerical integration
+                            m -= load * (x - cent)
+            V.append(v); M.append(m)
+
+        # Deflection
         if hasattr(integrate, 'cumulative_trapezoid'): cumtrapz = integrate.cumulative_trapezoid
         else: cumtrapz = integrate.cumtrapz
-
-        curvature = np.array(M_res) / (self.E * self.I)
-        slope = cumtrapz(curvature, x_vals, initial=0) + U[1] # Add initial slope
-        defl = cumtrapz(slope, x_vals, initial=0) + U[0]      # Add initial defl
         
-        return pd.DataFrame({'x': x_vals, 'shear': V_res, 'moment': M_res, 'deflection': defl}), R
+        curv = np.array(M)/(self.E * self.I)
+        theta = cumtrapz(curv, x_eval, initial=0) + U[1]
+        delta = cumtrapz(theta, x_eval, initial=0) + U[0]
+        
+        return pd.DataFrame({'x': x_eval, 'shear': V, 'moment': M, 'deflection': delta}), R
