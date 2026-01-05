@@ -1,111 +1,133 @@
 import numpy as np
+import math
 
 def get_rebar_area(size_str):
-    """Return area of rebar in cm2 based on standard Thai sizes"""
+    """Return area (cm2) based on standard Thai sizes"""
     db_map = {
+        'RB6': 0.28, 'RB9': 0.64,
         'DB12': 1.13, 'DB16': 2.01, 'DB20': 3.14, 'DB25': 4.91, 'DB28': 6.16
     }
     return db_map.get(size_str, 2.01)
 
-def calculate_flexure_sdm(Mu, section_name, b, h, cover, params):
+def calculate_flexure_sdm(Mu_kgm, section_name, b, h, cover, params):
     """
-    Design for Flexure (Strength Design Method)
-    Mu: Ultimate Moment (kg-m) (+ or -)
+    Strength Design Method (SDM) Calculation with detailed logging.
     """
-    Mu_abs = abs(Mu)
+    logs = []
+    logs.append(f"<b>--- Design for {section_name} ---</b>")
+    
+    # 1. Constants
+    phi = 0.90
     fc = params['fc']
     fy = params['fy']
-    phi_b = 0.90  # Flexure
+    Mu = abs(Mu_kgm) * 100 # Convert kg-m -> kg-cm
     
-    # Effective depth
-    d = h - cover - 0.6 - 1.0 # approx (cover + stirrup + half_bar)
-    if d <= 0: return {'Status': 'Error', 'Log': ['Depth too small']}
-    
-    logs = []
-    logs.append(f"Section: {b}x{h} cm, d={d:.2f} cm")
-    logs.append(f"Mu = {Mu_abs:.2f} kg-m")
-    
-    # Required Mn
-    Mn_req = Mu_abs / phi_b * 100 # kg-cm
-    
-    # Check Max Reinforcement (Simple rho_max approx 0.75 rho_b)
-    # Beta1
-    beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*((fc-280)/70))
-    rho_b = (0.85 * beta1 * fc / fy) * (6120 / (6120 + fy))
-    rho_max = 0.75 * rho_b
-    rho_min = max(14/fy, 0.25*np.sqrt(fc)/fy) # ACI Metric
-    
-    # Calculate Required As
-    # Rn = Mn / (b * d^2)
-    Rn = Mn_req / (b * d**2) # kg/cm2
-    
-    # Check if section is large enough (Rn must < Rn_max)
-    m = fy / (0.85 * fc)
-    try:
-        rho_req = (1/m) * (1 - np.sqrt(1 - 2*m*Rn/fy))
-    except:
-        return {'Type': section_name, 'Mu': Mu, 'Bars': "Section Too Small", 'Status': 'Fail (Compression Failure)', 'Log': logs}
+    logs.append(f"Mu = {Mu_kgm:.2f} kg-m")
+    logs.append(f"Section {b}x{h} cm, fc'={fc} ksc, fy={fy} ksc")
 
-    As_req = rho_req * b * d
-    As_min = rho_min * b * d
-    As_final = max(As_req, As_min)
+    # 2. Effective Depth (d)
+    # Estimate: cover + stirrup(0.9) + half_bar(1.0) approx 4-5 cm
+    d_est = h - cover - 2.0 
+    logs.append(f"Effective depth (d) ≈ {d_est:.2f} cm")
     
-    logs.append(f"As required = {As_final:.2f} cm2")
+    if Mu <= 1e-3:
+        return {'Type': section_name, 'Mu': 0, 'Bars': "Min Steel", 'Status': 'OK', 'Log': logs + ["Moment is negligible."]}
+
+    # 3. Calculate Rn
+    # Mn_req = Mu / phi
+    Mn_req = Mu / phi
+    Rn = Mn_req / (b * d_est**2)
+    logs.append(f"Required Mn = {Mn_req:,.2f} kg-cm")
+    logs.append(f"Rn = {Rn:.2f} ksc")
     
-    # Select Bars
+    # 4. Check Rho Required
+    # rho = (1/m) * (1 - sqrt(1 - 2*m*Rn/fy))
+    beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*((fc-280)/70))
+    m = fy / (0.85 * fc)
+    
+    term = 1 - (2 * m * Rn / fy)
+    if term < 0:
+        logs.append(f"<span style='color:red'>Error: Section too small (Rn too high). Increase Depth.</span>")
+        return {'Type': section_name, 'Mu': Mu_kgm, 'Bars': "SIZE ERR", 'Status': 'Fail', 'Log': logs}
+        
+    rho_req = (1/m) * (1 - math.sqrt(term))
+    logs.append(f"Rho required = {rho_req:.5f}")
+    
+    # 5. Check Limits (Rho_min, Rho_max)
+    rho_min = max(14/fy, 0.25*math.sqrt(fc)/fy)
+    rho_bal = (0.85 * beta1 * fc / fy) * (6120 / (6120 + fy))
+    rho_max = 0.75 * rho_bal
+    
+    logs.append(f"Rho min = {rho_min:.5f}, Rho max = {rho_max:.5f}")
+    
+    if rho_req > rho_max:
+        logs.append("<span style='color:red'>Fail: Rho > Rho_max (Brittle Failure)</span>")
+        status = "Over Reinforced"
+    else:
+        status = "OK"
+
+    # 6. Area of Steel
+    rho_design = max(rho_req, rho_min)
+    As_req = rho_design * b * d_est
+    logs.append(f"As required = {As_req:.2f} cm2")
+    
+    # 7. Bar Selection
     bar_size = params['main_bar']
-    bar_area = get_rebar_area(bar_size)
-    num_bars = int(np.ceil(As_final / bar_area))
-    # Minimum 2 bars
-    num_bars = max(num_bars, 2)
+    area_one = get_rebar_area(bar_size)
+    num_bars = math.ceil(As_req / area_one)
+    num_bars = max(num_bars, 2) # Minimum 2 bars
     
-    real_As = num_bars * bar_area
-    status = "OK" if rho_req <= rho_max else "Over Reinforced!"
+    As_prov = num_bars * area_one
+    logs.append(f"Selected: <b>{num_bars}-{bar_size}</b> (As={As_prov:.2f} cm2)")
     
     return {
         'Type': section_name,
-        'Mu': Mu,
+        'Mu': Mu_kgm,
         'Bars': f"{num_bars}-{bar_size}",
-        'As_prov': real_As,
         'Status': status,
         'Log': logs
     }
 
-def calculate_shear_capacity(Vu, b, h, cover, params):
-    """
-    Design Shear Reinforcement (Stirrups)
-    Vu: Ultimate Shear (kg)
-    """
+def calculate_shear_capacity(Vu_kg, b, h, cover, params):
+    """Design Stirrups"""
+    logs = []
+    logs.append(f"Vu = {Vu_kg:.2f} kg")
+    
+    phi = 0.85
     fc = params['fc']
-    fy = params['fy'] # usually use stirrup grade? Assuming same for now or add param
-    phi_v = 0.85
-    d = h - cover - 1.5
+    fy = 2400 # Assume SR24 for stirrups
+    d = h - cover - 2.0
     
-    Vc = 0.53 * np.sqrt(fc) * b * d # kg (Simple ACI metric)
-    phiVc = phi_v * Vc
+    Vc = 0.53 * math.sqrt(fc) * b * d
+    phiVc = phi * Vc
+    logs.append(f"Capacity of Concrete (phi*Vc) = {phiVc:.2f} kg")
     
-    logs = [f"Vu = {Vu:.2f} kg", f"phi*Vc = {phiVc:.2f} kg"]
+    stirrup_info = ""
     
-    stirrup_txt = ""
-    
-    if Vu <= phiVc / 2:
-        stirrup_txt = "Theoretical: None required"
-    elif Vu <= phiVc:
-        stirrup_txt = "Min Stirrups (e.g. RB6 @ 200)"
+    if Vu_kg <= phiVc / 2:
+        stirrup_info = "Theoretically None (Use Min)"
+        logs.append("Vu < 0.5*phiVc -> No shear steel required.")
+    elif Vu_kg <= phiVc:
+        stirrup_info = "Min Stirrups RB6 @ 20"
+        logs.append("Vu < phiVc -> Use minimum stirrups.")
     else:
-        # Vs needed
-        Vs_req = (Vu - phiVc) / phi_v
-        # Check max shear
-        if Vs_req > 2.1 * np.sqrt(fc) * b * d:
-            stirrup_txt = "Section Too Small (Shear)"
+        # Calculate Vs
+        Vs_req = (Vu_kg - phiVc) / phi
+        logs.append(f"Vs Required = {Vs_req:.2f} kg")
+        
+        # Check Section Size
+        if Vs_req > 2.1 * math.sqrt(fc) * b * d:
+             stirrup_info = "Section Too Small!"
+             logs.append("Error: Vs too high, increase concrete size.")
         else:
-            # Calculate spacing for RB6 (Area = 0.56 for 2 legs)
-            Av = 2 * 0.28 # 2 legs of 6mm = 0.56 cm2
-            # s = Av * fy * d / Vs
-            s_req = Av * 2400 * d / Vs_req # Assume RB6 is SR24
-            s_final = min(s_req, d/2, 60) # Max spacing rules
-            # Round down to nearest 5 or 2.5
-            s_final = int(s_final // 2.5) * 2.5
-            stirrup_txt = f"RB6 @ {s_final:.0f} cm"
-            
-    return Vc, phiVc, stirrup_txt, logs
+             # Spacing for RB6 (2 legs) -> Av = 0.56 cm2
+             Av = 0.56
+             s_calc = Av * fy * d / Vs_req
+             s_max = d/2
+             s_final = min(s_calc, s_max, 30) # Max 30 cm
+             # Round to nearest 2.5 cm
+             s_final = math.floor(s_final / 2.5) * 2.5
+             stirrup_info = f"RB6 @ {s_final:.1f} cm"
+             logs.append(f"Calculated spacing = {s_calc:.2f} cm -> Use {stirrup_info}")
+
+    return stirrup_info, logs
