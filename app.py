@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Import modules (ตรวจสอบว่าไฟล์ solver.py และ design_view.py อยู่ในโฟลเดอร์เดียวกัน)
+# Import modules
 from solver import BeamSolver
 import design_view
 
@@ -11,9 +11,8 @@ st.set_page_config(page_title="Beam Analysis Pro", layout="wide", page_icon="�
 
 # --- Session State Init ---
 if 'spans' not in st.session_state:
-    st.session_state['spans'] = [5.0, 5.0] # Default 2 spans
+    st.session_state['spans'] = [5.0, 5.0]
 if 'supports' not in st.session_state:
-    # Default: Pin at start, Roller at ends
     st.session_state['supports'] = [
         {'id': 0, 'type': 'Pin'},
         {'id': 1, 'type': 'Roller'},
@@ -34,17 +33,39 @@ if st.sidebar.button("Reset Project", type="primary"):
     st.rerun()
 
 st.sidebar.markdown("### 1. Section Properties")
-E = st.sidebar.number_input("Elastic Modulus (E) [Pa]", value=2e11, format="%.2e")
-I = st.sidebar.number_input("Moment of Inertia (I) [m^4]", value=5e-5, format="%.2e")
+E = st.sidebar.number_input("Elastic Modulus (E) [Pa]", value=2e11, format="%.2e", help="Concrete approx 2-3e10, Steel 2e11")
 
-# --- Timoshenko Inputs (Optional) ---
-use_timoshenko = st.sidebar.checkbox("Advanced: Timoshenko Beam", value=False, help="Enable for deep beams (accounts for shear deformation)")
-if use_timoshenko:
-    st.sidebar.caption("Required for Timoshenko:")
+# --- NEW: Section Input Logic ---
+input_method = st.sidebar.radio(
+    "Input Method", 
+    ["Rectangular Size (b x h)", "Custom Properties (I, A)"]
+)
+
+if input_method == "Rectangular Size (b x h)":
+    col_dim1, col_dim2 = st.sidebar.columns(2)
+    b = col_dim1.number_input("Width (b) [m]", value=0.30, min_value=0.01, step=0.05)
+    h = col_dim2.number_input("Depth (h) [m]", value=0.50, min_value=0.01, step=0.05)
+    
+    # Calculate Properties
+    I = (b * h**3) / 12
+    A = b * h
+    
+    st.sidebar.info(f"Calculated:\nI = {I:.2e} m⁴\nA = {A:.4f} m²")
+
+else:
+    # Custom Input (Original)
+    I = st.sidebar.number_input("Moment of Inertia (I) [m^4]", value=5e-5, format="%.2e")
     A = st.sidebar.number_input("Cross-sectional Area (A) [m^2]", value=0.01, format="%.4f")
+
+# --- Timoshenko Inputs ---
+use_timoshenko = st.sidebar.checkbox("Advanced: Timoshenko Beam", value=False, help="Enable for deep beams (accounts for shear deformation)")
+
+if use_timoshenko:
+    st.sidebar.caption("Shear Modulus is required:")
+    # A is already determined from above
     G = st.sidebar.number_input("Shear Modulus (G) [Pa]", value=7.7e10, format="%.2e")
 else:
-    A, G = None, None # ให้ Solver คำนวณ Default เอง
+    G = None # Let Solver estimate if needed (though mostly unused if not Timoshenko)
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 2. Load Factors")
@@ -64,14 +85,12 @@ with tab1:
     with col_s1:
         num_spans = st.number_input("Number of Spans", min_value=1, max_value=10, value=len(st.session_state['spans']))
         
-        # Adjust list size
         current_spans = st.session_state['spans']
         if len(current_spans) < num_spans:
             current_spans.extend([5.0] * (num_spans - len(current_spans)))
         elif len(current_spans) > num_spans:
             st.session_state['spans'] = current_spans[:num_spans]
             
-        # Inputs for each span
         new_spans = []
         cols = st.columns(min(num_spans, 4))
         for i in range(num_spans):
@@ -87,13 +106,11 @@ with tab2:
     st.subheader("Define Supports")
     num_nodes = len(st.session_state['spans']) + 1
     
-    # Create a DataFrame for editing
     sup_data = []
     existing_sups = {s['id']: s['type'] for s in st.session_state['supports']}
     
     for i in range(num_nodes):
         stype = existing_sups.get(i, "None")
-        # Display as Node 1, 2, 3... in the table for consistency
         sup_data.append({"Node ID": i + 1, "Support Type": stype})
     
     df_sup = pd.DataFrame(sup_data)
@@ -110,11 +127,9 @@ with tab2:
         use_container_width=True
     )
     
-    # Save back to session state (Internal logic still needs 0-based index)
     new_sups = []
     for index, row in edited_df.iterrows():
         if row['Support Type'] != "None":
-            # Convert back to 0-based index for calculation
             internal_id = int(row['Node ID']) - 1
             new_sups.append({'id': internal_id, 'type': row['Support Type']})
     st.session_state['supports'] = new_sups
@@ -137,7 +152,6 @@ with tab3:
     with c3:
         mag = st.number_input("Magnitude (kg, kg/m, kg-m)", value=1000.0)
         
-        # --- UI LOGIC FOR LOAD POSITION ---
         if "Uniform" in load_type:
             cols_pos = st.columns(2)
             with cols_pos[0]:
@@ -178,7 +192,6 @@ with tab3:
             st.success("Load added!")
             st.rerun()
 
-    # Display Loads Table
     if st.session_state['loads']:
         st.markdown("##### Current Loads List")
         display_data = []
@@ -198,7 +211,6 @@ with tab3:
         
         col_del, _ = st.columns([1, 3])
         with col_del:
-            # Adjust remove index to be 1-based for user friendliness
             idx_to_del = st.number_input("Remove Load #", min_value=1, max_value=max(1, len(st.session_state['loads'])), step=1)
             if st.button("🗑️ Remove Load"):
                 internal_idx = idx_to_del - 1
@@ -218,7 +230,6 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
         st.error("Structure unstable: Need at least 2 supports.")
     else:
         try:
-            # Factored Loads
             calc_loads = loads_df.copy()
             if not calc_loads.empty:
                 def apply_factor(row):
@@ -226,7 +237,6 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                     return row['mag'] * f
                 calc_loads['mag'] = calc_loads.apply(apply_factor, axis=1)
             
-            # Solve
             solver = BeamSolver(spans, supports_df, calc_loads, E, I, A, G)
             df_res, reactions, summary = solver.solve()
             
@@ -235,14 +245,14 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
             else:
                 st.markdown("### 🎯 Analysis Results")
 
-                # --- 1. กราฟ (Diagrams) ---
+                # 1. Diagrams
                 design_view.draw_interactive_diagrams(
                     df_res, reactions, spans, supports_df, 
                     st.session_state['loads'], 
                     dl_factor=dl_factor, ll_factor=ll_factor
                 )
                 
-                # --- 2. Drop Down (View Results) ---
+                # 2. Results Expander
                 with st.expander("📊 View Critical Values & Reactions Details", expanded=False):
                     
                     if summary:
@@ -253,18 +263,13 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                         col_c2.metric("Max Moment (+)", f"{summary['M_pos']['value']:.2f}", f"@ {summary['M_pos']['x']:.2f} m")
                         col_c3.metric("Max Moment (-)", f"{summary['M_neg']['value']:.2f}", f"@ {summary['M_neg']['x']:.2f} m", delta_color="inverse")
                         
-                        # Deflection Check Logic
                         with col_c4:
-                            limit_val = max(spans)/360 * 1000 # mm
+                            limit_val = max(spans)/360 * 1000 
                             actual_val_mm = summary['D_max']['value'] * 1000
-                            status_text = "✅ PASS (L/360)" if abs(actual_val_mm) < limit_val else "⚠️ CHECK"
-                            
-                            st.metric("Max Deflection", 
-                                      f"{actual_val_mm:.4f} mm",
-                                      status_text)
+                            status_text = "✅ PASS" if abs(actual_val_mm) < limit_val else "⚠️ CHECK"
+                            st.metric("Max Deflection", f"{actual_val_mm:.4f} mm", status_text)
                         
                         st.markdown("---")
-                        
                         st.markdown("#### 2. Support Reactions")
                         
                         support_ids = supports_df['id'].tolist()
@@ -276,7 +281,6 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                             sup_type = supports_df[supports_df['id'] == node_id]['type'].values[0]
                             
                             with r_cols[idx]:
-                                # --- แก้ไข: แสดงผลเป็น Node + 1 ---
                                 st.markdown(f"**Node {node_id + 1} ({sup_type})**")
                                 st.write(f"Fy: `{fy:.2f}` N")
                                 if sup_type == 'Fixed' or abs(mz) > 0.01:
