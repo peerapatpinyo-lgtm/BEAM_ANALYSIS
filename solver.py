@@ -4,190 +4,209 @@ from scipy import integrate
 
 class BeamSolver:
     def __init__(self, spans, supports, loads, E=2e6, I=1e-4):
+        """
+        Custom Matrix Stiffness Solver for Continuous Beams
+        """
         self.spans = spans
         self.supports = supports 
         self.loads = loads if loads is not None else pd.DataFrame()
         self.E = E
         self.I = I
+        
+        # Geometry
         self.nodes = [0] + list(np.cumsum(spans))
         self.n_nodes = len(self.nodes)
         self.total_len = self.nodes[-1]
         
     def solve(self):
-        n_dof = 2 * self.n_nodes 
+        # --- A. Matrix Stiffness Method (FEM) ---
+        n_dof = 2 * self.n_nodes # 2 DOF per node (y, theta)
         K_global = np.zeros((n_dof, n_dof))
         F_global = np.zeros(n_dof)
         
-        # --- 1. Stiffness & Load Vector (FEM) ---
+        # 1. Build Stiffness Matrix & Load Vector
         for i, L in enumerate(self.spans):
-            # Stiffness Matrix
-            k_val = (self.E * self.I / L**3)
-            k_el = k_val * np.array([
-                [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
-                [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
+            # Element Stiffness (Bernoulli Beam)
+            k = (self.E * self.I / L**3)
+            k_el = k * np.array([
+                [12, 6*L, -12, 6*L],
+                [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L],
+                [6*L, 2*L**2, -6*L, 4*L**2]
             ])
             
+            # Map to Global Indices
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             for r in range(4):
                 for c in range(4):
                     K_global[idx[r], idx[c]] += k_el[r, c]
             
-            # Fixed End Forces (FEM) due to Loads
+            # Fixed End Forces (FEM) calculation
             fem = np.zeros(4)
             if not self.loads.empty:
+                # Filter loads in this span
+                # We need to check coordinate carefully. 
+                # Input 'x' is relative to span start.
                 span_loads = self.loads[self.loads['span_idx'] == i].to_dict('records')
-            else:
-                span_loads = []
+                
+                for load in span_loads:
+                    val = load['mag']
+                    a = load['x']
+                    b = L - a
+                    
+                    if load['type'] == 'P': # Point Load
+                        # Ry_L, M_L, Ry_R, M_R
+                        fem[0] += val * b**2 * (3*a + b) / L**3
+                        fem[1] += val * a * b**2 / L**2
+                        fem[2] += val * a**2 * (a + 3*b) / L**3
+                        fem[3] -= val * a**2 * b / L**2
+                        
+                    elif load['type'] == 'U': # Uniform Load
+                        w = val
+                        # Treat full span uniform for simplicity or partial
+                        # Assuming full span based on UI, but if partial logic is needed:
+                        # (Simplified for full span w)
+                        fem[0] += w * L / 2
+                        fem[1] += w * L**2 / 12
+                        fem[2] += w * L / 2
+                        fem[3] -= w * L**2 / 12
             
-            for load in span_loads:
-                val = load['mag']
-                if load['type'] == 'P':
-                    a = load['x']; b = L - a; P = val
-                    fem[0] += P * b**2 * (3*a + b) / L**3
-                    fem[1] += P * a * b**2 / L**2
-                    fem[2] += P * a**2 * (a + 3*b) / L**3
-                    fem[3] -= P * a**2 * b / L**2
-                elif load['type'] == 'U':
-                    w = val
-                    fem[0] += w * L / 2; fem[1] += w * L**2 / 12
-                    fem[2] += w * L / 2; fem[3] -= w * L**2 / 12
-                elif load['type'] == 'M':
-                    M_app = val 
-                    a = load['x']; b = L - a
-                    # FEM for Moment Load (Counter-clockwise +)
-                    fem[0] += -6 * M_app * a * b / L**3
-                    fem[1] += M_app * b * (2*a - b) / L**2
-                    fem[2] += 6 * M_app * a * b / L**3
-                    fem[3] += M_app * a * (2*b - a) / L**2
-            
-            F_global[idx] -= fem 
+            # Add FEM to Global Force Vector (Subtraction because F_node = -FEM)
+            F_global[idx] -= fem
 
-        # --- 2. Boundary Conditions ---
+        # 2. Apply Boundary Conditions
         free_dofs = list(range(n_dof))
+        
+        # Support logic
         if not self.supports.empty:
             for _, row in self.supports.iterrows():
                 node_idx = int(row['id'])
-                # Constrain Vertical Displacement (y)
-                if 2*node_idx in free_dofs: free_dofs.remove(2*node_idx) 
+                stype = row['type']
                 
-                # Constrain Rotation (theta) if Fixed
-                if row['type'] == 'Fixed':
-                    if 2*node_idx+1 in free_dofs: free_dofs.remove(2*node_idx+1)
+                # All supports constrain Vertical Y (index 2*node)
+                dof_y = 2*node_idx
+                if dof_y in free_dofs: free_dofs.remove(dof_y)
+                
+                # Fixed support constrains Rotation (index 2*node + 1)
+                if stype == 'Fixed':
+                    dof_th = 2*node_idx + 1
+                    if dof_th in free_dofs: free_dofs.remove(dof_th)
 
-        # --- 3. Solve for Displacements ---
+        # 3. Solve System (KU = F)
         U_global = np.zeros(n_dof)
         if free_dofs:
+            K_free = K_global[np.ix_(free_dofs, free_dofs)]
+            F_free = F_global[free_dofs]
             try:
-                U_global[free_dofs] = np.linalg.solve(K_global[np.ix_(free_dofs, free_dofs)], F_global[free_dofs])
+                U_free = np.linalg.solve(K_free, F_free)
+                U_global[free_dofs] = U_free
             except np.linalg.LinAlgError:
-                raise ValueError("Structure is unstable or singular matrix.")
+                raise ValueError("Structure is unstable (Singular Matrix)")
 
-        # --- 4. Calculate Reactions ---
-        # R = K * U - F_equivalent (F_global used negative FEM, so R = K*U + FEM_accumulated)
-        # Easier: R = K_global @ U_global - (F_global_original_loads)
-        # Actually, standard matrix EQ: F_external + Reactions = K * U
-        # So Reactions = K * U - F_external
+        # 4. Calculate Reactions (R = K*U - F_applied)
+        # Note: F_global currently holds -FEM. 
+        # Correct statics: Reactions + F_external = K * U
+        # Reactions = K*U - F_external
         Reactions = np.dot(K_global, U_global) - F_global
 
-        # --- 5. Post-Processing for Diagrams (Integration Method) ---
-        # We will discretize the beam and integrate Shear -> Moment -> Slope -> Deflection
+        # --- B. Post-Processing (Generate Diagrams) ---
+        # Strategy: Use Method of Sections (Integration) from Left to Right
+        # utilizing the calculated Reactions and Applied Loads.
         
-        # A. Create dense x array including key points
+        # Create dense X coordinates
         x_points = set([0, self.total_len])
         for n in self.nodes: x_points.add(n)
         if not self.loads.empty:
             for _, l in self.loads.iterrows():
                 abs_x = self.nodes[int(l['span_idx'])] + l['x']
                 x_points.add(abs_x)
-                x_points.add(abs_x - 1e-6) # Discontinuity handling
-                x_points.add(abs_x + 1e-6)
+                x_points.add(abs_x - 1e-5) # For discontinuities
+                x_points.add(abs_x + 1e-5)
         
-        # Add dense points for smooth curves
         dense_x = np.linspace(0, self.total_len, 501)
         x_final = np.unique(np.concatenate((list(x_points), dense_x)))
-        x_final.sort()
-        x_final = x_final[x_final >= 0]
-        x_final = x_final[x_final <= self.total_len]
+        x_final = np.sort(x_final)
+        x_final = x_final[(x_final >= 0) & (x_final <= self.total_len)]
 
         V_vals = np.zeros_like(x_final)
         M_vals = np.zeros_like(x_final)
 
-        # B. Calculate V and M using Statics (Walking from Left)
         for i, x in enumerate(x_final):
-            # Sum Vertical Forces (Reactions + Loads) to the left
             v_sum = 0
             m_sum = 0
             
-            # 1. Reactions
+            # 1. Add Reactions (to the left of x)
             for n_i, node_x in enumerate(self.nodes):
-                if node_x <= x + 1e-9: # Reaction is to the left or at x
-                    # Vertical Reaction (Index 2*n_i)
+                if node_x <= x + 1e-9:
                     ry = Reactions[2*n_i]
-                    # Moment Reaction (Index 2*n_i+1) - Note: FEM Moment is CCW+, Beam M is Sagging+
-                    rm = Reactions[2*n_i+1]
+                    rm = Reactions[2*n_i+1] # Reaction Moment
                     
                     v_sum += ry
-                    m_sum -= rm # Reaction moment opposes internal moment
+                    # Reaction moment direction check:
+                    # Matrix: CCW+. Beam Statics: Sagging+. 
+                    # If Support creates CCW reaction, it pushes beam up? No.
+                    # Standard: M_internal = Sum(M_forces) + Sum(M_reactions)
                     m_sum += ry * (x - node_x)
+                    m_sum += rm # Add concentrated moment reaction
             
-            # 2. Applied Loads
+            # 2. Add Loads (to the left of x)
             if not self.loads.empty:
                 for _, l in self.loads.iterrows():
                     l_start_x = self.nodes[int(l['span_idx'])]
                     abs_loc = l_start_x + l['x']
                     
                     if l['type'] == 'P':
-                        if abs_loc <= x + 1e-9: # Point load to the left
-                            v_sum -= l['mag']
-                            m_sum -= l['mag'] * (x - abs_loc)
+                        if abs_loc <= x + 1e-9:
+                            load_val = l['mag'] # Downward load is positive in input? 
+                            # Usually input P is magnitude. Gravity is down.
+                            # Let's assume input is positive for gravity load
+                            v_sum -= load_val 
+                            m_sum -= load_val * (x - abs_loc)
                             
                     elif l['type'] == 'U':
                         l_end_x = self.nodes[int(l['span_idx']) + 1]
-                        # Intersection of load span and current x
-                        start_eff = max(l_start_x, 0) # simplified
-                        end_eff = min(x, l_end_x)
+                        # Overlap between [l_start, l_end] and [0, x]
+                        eff_start = l_start_x
+                        eff_end = min(x, l_end_x)
                         
-                        if end_eff > start_eff:
-                            dist = end_eff - start_eff
-                            load_mag = l['mag'] * dist
-                            centroid = start_eff + dist/2
-                            v_sum -= load_mag
-                            m_sum -= load_mag * (x - centroid)
-                            
-                    elif l['type'] == 'M':
-                        if abs_loc <= x + 1e-9:
-                            m_sum += l['mag'] # Applied Moment
+                        if eff_end > eff_start:
+                            dist = eff_end - eff_start
+                            w_mag = l['mag'] * dist
+                            centroid = eff_start + dist/2
+                            v_sum -= w_mag
+                            m_sum -= w_mag * (x - centroid)
 
             V_vals[i] = v_sum
             M_vals[i] = m_sum
 
-        # C. Calculate Deflection via Integration of M/EI
-        # slope = integral(M/EI) + C1
-        # defl  = integral(slope) + C2
+        # --- C. Deflection (Double Integration) ---
+        # Integrate M/EI -> Slope -> Deflection
+        # Using cumulative trapezoid integration
         
+        # 1. Slope (theta) = Integral(M/EI) + C1
+        # We know theta at node 0 from Matrix Solver (U_global[1])
         if hasattr(integrate, 'cumulative_trapezoid'):
             cumtrapz = integrate.cumulative_trapezoid
         else:
             cumtrapz = integrate.cumtrapz
 
-        # Integrate M to get Curvature/Slope
-        theta_rel = cumtrapz(M_vals, x_final, initial=0) / (self.E * self.I)
+        curvature = M_vals / (self.E * self.I)
+        theta_rel = cumtrapz(curvature, x_final, initial=0)
         
-        # Integrate Slope to get Deflection shape
+        # 2. Deflection (delta) = Integral(theta) + C2
+        # We know delta at node 0 from Matrix Solver (U_global[0])
         delta_rel = cumtrapz(theta_rel, x_final, initial=0)
         
-        # D. Apply Boundary Conditions to Integration Constants
-        # We know the true displacement and rotation at Node 0 from the Matrix Solver
-        y0_true = U_global[0]      # Vertical displacement at x=0
-        theta0_true = U_global[1]  # Rotation at x=0
+        # 3. Apply Boundary Constants from Matrix Solution
+        # True Slope = theta_rel + theta_start
+        # True Defl  = delta_rel + theta_start*x + delta_start
         
-        # Corrected Slope = theta_rel + C1 -> C1 = theta0_true
-        # Corrected Defl  = delta_rel + C1*x + C2 -> C2 = y0_true
+        theta_start = U_global[1] # Rotation at Node 0
+        delta_start = U_global[0] # Displacement at Node 0
         
-        slope_final = theta_rel + theta0_true
-        defl_final = delta_rel + theta0_true * x_final + y0_true
+        defl_final = delta_rel + theta_start * x_final + delta_start
 
-        # --- 6. Pack Results ---
+        # Pack Data
         df_results = pd.DataFrame({
             'x': x_final,
             'shear': V_vals,
