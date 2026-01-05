@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import PIL 
 
-# Fix Image Size Limit
+# Fix Image Size Limit (Prevention)
 PIL.Image.MAX_IMAGE_PIXELS = None 
 
 from solver import BeamSolver
@@ -128,7 +128,7 @@ with tab3:
                 st.session_state.loads_list = []
                 st.rerun()
 
-# --- PLOTTING LOGIC (ORIGINAL CLEAN STYLE) ---
+# --- PLOTTING FUNCTION (EXACTLY LIKE FIRST VERSION) ---
 def plot_beam_diagram(ax, spans, supports, loads):
     total_len = sum(spans)
     node_x = np.concatenate(([0], np.cumsum(spans)))
@@ -140,97 +140,98 @@ def plot_beam_diagram(ax, spans, supports, loads):
     ax.axis('off')
     
     # Draw Nodes
-    ax.plot(node_x, np.zeros_like(node_x), 'ko', markersize=5)
+    ax.plot(node_x, np.zeros_like(node_x), 'ko', markersize=4)
     
-    # Draw Supports
+    # Draw Supports (Green Style)
     for s in supports:
         if int(s['id']) < len(node_x):
-            x = node_x[int(s['id'])]
+            x_pos = node_x[int(s['id'])]
             if s['type'] == 'Pin':
-                ax.plot(x, -0.2, marker='^', color='green', markersize=12)
+                ax.plot(x_pos, -0.2, marker='^', color='green', markersize=12)
             elif s['type'] == 'Roller':
-                ax.plot(x, -0.2, marker='o', color='green', markersize=10)
+                ax.plot(x_pos, -0.2, marker='o', color='green', markersize=10)
             elif s['type'] == 'Fixed':
-                rect = patches.Rectangle((x-0.1, -0.4), 0.2, 0.8, color='green', alpha=0.5)
+                rect = patches.Rectangle((x_pos-0.1, -0.4), 0.2, 0.8, color='green', alpha=0.5)
                 ax.add_patch(rect)
-    
-    # Draw Loads
-    max_load = 1
-    if loads: max_load = max([abs(l['mag']) for l in loads])
-    if max_load == 0: max_load = 1
+            
+    # Draw Loads (Red/Orange/Purple Style)
+    max_load = 1.0
+    if loads: max_load = max([abs(l['mag']) for l in loads]) if loads else 1.0
+    if max_load == 0: max_load = 1.0
     
     for l in loads:
         if int(l['span_idx']) < len(spans):
-            x = node_x[int(l['span_idx'])] + l['x']
-            mag = l['mag']
+            x_start = node_x[int(l['span_idx'])] + l['x']
             
             if l['type'] == 'P':
-                # Arrow points down for positive load
-                dy = -0.8 if mag > 0 else 0.8
-                ax.arrow(x, -dy, 0, dy*0.8, head_width=0.2, head_length=0.2, fc='red', ec='red')
-                ax.text(x, -dy*1.2, f"P={mag}", ha='center', color='red')
+                ax.arrow(x_start, 1.0, 0, -0.8, head_width=0.2, head_length=0.2, fc='red', ec='red')
+                ax.text(x_start, 1.1, f"P={l['mag']}", ha='center', color='red')
             elif l['type'] == 'U':
-                dist = l.get('dist', 1.0)
-                rect = patches.Rectangle((x, 0), dist, 0.4, facecolor='orange', alpha=0.3)
+                dist = l.get('dist', spans[int(l['span_idx'])] - l['x'])
+                rect = patches.Rectangle((x_start, 0), dist, 0.5, facecolor='orange', alpha=0.3, edgecolor='orange')
                 ax.add_patch(rect)
-                ax.text(x + dist/2, 0.5, f"w={mag}", ha='center', color='orange')
+                ax.text(x_start + dist/2, 0.6, f"w={l['mag']}", ha='center', color='orange')
             elif l['type'] == 'M':
-                ax.text(x, 0.5, f"M={mag}", ha='center', color='purple')
-    
-    ax.set_title("System Diagram")
+                style = "Simple,tail_width=0.5,head_width=4,head_length=8"
+                kw = dict(arrowstyle=style, color="purple")
+                arc = patches.FancyArrowPatch((x_start-0.2, 0.5), (x_start+0.2, 0.5), connectionstyle="arc3,rad=.5", **kw)
+                ax.add_patch(arc)
+                ax.text(x_start, 0.8, f"M={l['mag']}", ha='center', color='purple')
 
 # --- MAIN CALCULATION ---
 st.markdown("###")
-if st.button("Calculate Analysis", type="primary"):
+if st.button("🚀 Calculate Analysis", type="primary"):
     if not spans:
-        st.error("Please define spans first.")
+        st.error("Please enter span lengths.")
     else:
         try:
+            # Prepare Data for Solver
             beam_props = {'E': E, 'I': I, 'A': A, 'type': beam_type}
             
-            # SOLVER
+            # Call Solver
             solver = BeamSolver(spans, st.session_state.supports_list, st.session_state.loads_list, beam_props)
             results, R = solver.solve()
             
-            st.success("Calculation Complete")
+            # --- PLOTTING (EXACTLY LIKE FIRST VERSION) ---
+            st.success("Analysis Complete!")
             
-            # PLOT (Standard 4 rows)
-            fig, ax = plt.subplots(4, 1, figsize=(10, 12), gridspec_kw={'height_ratios': [1, 2, 2, 2], 'hspace': 0.4})
+            # Use specific layout from first version
+            fig, ax = plt.subplots(4, 1, figsize=(10, 14), gridspec_kw={'height_ratios': [1, 2, 2, 2]})
             
-            # 1. System
+            # 1. Physical Diagram
             plot_beam_diagram(ax[0], spans, st.session_state.supports_list, st.session_state.loads_list)
+            ax[0].set_title("Beam Structure Diagram")
             
-            # 2. Shear
+            # 2. Shear Force
             ax[1].plot(results['x'], results['shear'], 'b-', linewidth=1.5)
             ax[1].fill_between(results['x'], results['shear'], color='blue', alpha=0.1)
-            ax[1].set_ylabel("Shear Force (N)")
-            ax[1].set_title("Shear Force Diagram")
+            ax[1].set_ylabel("Shear (N)")
             ax[1].grid(True, linestyle=':', alpha=0.6)
             ax[1].axhline(0, color='black', linewidth=0.8)
             
-            # 3. Moment (Standard View)
+            # 3. Bending Moment
             ax[2].plot(results['x'], results['moment'], 'r-', linewidth=1.5)
             ax[2].fill_between(results['x'], results['moment'], color='red', alpha=0.1)
-            ax[2].set_ylabel("Bending Moment (N-m)")
-            ax[2].set_title("Bending Moment Diagram")
+            ax[2].set_ylabel("Moment (N-m)")
             ax[2].grid(True, linestyle=':', alpha=0.6)
             ax[2].axhline(0, color='black', linewidth=0.8)
 
             # 4. Deflection
-            ax[3].plot(results['x'], results['deflection'], 'g-', linewidth=1.5)
+            ax[3].plot(results['x'], results['deflection'], 'g-', linewidth=2)
             ax[3].set_ylabel("Deflection (m)")
             ax[3].set_xlabel("Position (m)")
-            ax[3].set_title("Deflection")
             ax[3].grid(True, linestyle=':', alpha=0.6)
             ax[3].axhline(0, color='black', linewidth=0.8)
             
-            # Max Deflection Label
-            if len(results['deflection']) > 0:
-                min_val = results['deflection'].min() # Typically negative
-                min_idx = results['deflection'].idxmin()
-                ax[3].plot(results.iloc[min_idx]['x'], min_val, 'ko', markersize=4)
-                ax[3].text(results.iloc[min_idx]['x'], min_val, f" Max: {min_val:.4e} m", va='top')
+            # Mark max deflection
+            min_y = results['deflection'].min() 
+            # Use absolute max for label
+            abs_max_idx = results['deflection'].abs().idxmax()
+            abs_max_val = results.iloc[abs_max_idx]['deflection']
+            ax[3].plot(results.iloc[abs_max_idx]['x'], abs_max_val, 'ko')
+            ax[3].text(results.iloc[abs_max_idx]['x'], abs_max_val, f" Max: {abs_max_val:.2e} m", va='bottom')
 
+            plt.tight_layout()
             st.pyplot(fig, dpi=100)
             
         except Exception as e:
