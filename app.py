@@ -22,26 +22,52 @@ if 'supports' not in st.session_state:
 if 'loads' not in st.session_state:
     st.session_state['loads'] = []
 
-# --- Sidebar ---
-st.sidebar.title("🏗️ Beam Settings")
+# --- Sidebar: Material & Section Properties (ENGINEERING UPGRADE) ---
+st.sidebar.title("🏗️ Project Settings")
 st.sidebar.markdown("---")
-# Reset Button
+
+# 1. Reset
 if st.sidebar.button("Reset Project", type="primary"):
     st.session_state['spans'] = [5.0]
     st.session_state['supports'] = [{'id': 0, 'type': 'Pin'}, {'id': 1, 'type': 'Roller'}]
     st.session_state['loads'] = []
     st.rerun()
 
-st.sidebar.markdown("### Design Parameters")
-E = st.sidebar.number_input("Elastic Modulus (E)", value=2e6, format="%.2e")
-I = st.sidebar.number_input("Moment of Inertia (I)", value=5e-4, format="%.2e")
+st.sidebar.markdown("### 🧱 Material Properties")
+# Input: f'c in ksc (Thai Standard)
+fc_ksc = st.sidebar.number_input("Concrete Strength ($f'_c$)", value=240, min_value=100, step=10, help="Unit: ksc (kg/cm²)")
 
-st.sidebar.markdown("### Load Factors")
-dl_factor = st.sidebar.number_input("Dead Load Factor", value=1.4, step=0.1)
-ll_factor = st.sidebar.number_input("Live Load Factor", value=1.7, step=0.1)
+# Calculation: Ec (ACI 318) -> 15100 * sqrt(fc_ksc)
+# Convert ksc (kg/cm²) to kg/m² -> Multiply by 10,000
+Ec_ksc = 15100 * np.sqrt(fc_ksc)
+E_val = Ec_ksc * 10000 # Unit: kg/m²
+
+st.sidebar.markdown("### 📏 Section Properties")
+col_b, col_h = st.sidebar.columns(2)
+with col_b:
+    b_val = st.number_input("Width ($b$)", value=0.25, min_value=0.05, step=0.05, format="%.2f", help="Unit: meter")
+with col_h:
+    h_val = st.number_input("Depth ($h$)", value=0.50, min_value=0.05, step=0.05, format="%.2f", help="Unit: meter")
+
+# Calculation: Inertia (m^4)
+I_val = (b_val * (h_val**3)) / 12
+Area_val = b_val * h_val
+
+# Display Calculated Properties (Read-only check)
+st.sidebar.markdown("#### 📝 Properties Summary")
+st.sidebar.info(
+    f"**$E_c$:** {E_val:,.2e} kg/m²\n\n"
+    f"**$I_g$:** {I_val:,.2e} m⁴\n\n"
+    f"**Area:** {Area_val:.2f} m²"
+)
+
+st.sidebar.markdown("### ⚖️ Load Factors")
+dl_factor = st.sidebar.number_input("Dead Load Factor (DL)", value=1.4, step=0.1)
+ll_factor = st.sidebar.number_input("Live Load Factor (LL)", value=1.7, step=0.1)
 
 # --- Main Interface ---
 st.title("🏗️ Structural Beam Analysis (Exact FEM)")
+st.caption(f"Design based on: $f'_c={fc_ksc}$ ksc | Size ${b_val:.2f} \\times {h_val:.2f}$ m")
 
 # Tabs for input steps
 tab1, tab2, tab3 = st.tabs(["1️⃣ Geometry (Spans)", "2️⃣ Supports", "3️⃣ Applied Loads"])
@@ -105,7 +131,7 @@ with tab2:
             new_sups.append({'id': int(row['Node ID']), 'type': row['Support Type']})
     st.session_state['supports'] = new_sups
 
-# --- TAB 3: LOADS (UPDATED with Start/End for UDL) ---
+# --- TAB 3: LOADS (Preserved Logic) ---
 with tab3:
     st.subheader("Add Applied Loads")
     
@@ -125,7 +151,7 @@ with tab3:
         
         # --- UI LOGIC FOR LOAD POSITION ---
         if "Uniform" in load_type:
-            # 🟢 UPDATED: Start and End Inputs for Uniform Load
+            # Inputs for Start/End Position
             cols_pos = st.columns(2)
             with cols_pos[0]:
                 x_start = st.number_input("Start Position (x1) [m]", 
@@ -134,7 +160,7 @@ with tab3:
                 x_end = st.number_input("End Position (x2) [m]", 
                                         min_value=0.0, max_value=float(current_span_len), value=float(current_span_len))
             
-            # Validation logic handled during 'Add Load'
+            # Backend logic: convert Start/End to Start/Dist
             dist_val = x_end - x_start
             x_loc = x_start
             
@@ -151,7 +177,7 @@ with tab3:
         # Validate Uniform Load
         valid = True
         if "Uniform" in load_type:
-            if dist_val <= 0:
+            if dist_val <= 1e-4: # Tolerance check
                 st.error("Error: Uniform load length must be greater than 0.")
                 valid = False
         
@@ -222,19 +248,21 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
     else:
         try:
             # FACTORED LOADS CALCULATION
-            # Create a copy of loads to apply factors before sending to solver
             calc_loads = loads_df.copy()
             if not calc_loads.empty:
                 # Apply factors based on 'case'
-                # row['mag'] * factor
                 def apply_factor(row):
                     f = dl_factor if row['case'] == 'DL' else ll_factor
                     return row['mag'] * f
                 
                 calc_loads['mag'] = calc_loads.apply(apply_factor, axis=1)
             
-            # Initialize Solver
-            solver = BeamSolver(spans, supports_df, calc_loads, E, I)
+            # Include Self-Weight of Beam (Optional but Professional)
+            # Future Improvement: Add self-weight automatically based on Area * 2400
+            
+            # Initialize Solver with CALCULATED E and I
+            # Note: Solver expects E, I. We computed them from b, h, fc.
+            solver = BeamSolver(spans, supports_df, calc_loads, E_val, I_val)
             
             # Solve
             df_res, reactions = solver.solve()
