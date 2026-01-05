@@ -6,268 +6,243 @@ import numpy as np
 
 def draw_interactive_diagrams(df, reac, spans, sup_df, raw_loads):
     """
-    Ultimate Professional View (Final Fixed)
-    - Unified Scaling: 2000 is visually larger than 1000.
-    - True Scale X-Axis: Beam aligns perfectly with graphs below.
-    - Engineering Paper Style: Clean grids, precise markers.
+    Final Fix for Alignment & Scaling Issues:
+    1. Forced X-Axis Synchronization (Correction for Image 4/5 misalignment)
+    2. Unified Magnitude Scaling (P=2000 looks 2x bigger than w=1000)
+    3. Clean Engineering Layout
     """
-    # --- 1. GEOMETRY & COORDINATES ---
+    # --- 1. SETUP GEOMETRY ---
     nodes = [0] + list(np.cumsum(spans))
     total_len = nodes[-1]
     
-    # --- 2. UNIFIED MAGNITUDE SCALING (The "Common Sense" Scale) ---
-    # รวมค่าทุกอย่าง (P และ U) เพื่อหาค่า Max ตัวเดียว
-    # เพื่อให้ P=2000 สูงเป็น 2 เท่าของ w=1000 จริงๆ ในทางสายตา
+    # คำนวณ Max Load ของทั้งระบบ เพื่อใช้ Scale ความสูงกราฟฟิก
     all_mags = [l['mag'] for l in raw_loads]
-    global_max = max(all_mags) if all_mags else 1000.0
+    global_max_mag = max(all_mags) if all_mags else 1000.0
     
-    # ความสูง Reference สำหรับกราฟฟิก (หน่วย Visual แกน Y)
-    REF_HEIGHT = 2.0 
-
-    # --- 3. PLOT SETUP ---
+    # Constants for Visuals
+    BEAM_HEIGHT = 1.0       # ความสูงพื้นที่แสดงคาน (Visual Unit)
+    BEAM_THICKNESS = 0.25   # ความหนาตัวคาน
+    LOAD_SCALE_FACTOR = 0.8 # ความสูง Max Load เทียบกับพื้นที่
+    
+    # --- 2. CREATE SUBPLOTS ---
+    # ใช้ vertical_spacing น้อยลงเพื่อให้ดูกระชับ
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.06,
-        row_heights=[0.3, 0.23, 0.25, 0.22],
-        subplot_titles=(
-            "📌 Free Body Diagram", 
-            "⚡ Shear Force (V)", 
-            "🔄 Bending Moment (Tension Side)", 
-            "📉 Deflection (δ)"
-        )
+        vertical_spacing=0.03,
+        row_heights=[0.3, 0.2, 0.25, 0.25], # ให้พื้นที่ Load Diagram เยอะสุด
+        subplot_titles=("Loading Diagram (FBD)", "Shear Force (V)", "Bending Moment (M)", "Deflection (δ)")
     )
 
     # ==========================================
-    # ROW 1: BEAM & LOADS (True Scale)
+    # ROW 1: THE BEAM & LOADS (Corrected Alignment)
     # ==========================================
-    beam_y_top = 0.25
-    beam_y_bot = -0.25
     
-    # 1.1 The Beam (Classic Engineering Look)
+    # 1.1 วาดตัวคาน (Beam Body)
     fig.add_shape(type="rect",
-        x0=0, x1=total_len, y0=beam_y_bot, y1=beam_y_top,
-        fillcolor="#FAFAFA", line=dict(color="#212121", width=2.5),
-        layer="below", row=1, col=1
+        x0=0, x1=total_len, 
+        y0=-BEAM_THICKNESS/2, y1=BEAM_THICKNESS/2,
+        fillcolor="#F5F5F5", line=dict(color="#333", width=3),
+        row=1, col=1
     )
     # Centerline
     fig.add_trace(go.Scatter(
         x=[0, total_len], y=[0, 0], mode="lines",
-        line=dict(color="#B0BEC5", width=1.5, dash="dashdot"),
+        line=dict(color="#999", width=1, dash="dashdot"),
         hoverinfo="skip", showlegend=False
     ), row=1, col=1)
 
-    # 1.2 Supports
+    # 1.2 วาด Supports
     if not sup_df.empty:
         for _, s in sup_df.iterrows():
-            node_idx = int(s['id'])
-            if node_idx < len(nodes):
-                x = nodes[node_idx]
+            # ใช้ node_idx เพื่อหาตำแหน่ง X ที่แท้จริง
+            idx = int(s['id'])
+            if idx < len(nodes):
+                x_pos = nodes[idx]
                 stype = s['type']
                 
+                # วาดรูป Support
                 if stype == "Pin":
                     fig.add_trace(go.Scatter(
-                        x=[x], y=[beam_y_bot], mode="markers",
-                        marker=dict(symbol="triangle-up", size=15, color="#455A64"),
-                        hoverinfo="text", text="Pin", showlegend=False
+                        x=[x_pos], y=[-BEAM_THICKNESS/2], mode="markers",
+                        marker=dict(symbol="triangle-up", size=15, color="#424242"),
+                        showlegend=False, hoverinfo="skip"
                     ), row=1, col=1)
-                    fig.add_shape(type="line", x0=x-0.2, x1=x+0.2, y0=beam_y_bot-0.1, y1=beam_y_bot-0.1,
-                                  line=dict(color="#455A64", width=2), row=1, col=1)
-                
                 elif stype == "Roller":
                     fig.add_trace(go.Scatter(
-                        x=[x], y=[beam_y_bot - 0.1], mode="markers",
-                        marker=dict(symbol="circle", size=12, color="#455A64", line=dict(width=1.5, color="white")),
-                        showlegend=False
+                        x=[x_pos], y=[-BEAM_THICKNESS/2 - 0.1], mode="markers",
+                        marker=dict(symbol="circle", size=12, color="#424242", line=dict(width=1, color="white")),
+                        showlegend=False, hoverinfo="skip"
                     ), row=1, col=1)
-                    fig.add_shape(type="line", x0=x-0.2, x1=x+0.2, y0=beam_y_bot-0.25, y1=beam_y_bot-0.25,
-                                  line=dict(color="#455A64", width=2), row=1, col=1)
-
                 elif stype == "Fixed":
-                    fig.add_shape(type="line", x0=x, x1=x, y0=beam_y_bot-0.3, y1=beam_y_top+0.3,
-                        line=dict(color="#455A64", width=4), row=1, col=1)
-                    hatch_dir = 1 if x == 0 else -1
-                    for h in np.linspace(beam_y_bot-0.3, beam_y_top+0.3, 7):
-                        fig.add_shape(type="line", 
-                            x0=x, y0=h, x1=x - (0.3 * hatch_dir), y1=h - 0.15,
-                            line=dict(color="#455A64", width=1), row=1, col=1)
+                    fig.add_shape(type="line",
+                        x0=x_pos, x1=x_pos, 
+                        y0=-BEAM_THICKNESS/2 - 0.2, y1=BEAM_THICKNESS/2 + 0.2,
+                        line=dict(color="#424242", width=4), row=1, col=1
+                    )
 
-    # 1.3 Loads (Unified Scale)
+    # 1.3 วาด Loads (Unified Scaling & Correct Positioning)
     for l in raw_loads:
         span_idx = int(l['span_idx'])
-        if span_idx >= len(spans): continue 
+        if span_idx >= len(spans): continue
         
-        # Calculate Coordinates
+        # คำนวณตำแหน่ง Global X (แก้เรื่อง Load ไม่ตามระยะ)
         x_start = nodes[span_idx] + l['x']
         
-        # Calculate Visual Height (Unified)
-        # 2000 จะสูงเป็น 2 เท่าของ 1000 ไม่ว่าจะเป็น P หรือ U
-        raw_h = (l['mag'] / global_max) * REF_HEIGHT
-        vis_h = max(0.6, raw_h) # ขั้นต่ำต้องเห็นชัด (0.6 unit)
+        # คำนวณความสูง Visual (แก้เรื่องสัดส่วนเพี้ยน)
+        # Load ค่ามาก = สูงมาก, ค่าน้อย = เตี้ย (Linear Scale)
+        vis_h = (l['mag'] / global_max_mag) * LOAD_SCALE_FACTOR
+        vis_h = max(0.3, vis_h) # ขั้นต่ำให้เห็นชัดหน่อย
         
-        color = "#D32F2F" if l['case'] == 'LL' else "#1976D2" # Red/Blue Standard
-        
+        color = "#D32F2F" if l['case'] == 'LL' else "#1976D2"
+        fill_c = "rgba(211, 47, 47, 0.15)" if l['case'] == 'LL' else "rgba(25, 118, 210, 0.15)"
+
         if l['type'] == 'P':
             fig.add_annotation(
-                x=x_start, y=beam_y_top,
-                ax=0, ay=-vis_h*40, # Pixel scaling
+                x=x_start, y=BEAM_THICKNESS/2,
+                ax=0, ay=-vis_h * 50, # Scale vector length
                 xref="x1", yref="y1",
                 text=f"<b>P={l['mag']:,.0f}</b>",
-                showarrow=True, arrowhead=2, arrowwidth=2, arrowcolor=color,
-                font=dict(color=color, size=11, weight="bold"),
-                bgcolor="white", bordercolor=color, borderwidth=1, borderpad=2,
+                showarrow=True, arrowhead=2, arrowwidth=2, arrowcolor=color, arrowsize=1,
+                font=dict(color=color, size=11), bgcolor="white", bordercolor=color, borderwidth=1,
                 row=1, col=1
             )
             
         elif l['type'] == 'U':
-            span_L = spans[span_idx]
-            x_end = nodes[span_idx] + l.get('end', span_L)
+            span_length = spans[span_idx]
+            local_end = l.get('end', span_length)
+            x_end = nodes[span_idx] + local_end
             
-            # Draw Load Block
+            y_base = BEAM_THICKNESS/2
+            y_top = y_base + vis_h
+            
+            # Draw Block
             fig.add_trace(go.Scatter(
                 x=[x_start, x_end, x_end, x_start],
-                y=[beam_y_top, beam_y_top, beam_y_top + vis_h, beam_y_top + vis_h],
-                fill='toself', fillcolor=f"rgba{tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.15,)}",
-                mode='none', hoverinfo='skip', showlegend=False
+                y=[y_base, y_base, y_top, y_top],
+                fill='toself', fillcolor=fill_c, mode='none', hoverinfo='skip', showlegend=False
             ), row=1, col=1)
             
             # Top Line
             fig.add_trace(go.Scatter(
-                x=[x_start, x_end], y=[beam_y_top + vis_h, beam_y_top + vis_h],
-                mode='lines', line=dict(color=color, width=2), hoverinfo='skip', showlegend=False
+                x=[x_start, x_end], y=[y_top, y_top],
+                mode='lines', line=dict(color=color, width=2), showlegend=False
             ), row=1, col=1)
             
-            # Arrows (Distributed)
-            n_arrows = max(3, int((x_end - x_start) * 2))
+            # Arrows
+            n_arrows = max(3, int((x_end - x_start)*2))
             for ax in np.linspace(x_start, x_end, n_arrows):
-                fig.add_shape(type="line",
-                    x0=ax, x1=ax, y0=beam_y_top, y1=beam_y_top + vis_h,
-                    line=dict(color=color, width=1), layer="below", row=1, col=1
+                fig.add_annotation(
+                    x=ax, y=y_base, ax=0, ay=-vis_h*50, # Match P scale roughly
+                    xref="x1", yref="y1", showarrow=True, arrowhead=2, arrowwidth=1, arrowcolor=color, arrowsize=0.8,
+                    row=1, col=1
                 )
-                fig.add_trace(go.Scatter(
-                    x=[ax], y=[beam_y_top],
-                    mode='markers', marker=dict(symbol="triangle-down", size=6, color=color),
-                    hoverinfo='skip', showlegend=False
-                ), row=1, col=1)
-                
-            # Label
+
+            # Label Center
             fig.add_annotation(
-                x=(x_start + x_end)/2, y=beam_y_top + vis_h,
+                x=(x_start+x_end)/2, y=y_top,
                 text=f"<b>w={l['mag']:,.0f}</b>",
-                yshift=10, showarrow=False,
-                font=dict(color=color, size=11, weight="bold"),
-                bgcolor="white", bordercolor=color, borderwidth=1, borderpad=2,
+                yshift=10, showarrow=False, font=dict(color=color, size=11),
+                bgcolor="white", bordercolor=color, borderwidth=1,
                 row=1, col=1
             )
 
-    # Fix Range Row 1 (Visual Space)
-    fig.update_yaxes(range=[-1.0, REF_HEIGHT + 1.0], fixedrange=True, visible=False, row=1, col=1)
-
+    # Lock Y-Axis for Row 1 (Visual Space)
+    fig.update_yaxes(range=[-1.0, 2.5], visible=False, fixedrange=True, row=1, col=1)
 
     # ==========================================
-    # ROW 2: SHEAR (Technical Yellow)
+    # ROW 2, 3, 4: GRAPHS (With Clean Grids)
     # ==========================================
+    
+    # Shear
     fig.add_trace(go.Scatter(
         x=df['x'], y=df['shear'], mode='lines', line_shape='hv',
-        fill='tozeroy', line=dict(color='#FBC02D', width=2), # Darker Yellow
-        fillcolor='rgba(255, 235, 59, 0.3)', name="Shear"
+        fill='tozeroy', line=dict(color='#FFA000', width=2), fillcolor='rgba(255, 160, 0, 0.2)'
     ), row=2, col=1)
     
-    # Max Labels
-    v_max, v_min = df['shear'].max(), df['shear'].min()
-    fig.add_annotation(x=df.loc[df['shear'].idxmax(), 'x'], y=v_max, text=f"<b>{v_max:.0f}</b>", 
-        showarrow=False, yshift=15, bgcolor="white", font=dict(color="#F57F17", size=10), row=2, col=1)
-    fig.add_annotation(x=df.loc[df['shear'].idxmin(), 'x'], y=v_min, text=f"<b>{v_min:.0f}</b>", 
-        showarrow=False, yshift=-15, bgcolor="white", font=dict(color="#F57F17", size=10), row=2, col=1)
+    # Moment (Inverted Logic handled by autorange reversed later)
+    df['m_pos'] = df['moment'].clip(lower=0)
+    df['m_neg'] = df['moment'].clip(upper=0)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['m_pos'], fill='tozeroy', mode='lines', line=dict(width=0), fillcolor='rgba(33, 150, 243, 0.3)'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['m_neg'], fill='tozeroy', mode='lines', line=dict(width=0), fillcolor='rgba(233, 30, 99, 0.3)'), row=3, col=1)
+    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], mode='lines', line=dict(color='#546E7A', width=2)), row=3, col=1)
 
-    # ==========================================
-    # ROW 3: MOMENT (Blue/Red Standard)
-    # ==========================================
-    df['m_pos'] = df['moment'].apply(lambda x: x if x >= 0 else 0)
-    df['m_neg'] = df['moment'].apply(lambda x: x if x < 0 else 0)
-
-    fig.add_trace(go.Scatter(x=df['x'], y=df['m_pos'], mode='lines', line=dict(width=0), 
-        fill='tozeroy', fillcolor='rgba(33, 150, 243, 0.3)'), row=3, col=1) # Blue
-    fig.add_trace(go.Scatter(x=df['x'], y=df['m_neg'], mode='lines', line=dict(width=0), 
-        fill='tozeroy', fillcolor='rgba(233, 30, 99, 0.3)'), row=3, col=1)  # Red
-    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], mode='lines', 
-        line=dict(color='#37474F', width=2), showlegend=False), row=3, col=1)
-
-    # Critical Values
-    m_max, m_min = df['moment'].max(), df['moment'].min()
-    if m_max > 1:
-        fig.add_annotation(x=df.loc[df['moment'].idxmax(), 'x'], y=m_max, text=f"<b>{m_max:,.0f}</b>", 
-            showarrow=True, arrowcolor="#1976D2", yshift=20, font=dict(color="#1976D2"), bgcolor="white", row=3, col=1)
-    if abs(m_min) > 1:
-        fig.add_annotation(x=df.loc[df['moment'].idxmin(), 'x'], y=m_min, text=f"<b>{m_min:,.0f}</b>", 
-            showarrow=True, arrowcolor="#C2185B", yshift=-20, font=dict(color="#C2185B"), bgcolor="white", row=3, col=1)
-
-    # ==========================================
-    # ROW 4: DEFLECTION (Green Dashed)
-    # ==========================================
-    defl_mm = df['deflection'] * 1000
+    # Deflection
     fig.add_trace(go.Scatter(
-        x=df['x'], y=defl_mm, mode='lines',
-        line=dict(color='#2E7D32', width=2, dash='dot'), name="Deflection"
+        x=df['x'], y=df['deflection']*1000, mode='lines', 
+        line=dict(color='#43A047', width=2, dash='dot')
     ), row=4, col=1)
-    
-    d_max = defl_mm.abs().max()
-    if d_max > 0.01:
-        d_idx = defl_mm.abs().idxmax()
-        fig.add_annotation(x=df.loc[d_idx, 'x'], y=defl_mm[d_idx], text=f"{defl_mm[d_idx]:.2f} mm",
-            showarrow=True, arrowhead=1, row=4, col=1, bgcolor="white", font=dict(color="#2E7D32"))
 
     # ==========================================
-    # GLOBAL LAYOUT (Pro Grid)
+    # ANNOTATIONS (Values Boxed)
     # ==========================================
-    grid_style = dict(
+    # Helper to add value labels
+    def add_label(row, x, y, text, color):
+        fig.add_annotation(
+            x=x, y=y, text=f"<b>{text}</b>",
+            showarrow=False, yshift=15 if y >= 0 else -15,
+            font=dict(color=color, size=10),
+            bgcolor="white", bordercolor=color, borderwidth=1, borderpad=2,
+            row=row, col=1
+        )
+
+    # Shear Labels
+    v_max, v_min = df['shear'].max(), df['shear'].min()
+    add_label(2, df.loc[df['shear'].idxmax(), 'x'], v_max, f"{v_max:.0f}", "#FFA000")
+    add_label(2, df.loc[df['shear'].idxmin(), 'x'], v_min, f"{v_min:.0f}", "#FFA000")
+
+    # Moment Labels
+    m_max, m_min = df['moment'].max(), df['moment'].min()
+    if m_max > 10: add_label(3, df.loc[df['moment'].idxmax(), 'x'], m_max, f"{m_max:.0f}", "#1976D2")
+    if abs(m_min) > 10: add_label(3, df.loc[df['moment'].idxmin(), 'x'], m_min, f"{m_min:.0f}", "#C2185B")
+
+    # ==========================================
+    # GLOBAL LAYOUT (The Alignment Fix)
+    # ==========================================
+    
+    # กำหนด X-Range ให้เหมือนกันทุกกราฟ!!! (แก้ปัญหา Alignment หลุด)
+    x_range = [-0.5, total_len + 0.5]
+    
+    # Grid Style
+    grid_props = dict(
         showgrid=True, gridcolor='#E0E0E0', gridwidth=1,
-        showline=True, linecolor='black', linewidth=1,
+        showline=True, linecolor='#333', linewidth=1,
         mirror=True, zeroline=True, zerolinecolor='#9E9E9E'
     )
+
+    fig.update_layout(height=1200, template="plotly_white", showlegend=False, margin=dict(t=50, b=50, l=50, r=50))
     
-    fig.update_layout(
-        height=1300,
-        template="plotly_white",
-        margin=dict(l=50, r=30, t=50, b=50),
-        font=dict(family="Arial, sans-serif", size=12),
-        showlegend=False
-    )
+    # Apply Axis Settings
+    # Row 1: Beam
+    fig.update_xaxes(range=x_range, **grid_props, row=1, col=1) 
     
-    # Force Consistent X-Axis Range (แก้ปัญหาโหลดไม่ตามระยะ)
-    # บังคับให้ทุกกราฟเริ่มที่ 0 และจบที่ความยาวคานรวมเสมอ
-    fig.update_xaxes(range=[-0.5, total_len + 0.5], **grid_style)
+    # Row 2: Shear
+    fig.update_xaxes(range=x_range, matches='x', **grid_props, row=2, col=1)
+    fig.update_yaxes(title="V (kg)", **grid_props, row=2, col=1)
     
-    # Y Axes Titles
-    fig.update_yaxes(visible=False, showgrid=False, row=1, col=1) # Row 1 No grid
-    fig.update_yaxes(title="<b>V (kg)</b>", **grid_style, row=2, col=1)
-    fig.update_yaxes(title="<b>M (kg-m)</b>", autorange="reversed", **grid_style, row=3, col=1)
-    fig.update_yaxes(title="<b>δ (mm)</b>", **grid_style, row=4, col=1)
+    # Row 3: Moment
+    fig.update_xaxes(range=x_range, matches='x', **grid_props, row=3, col=1)
+    fig.update_yaxes(title="M (kg-m)", autorange="reversed", **grid_props, row=3, col=1)
     
+    # Row 4: Deflection
+    fig.update_xaxes(title="Distance (m)", range=x_range, matches='x', **grid_props, row=4, col=1)
+    fig.update_yaxes(title="δ (mm)", **grid_props, row=4, col=1)
+
     st.plotly_chart(fig, use_container_width=True)
 
 def render_result_tables(df, reac, spans, u_force, u_len):
     st.markdown("---")
-    c1, c2 = st.columns([1, 2])
+    c1, c2 = st.columns(2)
     with c1:
-        st.markdown("##### 📍 Support Reactions")
+        st.caption("📍 Support Reactions")
         if reac is not None:
-            r_data = []
-            for i in range(len(reac)//2):
-                if abs(reac[2*i]) > 0.01 or abs(reac[2*i+1]) > 0.01:
-                    r_data.append({"Node": i, "Ry": f"{reac[2*i]:,.2f}", "M": f"{reac[2*i+1]:,.2f}"})
+            r_data = [{"Node": i, "Ry (kg)": f"{reac[2*i]:,.2f}", "Mz (kg-m)": f"{reac[2*i+1]:,.2f}"} for i in range(len(reac)//2) if abs(reac[2*i])>0.1 or abs(reac[2*i+1])>0.1]
             st.table(pd.DataFrame(r_data))
     with c2:
-        st.markdown("##### 📐 Design Forces (Max values)")
+        st.caption("📐 Max Values per Span")
         s_data = []
         nodes = [0] + list(np.cumsum(spans))
         for i in range(len(spans)):
             sub = df[(df['x'] >= nodes[i]) & (df['x'] <= nodes[i+1])]
-            s_data.append({
-                "Span": i+1,
-                "Vmax": f"{sub['shear'].abs().max():,.0f}",
-                "M(+)": f"{sub['moment'].max():,.0f}",
-                "M(-)": f"{sub['moment'].min():,.0f}",
-                "Defl(mm)": f"{sub['deflection'].abs().max()*1000:.2f}"
-            })
-        st.dataframe(pd.DataFrame(s_data), hide_index=True, use_container_width=True)
+            s_data.append({"Span": i+1, "V_max": f"{sub['shear'].abs().max():,.0f}", "M_max": f"{sub['moment'].abs().max():,.0f}", "Defl_max": f"{sub['deflection'].abs().max()*1000:.2f}"})
+        st.table(pd.DataFrame(s_data))
