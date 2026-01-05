@@ -1,142 +1,94 @@
-# app.py (Modified Version)
 import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Import custom modules
+# Custom modules
 import input_handler
-import beam_analysis  # ใช้ไฟล์ใหม่แทน solver.py
-import rc_design      # เพิ่มส่วนออกแบบ
+import solver
+import rc_design
 import design_view
 
-# Page Config
-st.set_page_config(page_title="Beam Analysis Pro", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="Beam Analysis Pro", layout="wide")
 
 def main():
-    st.title("🏗️ Structural Beam Analysis & Design")
-    st.markdown("---")
-
-    # --- 1. Sidebar Settings ---
+    st.title("🏗️ Beam Analysis & Design (Custom Solver)")
+    
+    # 1. Inputs
     params = input_handler.render_sidebar()
-
-    # --- 2. Model Inputs ---
     n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
+    raw_loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
     
     st.markdown("---")
-
-    # --- 3. Loads Input (Service Loads) ---
-    raw_loads = input_handler.render_loads(n_spans, spans, params, sup_df)
-
-    st.markdown("---")
-
-    # --- 4. Calculation Loop ---
-    if st.button("🚀 Run Analysis & Design", type="primary", use_container_width=True):
+    
+    # 2. Process
+    if st.button("🚀 Run Analysis", type="primary"):
         if not stable:
-            st.error("❌ Structure is Unstable! Please check supports.")
+            st.error("Unstable Structure!")
             return
             
-        # A. LOAD FACTORING (Service -> Ultimate)
-        factored_loads_list = []
-        if raw_loads is not None and not raw_loads.empty:
-            raw_dict = raw_loads.to_dict('records')
-            for l in raw_dict:
-                factor = 1.0
-                if l['case'] == 'DL': factor = params['gamma_dead']
-                elif l['case'] == 'LL': factor = params['gamma_live']
-                
-                new_load = l.copy()
-                new_load['mag'] = l['mag'] * factor
-                factored_loads_list.append(new_load)
+        # Factoring Loads
+        factored_loads = []
+        if not raw_loads_df.empty:
+            for _, l in raw_loads_df.iterrows():
+                f = params['gamma_dead'] if l['case'] == 'DL' else params['gamma_live']
+                new_l = l.to_dict()
+                new_l['mag'] *= f
+                factored_loads.append(new_l)
         
-        factored_loads_df = pd.DataFrame(factored_loads_list) if factored_loads_list else None
-
-        # B. ANALYSIS ENGINE
-        # เรียกใช้ Class จาก beam_analysis.py
-        engine = beam_analysis.BeamAnalysisEngine(spans, sup_df, factored_loads_list) 
+        loads_df = pd.DataFrame(factored_loads) if factored_loads else None
         
+        # Solve
+        beam = solver.BeamSolver(spans, sup_df, loads_df, E=params['E'], I=params['I'])
         try:
-            # Run Solver
-            df_results, reactions = engine.solve()
-            
-            if df_results is None:
-                st.error("Analysis Error: Could not solve the structure.")
+            df_res, reactions = beam.solve()
+            if df_res is None:
+                st.error("Singular Matrix Error")
                 return
-
-            # C. VISUALIZATION (SFD, BMD, Deflection)
+                
+            # Visuals
             design_view.draw_interactive_diagrams(
-                df_results, 
-                reactions, 
-                spans, 
-                sup_df, 
-                raw_loads.to_dict('records') if raw_loads is not None else [], 
-                unit_force=params['u_force'], 
-                unit_len=params['u_len'],
-                dl_factor=params['gamma_dead'],
-                ll_factor=params['gamma_live']
+                df_res, reactions, spans, sup_df, 
+                raw_loads_df.to_dict('records') if not raw_loads_df.empty else [],
+                unit_force=params['u_force']
             )
+            design_view.render_result_tables(df_res, reactions, spans, params['u_force'], params['u_len'])
             
-            design_view.render_result_tables(df_results, reactions, spans, params['u_force'], params['u_len'])
-
-            # D. RC DESIGN (ส่วนที่เพิ่มเข้ามา)
-            st.markdown("---")
+            # Design Loop
             st.header("🧱 Reinforced Concrete Design")
-            
-            # หาค่า Max Moment (+/-) และ Max Shear ในแต่ละช่วงคาน
             design_results = []
             cum_dist = [0] + list(np.cumsum(spans))
             
             for i in range(len(spans)):
-                start_x = cum_dist[i]
-                end_x = cum_dist[i+1]
+                start, end = cum_dist[i], cum_dist[i+1]
+                span_res = df_res[(df_res['x'] >= start) & (df_res['x'] <= end)]
                 
-                # Filter results for this span
-                span_res = df_results[(df_results['x'] >= start_x) & (df_results['x'] <= end_x)]
-                
-                # 1. Get Critical Values
+                # Critical Values
                 mu_pos = span_res['moment'].max()
                 mu_neg = span_res['moment'].min()
                 vu_max = span_res['shear'].abs().max()
                 
-                # 2. Design Section (Positive Moment - Midspan)
-                if mu_pos > 0:
-                    res_pos = rc_design.calculate_flexure_sdm(mu_pos, f"Span {i+1} (+M)", params['b'], params['h'], params['cover'], params)
-                    design_results.append(res_pos)
-                
-                # 3. Design Section (Negative Moment - Support)
-                if abs(mu_neg) > 0:
-                    res_neg = rc_design.calculate_flexure_sdm(mu_neg, f"Span {i+1} (-M)", params['b'], params['h'], params['cover'], params)
-                    design_results.append(res_neg)
-                    
-                # 4. Design Shear (Stirrups)
-                _, _, stir_txt, shear_log = rc_design.calculate_shear_capacity(vu_max, params['b'], params['h'], params['cover'], params)
-                
-                # Append Shear info to the last design entry or create new if needed
-                # (For simplicity, we show Shear as a separate note or column in a real table)
+                # Flexure Design
+                if mu_pos > 1e-3:
+                    design_results.append(rc_design.calculate_flexure_sdm(mu_pos, f"Span {i+1} Mid (+)", params['b'], params['h'], params['cover'], params))
+                if abs(mu_neg) > 1e-3:
+                    design_results.append(rc_design.calculate_flexure_sdm(mu_neg, f"Span {i+1} Sup (-)", params['b'], params['h'], params['cover'], params))
             
-            # แสดงผลการออกแบบแบบการ์ด
-            if design_results:
-                cols = st.columns(len(design_results))
-                for idx, res in enumerate(design_results):
-                    # Wrap cards if too many
-                    with cols[idx % len(cols)]: 
-                        status_color = "green" if "OK" in res['Status'] else "red"
-                        st.markdown(f"""
-                        <div style="padding:10px; border:1px solid #ddd; border-radius:5px; margin-bottom:10px;">
-                            <h4>{res['Type']}</h4>
-                            <p><b>Mu:</b> {res['Mu']:.2f}</p>
-                            <p><b>Rebar:</b> {res['Bars']}</p>
-                            <p style="color:{status_color};"><b>{res['Status']}</b></p>
-                            <details><summary>Calc Log</summary>
-                            <small>{'<br>'.join(res['Log'])}</small>
-                            </details>
-                        </div>
-                        """, unsafe_allow_html=True)
-            else:
-                st.info("Moment is zero, no reinforcement calculation needed.")
-
+            # Show Cards
+            cols = st.columns(3)
+            for idx, res in enumerate(design_results):
+                with cols[idx % 3]:
+                    color = "green" if "OK" in res['Status'] else "red"
+                    st.markdown(f"""
+                    <div style="border:1px solid #ddd; padding:10px; border-radius:5px; margin-bottom:10px">
+                        <h4>{res['Type']}</h4>
+                        <p>Mu: {res['Mu']:.2f}</p>
+                        <p><b>{res['Bars']}</b></p>
+                        <p style="color:{color}">{res['Status']}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
         except Exception as e:
-            st.error(f"System Error: {str(e)}")
-            st.exception(e)
+            st.error(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
