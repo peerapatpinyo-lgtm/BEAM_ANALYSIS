@@ -1,32 +1,35 @@
 import numpy as np
 import pandas as pd
 
-class AdvancedBeamSolver:
+class BeamSolver:
     def __init__(self, spans, supports, loads, properties):
         """
-        Professional FEM Beam Solver
+        Professional FEM Beam Solver with Auto-Meshing
         
         Parameters:
         - spans: list of lengths [L1, L2, ...]
-        - supports: list of dicts 
-          {'id': node_idx, 'type': 'Pin'/'Fixed'/'Roller', 'settlement': val, 'k_spring': val}
-          (Note: 'id' here refers to the original span connection points)
-        - loads: list of dicts or DataFrame with 'span_idx', 'type', 'mag', 'x'
-        - properties: dict {'E': float, 'I': float, 'A': float, 'type': 'Euler'/'Timoshenko', 'nu': 0.3, 'kappa': 5/6}
+        - supports: list of dicts [{'id': 0, 'type': 'Fixed', 'settlement': 0, 'k_spring': 0}, ...]
+        - loads: list of dicts or DataFrame
+        - properties: dict {'E': float, 'I': float, 'A': float, 'type': 'Euler'/'Timoshenko'}
         """
         self.raw_spans = np.array(spans, dtype=float)
         self.raw_supports = supports
         self.raw_loads = pd.DataFrame(loads) if isinstance(loads, list) else loads
-        self.props = properties
         
-        # Unpack Properties
-        self.E = float(properties.get('E', 2e11))
-        self.I = float(properties.get('I', 1e-4))
-        self.A = float(properties.get('A', 0.01))
-        self.beam_type = properties.get('type', 'Euler')
-        self.nu = properties.get('nu', 0.3)
-        self.kappa = properties.get('kappa', 5/6.0)
-        
+        # Handle Properties
+        # รองรับกรณีส่งเข้ามาเป็น dict (วิธีใหม่) หรือส่งมาแค่ค่าเดียว (เผื่อการขยายผล)
+        if isinstance(properties, dict):
+            self.E = float(properties.get('E', 2e11))
+            self.I = float(properties.get('I', 1e-4))
+            self.A = float(properties.get('A', 0.01)) # Default Area
+            self.beam_type = properties.get('type', 'Euler')
+            self.nu = properties.get('nu', 0.3)
+            self.kappa = properties.get('kappa', 5/6.0)
+        else:
+            # Fallback (ไม่ควรเกิดขึ้นถ้าแก้ app.py แล้ว)
+            self.E = 2e11; self.I = 1e-4; self.A = 0.01
+            self.beam_type = 'Euler'; self.nu = 0.3; self.kappa = 5/6.0
+
         if self.beam_type == 'Timoshenko':
             self.G = self.E / (2 * (1 + self.nu))
             
@@ -34,10 +37,7 @@ class AdvancedBeamSolver:
         self._generate_global_mesh()
 
     def _generate_global_mesh(self):
-        """
-        หัวใจสำคัญ: แปลง Input บ้านๆ ให้เป็น Finite Element Mesh ที่ละเอียด
-        โดยการตัด Node เพิ่มตรงจุดที่มี Load หรือ Support
-        """
+        """ แปลง Input เป็น Finite Element Mesh ที่ละเอียดโดยอัตโนมัติ """
         # 1.1 Map Original Nodes to Global X
         original_nodes = np.concatenate(([0], np.cumsum(self.raw_spans)))
         
@@ -47,30 +47,29 @@ class AdvancedBeamSolver:
         # Add Load locations to cut points
         if not self.raw_loads.empty:
             for _, l in self.raw_loads.iterrows():
-                # Global X of load
                 span_start = original_nodes[int(l['span_idx'])]
                 lx_global = span_start + l['x']
                 
+                # ตัด Node ตรงจุดที่มี Load
                 cut_points.add(lx_global)
                 
+                # ถ้าเป็น UDL ต้องตัดจุดจบด้วย
                 if l['type'] == 'U':
-                    # Add end point of UDL
                     dist = l.get('dist', self.raw_spans[int(l['span_idx'])] - l['x'])
                     cut_points.add(lx_global + dist)
 
         # 1.3 Create Final Mesh Nodes (Sorted and Unique)
         self.nodes = np.array(sorted(list(cut_points)))
         self.n_nodes = len(self.nodes)
-        self.dof = 2 * self.n_nodes # Total Degrees of Freedom
+        self.dof = 2 * self.n_nodes 
         
-        # 1.4 Generate Elements (Connectivity)
-        # Element เชื่อมระหว่าง Node i และ i+1
+        # 1.4 Generate Elements
         self.elements = []
         for i in range(self.n_nodes - 1):
             x_start = self.nodes[i]
             x_end = self.nodes[i+1]
             length = x_end - x_start
-            if length > 1e-9: # Avoid zero length elements
+            if length > 1e-9: 
                 self.elements.append({
                     'id': i,
                     'n1': i,
@@ -80,7 +79,7 @@ class AdvancedBeamSolver:
                 })
     
     def _get_element_stiffness(self, L):
-        """ Calculate Stiffness Matrix (k) based on Beam Theory """
+        """ Stiffness Matrix ตามทฤษฎีที่เลือก (Euler/Timoshenko) """
         if self.beam_type == 'Euler':
             k_val = (self.E * self.I) / L**3
             return k_val * np.array([
@@ -99,21 +98,12 @@ class AdvancedBeamSolver:
             ])
 
     def _get_consistent_nodal_loads(self, el, load_type, mag, local_x, dist=0):
-        """
-        แปลง Load บน Element ให้เป็น Equivalent Nodal Loads
-        el: element dict
-        local_x: ตำแหน่งเทียบกับจุดเริ่ม Element
-        """
+        """ แปลง Load บน Element เป็น Equivalent Nodal Loads """
         L = el['L']
-        fem = np.zeros(4) # [Fy1, M1, Fy2, M2]
+        fem = np.zeros(4) 
         
-        # --- Handle Loads based on Type ---
         if load_type == 'P':
-            # Point load MUST be at node for Pure FEM? 
-            # With auto-meshing, Point loads are mostly AT nodes, 
-            # but we keep this logic for robustness.
-            a = local_x
-            b = L - a
+            a = local_x; b = L - a
             fem = np.array([
                 (mag*b**2*(3*a+b))/L**3, (mag*a*b**2)/L**2,
                 (mag*a**2*(a+3*b))/L**3, -(mag*a**2*b)/L**2
@@ -127,11 +117,8 @@ class AdvancedBeamSolver:
             ])
 
         elif load_type == 'U':
-            # Gauss Quadrature for Partial/Full UDL inside this element
-            # Note: Because we auto-mesh, complex partial UDLs are split 
-            # into simpler full/partial UDLs on each small element.
             start = local_x
-            end = min(start + dist, L) # Clip at element end
+            end = min(start + dist, L)
             if end > start:
                 w = mag
                 gl_x = np.array([-0.774596669, 0, 0.774596669])
@@ -143,98 +130,69 @@ class AdvancedBeamSolver:
                     n3 = 3*xi**2 - 2*xi**3; n4 = L*(-xi**2 + xi**3)
                     fem += gl_w[i] * jac * w * np.array([n1, n2, n3, n4])
 
-        return fem # This is Reaction. Load Vector = -Reaction
+        return fem 
 
     def solve(self):
-        # 1. Initialize Global System
         K = np.zeros((self.dof, self.dof))
         F = np.zeros(self.dof)
         
-        # 2. Assemble Stiffness & Loads
-        # เราต้อง Map Original Loads ใส่ New Elements
         original_nodes_x = np.concatenate(([0], np.cumsum(self.raw_spans)))
 
         for el in self.elements:
-            # 2.1 Stiffness
+            # Stiffness
             k_el = self._get_element_stiffness(el['L'])
             idx = [2*el['n1'], 2*el['n1']+1, 2*el['n2'], 2*el['n2']+1]
-            
             for r in range(4):
                 for c in range(4):
                     K[idx[r], idx[c]] += k_el[r, c]
             
-            # 2.2 Process Loads (Mapping Global Load -> Local Element)
+            # Loads Mapping
             if not self.raw_loads.empty:
                 for _, l in self.raw_loads.iterrows():
-                    # Check if this load affects this element
                     l_span_start = original_nodes_x[int(l['span_idx'])]
                     l_global_x = l_span_start + l['x']
-                    
-                    # Transform to local coordinates of this element
                     local_x_start = l_global_x - el['x_start']
                     
                     affects = False
                     dist = 0
                     
                     if l['type'] in ['P', 'M']:
-                        # Point load falls strictly inside or on boundary of this element
                         if 0 <= local_x_start <= el['L'] + 1e-9:
                             affects = True
                     elif l['type'] == 'U':
-                        # UDL overlaps with this element
                         l_dist = l.get('dist', self.raw_spans[int(l['span_idx'])] - l['x'])
                         l_global_end = l_global_x + l_dist
-                        
                         el_global_end = el['x_start'] + el['L']
-                        
-                        # Check overlap logic
                         overlap_start = max(l_global_x, el['x_start'])
                         overlap_end = min(l_global_end, el_global_end)
-                        
                         if overlap_end > overlap_start + 1e-9:
                             affects = True
                             local_x_start = overlap_start - el['x_start']
                             dist = overlap_end - overlap_start
 
                     if affects:
-                        # Calculate Fixed End Reactions
                         fea = self._get_consistent_nodal_loads(el, l['type'], l['mag'], local_x_start, dist)
-                        # F_node = - Reaction
                         F[idx] -= fea
 
-        # 3. Apply Boundary Conditions (Supports, Settlements, Springs)
-        # Using Partition Method / Penalty Method approach
-        
-        # Map original support IDs to new Node IDs
-        # (Original support at index i corresponds to global X = original_nodes_x[i])
-        support_map = {} # {global_node_idx: support_data}
+        # Boundary Conditions (Partition Method)
+        support_map = {} 
         for s in self.raw_supports:
             orig_id = int(s['id'])
             s_loc = original_nodes_x[orig_id]
-            # Find closest node in new mesh
             node_idx = np.argmin(np.abs(self.nodes - s_loc))
             support_map[node_idx] = s
 
-        # Identify DOFs to fix (Constrained) vs Free
-        fixed_dofs = {} # {dof_index: prescribed_value}
-        
+        fixed_dofs = {}
         for n_idx, s in support_map.items():
-            # Vertical Support
             if s.get('k_spring', 0) > 0:
-                # Spring Support: Add k to Diagonal of K
-                K[2*n_idx, 2*n_idx] += s['k_spring']
+                K[2*n_idx, 2*n_idx] += s['k_spring'] # Spring
             else:
-                # Rigid Support: Prescribe Displacement
-                # Default settlement = 0 if not specified
-                settlement = s.get('settlement', 0.0)
+                settlement = s.get('settlement', 0.0) # Settlement
                 fixed_dofs[2*n_idx] = settlement
                 
-            # Rotation Support
             if s['type'] == 'Fixed':
-                fixed_dofs[2*n_idx+1] = 0.0 # Rotation = 0
+                fixed_dofs[2*n_idx+1] = 0.0
 
-        # 4. Solving (Partition Method for Prescribed Displacements)
-        # Separate Free DOFs and Constrained DOFs
         free_dofs = [i for i in range(self.dof) if i not in fixed_dofs]
         cons_dofs = list(fixed_dofs.keys())
         U_cons = np.array(list(fixed_dofs.values()))
@@ -243,11 +201,9 @@ class AdvancedBeamSolver:
         U[cons_dofs] = U_cons
         
         if len(free_dofs) > 0:
-            # F_free_effective = F_free - K_fc * U_c
             K_ff = K[np.ix_(free_dofs, free_dofs)]
             K_fc = K[np.ix_(free_dofs, cons_dofs)]
             F_f = F[free_dofs]
-            
             F_eff = F_f - K_fc @ U_cons
             
             try:
@@ -256,87 +212,57 @@ class AdvancedBeamSolver:
             except np.linalg.LinAlgError:
                 raise Exception("Unstable Structure")
 
-        # 5. Reactions
         R = K @ U - F
-        
         return self._post_process(U, R)
 
     def _post_process(self, U, R):
-        """ 
-        Pure FEM Interpolation Post-Processing 
-        ตอนนี้เราใช้ Mesh ละเอียดแล้ว สามารถใช้ Shape Function ได้อย่างมั่นใจ
-        """
         x_plot, v_plot, m_plot, d_plot = [], [], [], []
         
-        # Plot แต่ละ Element (ที่มีขนาดเล็กๆ)
         for el in self.elements:
-            # Sub-divide for smooth curve plotting
             xi_arr = np.linspace(0, 1, 20) 
             x_local_arr = xi_arr * el['L']
             x_global_arr = el['x_start'] + x_local_arr
             
-            # Nodal Displacements for this element
             u1 = U[2*el['n1']]; th1 = U[2*el['n1']+1]
             u2 = U[2*el['n2']]; th2 = U[2*el['n2']+1]
             
-            # --- Deflection (Pure Interpolation) ---
-            # v(x) = N * U
+            # Deflection (Interpolation)
             L = el['L']
             n1 = 1 - 3*xi_arr**2 + 2*xi_arr**3
             n2 = L * (xi_arr - 2*xi_arr**2 + xi_arr**3)
             n3 = 3*xi_arr**2 - 2*xi_arr**3
             n4 = L * (-xi_arr**2 + xi_arr**3)
-            
             y_curve = n1*u1 + n2*th1 + n3*u2 + n4*th2
             
-            # --- Shear & Moment (From Equilibrium/Statics) ---
-            # คำนวณแบบแม่นยำด้วยการตัด Section จากซ้ายสุด (Global Statics)
-            # เพื่อความต่อเนื่องของกราฟ
-            v_curve = []
-            m_curve = []
-            
+            # Statics for Shear/Moment
+            v_curve, m_curve = [], []
             for xg in x_global_arr:
                 V_val, M_val = 0, 0
-                
-                # Sum Reactions (Nodes < xg)
-                # Note: R vector index maps to new Mesh Nodes
                 for n_idx in range(self.n_nodes):
                     nx = self.nodes[n_idx]
                     if nx <= xg + 1e-9:
                         V_val += R[2*n_idx]
                         M_val += R[2*n_idx] * (xg - nx) + R[2*n_idx+1]
                 
-                # Sum Loads (Global Loads < xg)
                 original_nodes_x = np.concatenate(([0], np.cumsum(self.raw_spans)))
                 if not self.raw_loads.empty:
                     for _, l in self.raw_loads.iterrows():
                         l_start = original_nodes_x[int(l['span_idx'])] + l['x']
-                        
                         if l['type'] == 'P':
                             if l_start <= xg - 1e-9:
-                                V_val -= l['mag']
-                                M_val -= l['mag'] * (xg - l_start)
+                                V_val -= l['mag']; M_val -= l['mag'] * (xg - l_start)
                         elif l['type'] == 'M':
-                            if l_start <= xg - 1e-9:
-                                M_val -= l['mag']
+                            if l_start <= xg - 1e-9: M_val -= l['mag']
                         elif l['type'] == 'U':
-                            # Global UDL logic
                             l_dist = l.get('dist', self.raw_spans[int(l['span_idx'])] - l['x'])
                             l_end = l_start + l_dist
-                            
-                            # Active portion
-                            eff_start = l_start
                             eff_end = min(xg, l_end)
-                            
-                            if eff_end > eff_start + 1e-9:
-                                len_act = eff_end - eff_start
+                            if eff_end > l_start + 1e-9:
+                                len_act = eff_end - l_start
                                 load_act = l['mag'] * len_act
-                                cent_act = eff_start + len_act/2
-                                V_val -= load_act
-                                M_val -= load_act * (xg - cent_act)
-                                
-                v_curve.append(V_val)
-                m_curve.append(M_val)
+                                cent_act = l_start + len_act/2
+                                V_val -= load_act; M_val -= load_act * (xg - cent_act)
+                v_curve.append(V_val); m_curve.append(M_val)
 
             x_plot.extend(x_global_arr)
             d_plot.extend(y_curve)
