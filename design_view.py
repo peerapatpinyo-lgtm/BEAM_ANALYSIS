@@ -107,6 +107,12 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     # Check if results exist
     if df is None or (isinstance(df, pd.DataFrame) and df.empty): return
 
+    # --- FIX START: แก้ปัญหาชื่อคอลัมน์ไม่ตรงกัน (Deflection vs deflection) ---
+    # Solver ส่งมาเป็นตัวพิมพ์ใหญ่ แต่โค้ดนี้ใช้ตัวพิมพ์เล็ก เราจึงแปลงให้ตรงกันก่อน
+    df = df.copy()
+    df.columns = [c.lower() for c in df.columns]
+    # --- FIX END ---
+
     st.markdown("---")
     st.markdown("### 📊 Structural Analysis Diagrams (Ultimate Limit State)")
 
