@@ -82,13 +82,13 @@ class BeamSolver:
         return df
 
     def solve(self):
-        # 1. Critical Points for Discretization
-        points = set(self.cum_spans)
+        # 1. Critical Points for Discretization (Round to avoid float issues)
+        points = set([round(x, 5) for x in self.cum_spans])
+        
         for _, l in self.loads_df.iterrows():
             points.add(round(l['x'], 5))
             if l['type'] == 'U': points.add(round(l['x'] + l['dist'], 5))
         
-        # Add support points explicitly
         for _, s in self.supports_df.iterrows():
             points.add(round(s['x'], 5))
             
@@ -103,7 +103,7 @@ class BeamSolver:
             x1, x2 = nodes[i], nodes[i+1]
             L = x2 - x1
             elements.append({'n1': i, 'n2': i+1, 'L': L})
-            if L > 0:
+            if L > 1e-9: # Prevent division by zero
                 k_el = self._get_k(L)
                 idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
                 for r in range(4):
@@ -114,49 +114,68 @@ class BeamSolver:
         F = np.zeros(dof)
         for _, load in self.loads_df.iterrows():
             nid = self._find_nearest_node(nodes, load['x'])
+            
+            # Point Load (Correctly mapped to Node)
             if load['type'] == 'P' and nid != -1:
                 F[2*nid] -= load['mag']
+            
+            # Moment Load
             elif load['type'] == 'M' and nid != -1:
                 F[2*nid+1] += load['mag']
+            
+            # Distributed Load
             elif load['type'] == 'U':
                 start, dist, mag = load['x'], load['dist'], load['mag']
                 end = start + dist
                 for elem in elements:
                     ex1, ex2 = nodes[elem['n1']], nodes[elem['n2']]
+                    # Check overlap
                     if ex2 <= start + 1e-6 or ex1 >= end - 1e-6: continue
+                    
                     ov_s = max(start, ex1)
                     ov_e = min(end, ex2)
                     len_load = ov_e - ov_s
+                    if len_load <= 0: continue
+                    
                     mid = (ov_s + ov_e)/2
+                    # 2-point Gauss Quadrature
                     for gp in [-0.57735, 0.57735]:
                         xi = mid + (len_load/2)*gp
                         s = (xi - ex1) / elem['L']
                         N_vec = np.array([1-3*s**2+2*s**3, (xi-ex1)*(1-s)**2, 3*s**2-2*s**3, (xi-ex1)*(s**2-s)])
-                        F[[2*elem['n1'], 2*elem['n1']+1, 2*elem['n2'], 2*elem['n2']+1]] -= N_vec * mag * (len_load/2)
+                        # Add equivalent nodal forces
+                        idx_el = [2*elem['n1'], 2*elem['n1']+1, 2*elem['n2'], 2*elem['n2']+1]
+                        F[idx_el] -= N_vec * mag * (len_load/2)
 
         # 4. Supports
         free_dof = np.full(dof, True)
+        constrained_nodes = [] # Track constrained nodes
         for _, sup in self.supports_df.iterrows():
             nid = self._find_nearest_node(nodes, sup['x'])
             if nid != -1:
                 stype = sup.get('type', 'Pin')
+                constrained_nodes.append(nid)
                 if stype in ['Pin', 'Roller', 'Fixed']: free_dof[2*nid] = False
                 if stype == 'Fixed': free_dof[2*nid+1] = False
 
-        # 5. Solve
+        # 5. Solve Displacement U
         U = np.zeros(dof)
         if np.sum(free_dof) < dof:
             try:
                 U[free_dof] = solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
-            except: return pd.DataFrame(), [], {}
+            except: 
+                return pd.DataFrame(), np.zeros(dof), {'error': 'Singular Matrix'}
 
+        # 6. Calculate Reactions
+        # R = K*U - F (This accounts for Point Loads directly on Supports)
+        # If Load P is on Support: F = -P, U = 0 => R = 0 - (-P) = +P
         R = K @ U - F
 
-        # 6. Post-Processing with "Micro-stepping"
+        # 7. Post-Processing
         base_x = np.linspace(0, nodes[-1], 400)
         critical_x = []
         for n in nodes:
-            critical_x.extend([n - 1e-6, n, n + 1e-6])
+            critical_x.extend([n - 1e-5, n, n + 1e-5])
         
         all_x = np.concatenate([base_x, critical_x])
         all_x = np.unique(np.sort(all_x))
@@ -178,12 +197,14 @@ class BeamSolver:
             
             # Statics Integration for V/M
             V, M = 0.0, 0.0
-            # Reactions
+            
+            # Add Reactions forces
             for i, nx in enumerate(nodes):
                 if nx <= x + 1e-5:
                     V += R[2*i]
-                    M += R[2*i]*(x-nx) + R[2*i+1]
-            # Loads
+                    M += R[2*i]*(x-nx) + R[2*i+1] # Reaction Moment
+            
+            # Subtract Loads
             for _, l in self.loads_df.iterrows():
                 lx, mag = l['x'], l['mag']
                 if l['type'] == 'P':
@@ -197,20 +218,31 @@ class BeamSolver:
                     start, end = lx, lx + l['dist']
                     if start < x:
                         cov = min(x, end) - start
-                        force = mag * cov
-                        arm = x - (start + cov/2)
-                        V -= force
-                        M -= force * arm
+                        if cov > 0:
+                            force = mag * cov
+                            arm = x - (start + cov/2)
+                            V -= force
+                            M -= force * arm
                         
             results.append({'x': x, 'deflection': defl, 'shear': V, 'moment': M})
             
         df_res = pd.DataFrame(results)
+        
+        # Build Summary
         summary = {}
         if not df_res.empty:
             summary['V_max'] = {'value': df_res['shear'].abs().max(), 'x': df_res.loc[df_res['shear'].abs().idxmax(), 'x']}
             summary['M_pos'] = {'value': df_res['moment'].max(), 'x': df_res.loc[df_res['moment'].idxmax(), 'x']}
             summary['M_neg'] = {'value': df_res['moment'].min(), 'x': df_res.loc[df_res['moment'].idxmin(), 'x']}
             summary['D_max'] = {'value': df_res['deflection'].abs().max(), 'x': df_res.loc[df_res['deflection'].abs().idxmax(), 'x']}
+        
+        # Add Reaction Data explicitly to summary for debugging
+        summary['reactions'] = {}
+        for nid in constrained_nodes:
+            summary['reactions'][f'Node_{nid}'] = {
+                'Fy': R[2*nid],
+                'Mz': R[2*nid+1]
+            }
 
         return df_res, R, summary
 
@@ -222,5 +254,10 @@ class BeamSolver:
         return k
 
     def _find_nearest_node(self, nodes, val):
-        idx = (np.abs(np.array(nodes) - val)).argmin()
-        return idx if abs(nodes[idx] - val) < 1e-4 else -1
+        # Improved tolerance logic
+        arr = np.array(nodes)
+        idx = (np.abs(arr - val)).argmin()
+        diff = abs(arr[idx] - val)
+        if diff < 1e-4: # Tolerance 0.1mm
+            return idx
+        return -1
