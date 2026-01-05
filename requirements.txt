@@ -1,6 +1,5 @@
 streamlit
-anastruct
-matplotlib
-numpy
 pandas
+numpy
+scipy
 plotly
