@@ -3,6 +3,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import PIL 
+
+# --- 1. FIX: ปลดล็อคขีดจำกัดขนาดรูปภาพ ---
+PIL.Image.MAX_IMAGE_PIXELS = None 
+
 from solver import BeamSolver
 
 st.set_page_config(page_title="Beam Analysis", layout="wide")
@@ -17,7 +22,7 @@ st.markdown("""
 
 st.title("🏗️ Beam Analysis (Classic View)")
 
-# --- SIDEBAR: SETTINGS ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Properties")
     E = st.number_input("Elastic Modulus (E) [Pa]", value=2.0e11, format="%.2e")
@@ -75,6 +80,7 @@ with c1:
 
     if st.session_state.supports_list:
         df_sup = pd.DataFrame(st.session_state.supports_list)
+        # Prevent KeyError
         if 'settlement' not in df_sup.columns: df_sup['settlement'] = 0.0
         st.dataframe(df_sup[['id', 'type', 'settlement']], hide_index=True, use_container_width=True)
         if st.button("Clear Supports"):
@@ -108,39 +114,40 @@ with c2:
             st.session_state.loads_list = []
             st.rerun()
 
-# --- HELPER: PLOT BEAM SCHEMATIC ---
+# --- PLOTTING FUNCTIONS ---
 def plot_beam_diagram(ax, spans, supports, loads):
     total_len = sum(spans)
     node_x = np.concatenate(([0], np.cumsum(spans)))
     
-    # Beam Line
+    # Beam
     ax.plot([0, total_len], [0, 0], 'k-', linewidth=4, solid_capstyle='round')
-    
-    # Nodes
-    ax.scatter(node_x, np.zeros_like(node_x), color='white', edgecolor='black', zorder=10, s=30)
+    ax.scatter(node_x, np.zeros_like(node_x), color='white', edgecolor='black', zorder=10, s=40)
     
     # Supports
     for s in supports:
         if int(s['id']) < len(node_x):
             x = node_x[int(s['id'])]
             if s['type'] == 'Pin':
-                ax.plot(x, -0.3, marker='^', color='#444', markersize=14)
+                ax.plot(x, -0.25, marker='^', color='#444', markersize=14)
             elif s['type'] == 'Roller':
-                ax.plot(x, -0.3, marker='o', color='#444', markersize=12)
+                ax.plot(x, -0.25, marker='o', color='#444', markersize=12)
             elif s['type'] == 'Fixed':
                 ax.add_patch(patches.Rectangle((x-0.1, -0.6), 0.2, 1.2, color='#444'))
     
     # Loads
-    max_load = max([abs(l['mag']) for l in loads]) if loads else 1
+    max_load = 1
+    if loads: max_load = max([abs(l['mag']) for l in loads])
+    if max_load == 0: max_load = 1
+    
     for l in loads:
         if int(l['span_idx']) < len(spans):
             x = node_x[int(l['span_idx'])] + l['x']
             mag = l['mag']
-            # Scale arrows visually
             if l['type'] == 'P':
+                # Arrow Logic
                 dy = -0.8 if mag > 0 else 0.8
                 ax.arrow(x, -dy, 0, dy*0.8, head_width=0.15, head_length=0.2, fc='red', ec='red', linewidth=2)
-                ax.text(x, -dy*1.2, f"P={mag}", ha='center', color='red', fontweight='bold')
+                ax.text(x, -dy*1.3, f"P={mag}", ha='center', color='red', fontweight='bold')
             elif l['type'] == 'U':
                 dist = l.get('dist', 1.0)
                 ax.add_patch(patches.Rectangle((x, 0.1), dist, 0.4, facecolor='orange', alpha=0.5))
@@ -153,86 +160,94 @@ def plot_beam_diagram(ax, spans, supports, loads):
     ax.axis('off')
     ax.set_title("System Diagram", loc='left', fontsize=12, fontweight='bold')
 
-# --- PLOT HELPER: ANNOTATE MAX/MIN ---
-def annotate_peaks(ax, x, y, color):
-    # Find local peaks/valleys
+def annotate_peaks(ax, x, y, color, invert=False):
+    if len(y) == 0: return
+    # Filter NaN
+    valid_idx = ~np.isnan(y)
+    x = np.array(x)[valid_idx]
+    y = np.array(y)[valid_idx]
+    
+    if len(y) == 0: return
+
     ymax = np.max(y)
     ymin = np.min(y)
     xmax = x[np.argmax(y)]
     xmin = x[np.argmin(y)]
     
-    # Annotate Max
-    ax.annotate(f"{ymax:.2f}", xy=(xmax, ymax), xytext=(xmax, ymax),
-                textcoords="offset points", xycoords='data', ha='center', va='bottom',
-                color=color, fontweight='bold', fontsize=9, 
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.8, ec=color))
-    
-    # Annotate Min
-    ax.annotate(f"{ymin:.2f}", xy=(xmin, ymin), xytext=(xmin, ymin),
-                textcoords="offset points", xycoords='data', ha='center', va='top',
-                color=color, fontweight='bold', fontsize=9,
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", alpha=0.8, ec=color))
+    # Check bounds to avoid crazy annotations
+    if abs(ymax) < 1e-9 and abs(ymin) < 1e-9: return
 
-# --- MAIN LOGIC ---
+    # Annotate Max
+    ax.annotate(f"{ymax:.2f}", xy=(xmax, ymax), xytext=(0, 10 if not invert else -15),
+                textcoords="offset points", ha='center', color=color, fontweight='bold', fontsize=9)
+    # Annotate Min
+    ax.annotate(f"{ymin:.2f}", xy=(xmin, ymin), xytext=(0, -15 if not invert else 10),
+                textcoords="offset points", ha='center', color=color, fontweight='bold', fontsize=9)
+
+# --- CALCULATION ---
 if st.button("🚀 Calculate", type="primary"):
     if not spans:
         st.error("Please enter spans.")
     else:
         try:
             beam_props = {'E': E, 'I': I, 'A': A, 'type': beam_type}
+            
+            # --- SOLVER CALL ---
             solver = BeamSolver(spans, st.session_state.supports_list, st.session_state.loads_list, beam_props)
             results, R = solver.solve()
             
             # --- PLOTTING ---
-            st.success("Calculation Successful")
+            st.success("Analysis Complete")
             
-            fig, ax = plt.subplots(4, 1, figsize=(10, 16), sharex=False, gridspec_kw={'height_ratios': [1, 2, 2, 2]})
+            # 2. FIX: ลด figsize ลงเล็กน้อย และจัด Layout ให้ปลอดภัย
+            fig, ax = plt.subplots(4, 1, figsize=(10, 12), gridspec_kw={'height_ratios': [1, 2, 2, 2], 'hspace': 0.4})
             
-            # 1. System Diagram
+            # 1. System
             plot_beam_diagram(ax[0], spans, st.session_state.supports_list, st.session_state.loads_list)
             
-            # 2. Shear Force (SFD)
+            # 2. Shear (SFD)
             x_vals = results['x']
             v_vals = results['shear']
-            ax[1].plot(x_vals, v_vals, color='#1f77b4', linewidth=2)
+            ax[1].plot(x_vals, v_vals, color='#1f77b4', linewidth=1.5)
             ax[1].fill_between(x_vals, v_vals, 0, color='#1f77b4', alpha=0.2)
-            ax[1].set_ylabel("Shear (N)", fontsize=10, fontweight='bold')
-            ax[1].set_title("Shear Force Diagram (SFD)", loc='left', fontsize=11)
-            ax[1].grid(True, linestyle='--', alpha=0.5)
-            ax[1].axhline(0, color='black', linewidth=1)
+            ax[1].set_ylabel("Shear (N)", fontweight='bold')
+            ax[1].set_title("Shear Force Diagram", loc='left', fontsize=10)
+            ax[1].grid(True, which='both', linestyle='--', alpha=0.4)
+            ax[1].axhline(0, color='black', linewidth=0.8)
             annotate_peaks(ax[1], x_vals, v_vals, '#1f77b4')
             
-            # 3. Bending Moment (BMD) - INVERTED Y
+            # 3. Moment (BMD) - Inverted
             m_vals = results['moment']
-            ax[2].plot(x_vals, m_vals, color='#d62728', linewidth=2)
+            ax[2].plot(x_vals, m_vals, color='#d62728', linewidth=1.5)
             ax[2].fill_between(x_vals, m_vals, 0, color='#d62728', alpha=0.2)
-            ax[2].set_ylabel("Moment (N·m)", fontsize=10, fontweight='bold')
-            ax[2].set_title("Bending Moment Diagram (BMD)", loc='left', fontsize=11)
-            ax[2].grid(True, linestyle='--', alpha=0.5)
-            ax[2].axhline(0, color='black', linewidth=1)
-            ax[2].invert_yaxis() # <--- INVERTED FOR CIVIL ENG STYLE
-            annotate_peaks(ax[2], x_vals, m_vals, '#d62728')
+            ax[2].set_ylabel("Moment (N·m)", fontweight='bold')
+            ax[2].set_title("Bending Moment Diagram", loc='left', fontsize=10)
+            ax[2].grid(True, which='both', linestyle='--', alpha=0.4)
+            ax[2].axhline(0, color='black', linewidth=0.8)
+            ax[2].invert_yaxis() # Invert for Civil style
+            annotate_peaks(ax[2], x_vals, m_vals, '#d62728', invert=True)
             
             # 4. Deflection
             d_vals = results['deflection']
-            ax[3].plot(x_vals, d_vals, color='#2ca02c', linewidth=2)
+            ax[3].plot(x_vals, d_vals, color='#2ca02c', linewidth=1.5)
             ax[3].fill_between(x_vals, d_vals, 0, color='#2ca02c', alpha=0.1)
-            ax[3].set_ylabel("Deflection (m)", fontsize=10, fontweight='bold')
-            ax[3].set_xlabel("Length (m)", fontsize=10)
-            ax[3].set_title(f"Deflection Curve ({beam_type})", loc='left', fontsize=11)
-            ax[3].grid(True, linestyle='--', alpha=0.5)
-            ax[3].axhline(0, color='black', linewidth=1)
-            # Find max absolute deflection
-            max_d_idx = np.argmax(np.abs(d_vals))
-            max_d_val = d_vals[max_d_idx]
-            max_d_x = x_vals[max_d_idx]
-            ax[3].annotate(f"Max: {max_d_val:.4e} m", xy=(max_d_x, max_d_val), 
-                           xytext=(0, 15 if max_d_val<0 else -15), textcoords="offset points",
-                           ha='center', color='#2ca02c', fontweight='bold',
-                           arrowprops=dict(arrowstyle="->", color='#2ca02c'))
+            ax[3].set_ylabel("Deflection (m)", fontweight='bold')
+            ax[3].set_xlabel("Position (m)")
+            ax[3].grid(True, which='both', linestyle='--', alpha=0.4)
+            ax[3].axhline(0, color='black', linewidth=0.8)
+            
+            # Annotate Max Deflection
+            if len(d_vals) > 0:
+                abs_d = np.abs(d_vals)
+                max_idx = np.argmax(abs_d)
+                max_val = d_vals[max_idx]
+                ax[3].plot(x_vals[max_idx], max_val, 'ko', markersize=4)
+                ax[3].text(x_vals[max_idx], max_val, f" Max: {max_val:.4e} m", 
+                           ha='left', va='bottom' if max_val < 0 else 'top', fontweight='bold')
 
-            plt.tight_layout()
-            st.pyplot(fig)
+            # 3. FIX: ใช้ DPI 100 เพื่อจำกัดขนาดรูปภาพไม่ให้ระเบิด
+            st.pyplot(fig, dpi=100)
+            plt.close(fig) # Clear memory
             
         except Exception as e:
-            st.error(f"Computation Error: {e}")
+            st.error(f"Error details: {e}")
