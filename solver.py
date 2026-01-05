@@ -20,34 +20,48 @@ class BeamSolver:
         if load['type'] == 'P':
             a = load['x']
             b = L - a
-            fem[0] = (mag * b**2 * (3*a + b)) / L**3
-            fem[1] = (mag * a * b**2) / L**2
-            fem[2] = (mag * a**2 * (a + 3*b)) / L**3
-            fem[3] = -(mag * a**2 * b) / L**2
+            fem[0] = (mag * b**2 * (3*a + b)) / L**3  # V1
+            fem[1] = (mag * a * b**2) / L**2          # M1
+            fem[2] = (mag * a**2 * (a + 3*b)) / L**3  # V2
+            fem[3] = -(mag * a**2 * b) / L**2         # M2
             
         elif load['type'] == 'U':
             start = load['x']
             dist = load.get('dist', L - start) 
             end = start + dist
             w = mag
-            
+            # Gauss Quadrature for Integration
             gl_x = np.array([-0.774596669, 0, 0.774596669])
             gl_w = np.array([0.555555556, 0.888888889, 0.555555556])
-            
             mid = (start + end) / 2
             jac = (end - start) / 2
-            
             for i in range(3):
                 xi_global = mid + jac * gl_x[i] 
                 weight = gl_w[i] * jac * w 
-                
                 xi = xi_global / L
                 n1 = 1 - 3*xi**2 + 2*xi**3
                 n2 = L * (xi - 2*xi**2 + xi**3)
                 n3 = 3*xi**2 - 2*xi**3
                 n4 = L * (-xi**2 + xi**3)
-                
                 fem += weight * np.array([n1, n2, n3, n4])
+
+        # [เพิ่มเติม 1] สูตร Fixed End Moment สำหรับ Point Moment (M)
+        elif load['type'] == 'M':
+            a = load['x']
+            b = L - a
+            # Moment Load ทำให้เกิดแรงเฉือนที่ Support ด้วย (Reaction)
+            # แต่ไม่ทำให้เกิด Shear Jump ตรงกลางคาน
+            
+            # FEM formulas for concentrated moment M (Clockwise +)
+            # Ref: Roark's Formulas / Standard Structural Analysis
+            # V_left
+            fem[0] = -(6 * mag * a * b) / L**3 
+            # M_left
+            fem[1] = (mag * b * (2*a - b)) / L**2 
+            # V_right
+            fem[2] = (6 * mag * a * b) / L**3
+            # M_right
+            fem[3] = (mag * a * (2*b - a)) / L**2
 
         return fem
 
@@ -65,7 +79,6 @@ class BeamSolver:
                 [-12, -6*L, 12, -6*L],
                 [6*L, 2*L**2, -6*L, 4*L**2]
             ])
-            
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
             for r in range(4):
                 for c in range(4):
@@ -105,24 +118,21 @@ class BeamSolver:
         for i, L in enumerate(self.spans):
             base_points = np.linspace(0, L, num_points)
             
-            # [แก้ไข] เพิ่มจุด "เงา" (+1e-9) เพื่อรองรับ Vertical Jump ของ Shear
             crit_points = [0.0, L]
             if not self.loads.empty:
                 span_loads = self.loads[self.loads['span_idx'] == i]
                 for _, l in span_loads.iterrows():
                     crit_points.append(l['x'])
-                    crit_points.append(l['x'] + 1e-9) # Shadow point for vertical drop
+                    crit_points.append(l['x'] + 1e-9) 
                     
                     if l['type'] == 'U':
                         dist = l.get('dist', L - l['x'])
                         end_x = l['x'] + dist
                         crit_points.append(end_x)
-                        crit_points.append(end_x + 1e-9) # Shadow point for end of UDL
+                        crit_points.append(end_x + 1e-9)
             
             merged_points = np.concatenate((base_points, crit_points))
-            # Round 8 ตำแหน่ง เพื่อให้ 1e-9 ยังอยู่ แต่จุดซ้ำซ้อนระดับ 1e-15 หายไป
             x_local = np.unique(np.round(merged_points, 9))
-            
             x_global = self.nodes[i] + x_local
             
             # --- Calculation ---
@@ -139,14 +149,12 @@ class BeamSolver:
                 if not self.loads.empty:
                     for _, l in self.loads.iterrows():
                         lx = self.nodes[int(l['span_idx'])] + l['x']
+                        
                         if l['type'] == 'P':
-                            # [Logic] ถ้า x อยู่ที่ load พอดี (xg == lx) ยังไม่ลบ
-                            # ถ้า x อยู่เลย load มานิดนึง (xg > lx) ค่อยลบ
-                            # จุด 2.500000 -> ไม่ลบ -> ได้ค่า Shear ซ้าย
-                            # จุด 2.500001 -> ลบ -> ได้ค่า Shear ขวา
                             if lx <= xg - 1e-9:
                                 V_val -= l['mag']
                                 M_val -= l['mag'] * (xg - lx)       
+                        
                         elif l['type'] == 'U':
                             l_start = lx
                             if xg > l_start + 1e-9:
@@ -159,6 +167,15 @@ class BeamSolver:
                                     centroid = l_start + eff_len / 2
                                     V_val -= load_mag
                                     M_val -= load_mag * (xg - centroid)
+                        
+                        # [เพิ่มเติม 2] Logic คำนวณ Moment Diagram เมื่อเจอ Moment Load
+                        elif l['type'] == 'M':
+                            if lx <= xg - 1e-9:
+                                # Moment load doesn't change Shear (V), only Moment (M)
+                                # Sign convention: Clockwise load creates a step down in Internal Moment diagram
+                                # (Or up, depending on specific convention. Here we subtract to be consistent with P load logic)
+                                M_val -= l['mag'] 
+
                 v_seg.append(V_val)
                 m_seg.append(M_val)
             
