@@ -8,12 +8,11 @@ import solver
 import rc_design
 import design_view
 
-# Page Config (Wide mode default)
+# Page Config
 st.set_page_config(page_title="Pro Beam Design", layout="wide", page_icon="🏗️")
 
 def main():
     st.title("🏗️ Structural Beam Analysis Professional")
-    st.markdown("This tool uses **Matrix Stiffness Method** and **ACI/EIT Strength Design Method**.")
     st.markdown("---")
     
     # 1. Sidebar & Inputs
@@ -21,20 +20,21 @@ def main():
     n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
     
     st.markdown("---")
-    # New Table-based Load Input
-    raw_loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
+    
+    # 2. Load Inputs (Updated: No sup_df needed here anymore)
+    # *** จุดที่แก้คือบรรทัดนี้ครับ ***
+    raw_loads_df = input_handler.render_loads(n_spans, spans, params)
     
     st.markdown("---")
     
-    # 2. Analysis Button
-    col_act, _ = st.columns([1, 4])
-    if col_act.button("🚀 Run Analysis & Design", type="primary", use_container_width=True):
+    # 3. Analysis Action
+    if st.button("🚀 Run Analysis & Design", type="primary", use_container_width=True):
         
         if not stable:
             st.error("❌ Structure is unstable (Mechanism). Please add more supports.")
             return
 
-        # 2.1 Load Factoring
+        # 3.1 Load Factoring
         factored_loads = []
         if not raw_loads_df.empty:
             for _, l in raw_loads_df.iterrows():
@@ -42,13 +42,12 @@ def main():
                 factor = params['gamma_dead'] if l['case'] == 'DL' else params['gamma_live']
                 
                 new_l = l.to_dict()
-                new_l['mag'] *= factor
+                new_l['mag'] *= factor # Factor magnitude
                 factored_loads.append(new_l)
         
         loads_df_factored = pd.DataFrame(factored_loads) if factored_loads else pd.DataFrame()
         
-        # 2.2 Solver Execution
-        # Ensure Solver can handle empty loads gracefully
+        # 3.2 Solver Execution
         beam_solver = solver.BeamSolver(spans, sup_df, loads_df_factored, params['E'], params['I'])
         
         try:
@@ -58,23 +57,21 @@ def main():
                 st.error("⚠️ Error: Singular Matrix. Structure is unstable.")
                 return
 
-            # 2.3 Visualization (Pro Version)
-            # Pass RAW loads for visualization (Service Loads), but result DF is factored
+            # 3.3 Visualization (Pro Version)
+            # Pass RAW loads (Service Loads) for visualization
             design_view.draw_interactive_diagrams(
                 df_res, reactions, spans, sup_df, 
                 raw_loads_df.to_dict('records') if not raw_loads_df.empty else []
             )
             
-            # 2.4 Tables
+            # 3.4 Tables
             design_view.render_result_tables(df_res, reactions, spans, "kg", "m")
             
-            # 2.5 RC Design Summary
+            # 3.5 RC Design Summary
             st.markdown("---")
             st.header("🧱 Reinforced Concrete Design Checks")
             
             cum_dist = [0] + list(np.cumsum(spans))
-            
-            # Grid Layout for Design Cards
             cols = st.columns(len(spans))
             
             for i, span_col in enumerate(cols):
@@ -83,9 +80,10 @@ def main():
                     start, end = cum_dist[i], cum_dist[i+1]
                     span_res = df_res[(df_res['x'] >= start) & (df_res['x'] <= end)]
                     
+                    if span_res.empty: continue
+
                     # Design Forces
                     m_pos = span_res['moment'].max()
-                    # Check supports for negative moment (approximate max neg near this span)
                     m_neg = span_res['moment'].min() 
                     v_max = span_res['shear'].abs().max()
                     
@@ -96,24 +94,24 @@ def main():
                     
                     # Display Card
                     st.markdown(f"""
-                    <div style="background-color:#f0f2f6; padding:15px; border-radius:10px; margin-bottom:10px">
-                        <p style="margin:0"><b>Bottom Bars (+):</b> <span style="color:blue">{res_pos['Bars']}</span></p>
-                        <small>Mu: {res_pos['Mu']:.0f}</small>
+                    <div style="background-color:#f8f9fa; padding:15px; border-radius:10px; border:1px solid #ddd; margin-bottom:10px">
+                        <p style="margin:0; font-size:14px"><b>Bottom Bars (+):</b> <span style="color:blue">{res_pos['Bars']}</span></p>
+                        <small style="color:gray">Mu: {res_pos['Mu']:.0f} kg-m</small>
                         <hr style="margin:5px 0">
-                        <p style="margin:0"><b>Top Bars (-):</b> <span style="color:red">{res_neg['Bars']}</span></p>
-                        <small>Mu: {res_neg['Mu']:.0f}</small>
+                        <p style="margin:0; font-size:14px"><b>Top Bars (-):</b> <span style="color:red">{res_neg['Bars']}</span></p>
+                        <small style="color:gray">Mu: {res_neg['Mu']:.0f} kg-m</small>
                         <hr style="margin:5px 0">
-                        <p style="margin:0"><b>Stirrups:</b> {stir}</p>
-                        <small>Vu: {v_max:.0f}</small>
+                        <p style="margin:0; font-size:14px"><b>Stirrups:</b> {stir}</p>
+                        <small style="color:gray">Vu: {v_max:.0f} kg</small>
                     </div>
                     """, unsafe_allow_html=True)
                     
                     with st.expander("Detailed Calcs"):
-                         st.write("**Flexure (+):**", res_pos['Status'])
-                         st.write("**Flexure (-):**", res_neg['Status'])
-                         st.write("---")
-                         st.write("Shear Log:")
-                         for l in shear_logs: st.caption(l)
+                         st.caption("Positive Moment Check:")
+                         for l in res_pos['Log']: st.markdown(f"<small>{l}</small>", unsafe_allow_html=True)
+                         st.markdown("---")
+                         st.caption("Shear Check:")
+                         for l in shear_logs: st.markdown(f"<small>{l}</small>", unsafe_allow_html=True)
 
         except Exception as e:
             st.error(f"Analysis Failed: {str(e)}")
