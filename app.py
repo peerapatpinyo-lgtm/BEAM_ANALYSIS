@@ -1,112 +1,248 @@
 import streamlit as st
 import pandas as pd
-import input_handler
-import solver # Calls the NEW solver.py
+import numpy as np
+
+# Import modules (ตรวจสอบว่าไฟล์ solver.py และ design_view.py อยู่ในโฟลเดอร์เดียวกัน)
+from solver import BeamSolver
 import design_view
-import rc_design # Import Module RC
 
-# ... (Page Config & Header code remains same) ...
+# --- Page Config ---
+st.set_page_config(page_title="Beam Analysis Pro", layout="wide", page_icon="🏗️")
 
-def main():
-    # ... (Sidebar & Input code remains same) ...
-    # 1. Sidebar Settings
-    params = input_handler.render_sidebar()
-    # เพิ่ม Parameters สำหรับ RC Design เข้าไปใน params (ถ้า input_handler ยังไม่ส่งมา ต้องเพิ่ม default หรือรับค่า)
-    # สมมติ input_handler ใน sidebar มีรับค่า fc, fy แล้ว หรือเรา Hardcode test ไปก่อน
-    if 'fc' not in params: params.update({'fc': 240, 'fy': 4000, 'fys': 2400, 'db_main': 12, 'db_stirrup': 6, 'unit': 'Metric'})
+# --- Session State Init ---
+if 'spans' not in st.session_state:
+    st.session_state['spans'] = [5.0, 5.0] # Default 2 spans
+if 'supports' not in st.session_state:
+    # Default: Pin at start, Roller at ends
+    st.session_state['supports'] = [
+        {'id': 0, 'type': 'Pin'},
+        {'id': 1, 'type': 'Roller'},
+        {'id': 2, 'type': 'Roller'}
+    ]
+if 'loads' not in st.session_state:
+    st.session_state['loads'] = []
 
-    # 2. Model Inputs
-    n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
-    
-    st.markdown("---")
-    
-    # 3. Loads
-    raw_loads = input_handler.render_loads(n_spans, spans, params, sup_df)
-    
-    st.markdown("---")
+# --- Sidebar ---
+st.sidebar.title("🏗️ Beam Settings")
+st.sidebar.markdown("---")
+# Reset Button
+if st.sidebar.button("Reset Project", type="primary"):
+    st.session_state['spans'] = [5.0]
+    st.session_state['supports'] = [{'id': 0, 'type': 'Pin'}, {'id': 1, 'type': 'Roller'}]
+    st.session_state['loads'] = []
+    st.rerun()
 
-    # 4. Calculation
-    if st.button("🚀 Run Analysis & Design", type="primary", use_container_width=True):
-        if not stable:
-            st.error("❌ Structure is Unstable!")
-            return
-            
-        # --- Prepare Loads (Factor) ---
-        factored_loads_list = []
-        if raw_loads is not None and not raw_loads.empty:
-            raw_dict = raw_loads.to_dict('records')
-            for l in raw_dict:
-                factor = params['gamma_dead'] if l['case'] == 'DL' else params['gamma_live']
-                new_load = l.copy()
-                new_load['mag'] = l['mag'] * factor
-                # Handle UDL end/dist for new solver
-                if l['type'] == 'U':
-                     # If code uses spans list, find length
-                     span_len = spans[int(l['span_idx'])]
-                     # Assuming full span if dist not specified
-                     new_load['dist'] = l.get('dist', span_len - l['x'])
-                factored_loads_list.append(new_load)
+st.sidebar.markdown("### Design Parameters")
+E = st.sidebar.number_input("Elastic Modulus (E)", value=2e6, format="%.2e")
+I = st.sidebar.number_input("Moment of Inertia (I)", value=5e-4, format="%.2e")
+
+st.sidebar.markdown("### Load Factors")
+dl_factor = st.sidebar.number_input("Dead Load Factor", value=1.4, step=0.1)
+ll_factor = st.sidebar.number_input("Live Load Factor", value=1.7, step=0.1)
+
+# --- Main Interface ---
+st.title("🏗️ Structural Beam Analysis (Exact FEM)")
+
+# Tabs for input steps
+tab1, tab2, tab3 = st.tabs(["1️⃣ Geometry (Spans)", "2️⃣ Supports", "3️⃣ Applied Loads"])
+
+# --- TAB 1: SPANS ---
+with tab1:
+    st.subheader("Define Beam Spans")
+    col_s1, col_s2 = st.columns([2, 1])
+    with col_s1:
+        num_spans = st.number_input("Number of Spans", min_value=1, max_value=10, value=len(st.session_state['spans']))
         
-        factored_loads_df = pd.DataFrame(factored_loads_list) if factored_loads_list else pd.DataFrame()
-
-        # Initialize NEW Solver
-        beam_solver = solver.BeamSolver(spans, sup_df, factored_loads_df, E=params['E'], I=params['I'])
-        
-        try:
-            # Solve
-            df_results, reactions = beam_solver.solve()
+        # Adjust list size
+        current_spans = st.session_state['spans']
+        if len(current_spans) < num_spans:
+            current_spans.extend([5.0] * (num_spans - len(current_spans)))
+        elif len(current_spans) > num_spans:
+            st.session_state['spans'] = current_spans[:num_spans]
             
-            # --- 5. Visualization ---
-            design_view.draw_interactive_diagrams(
-                df_results, reactions, spans, sup_df, raw_loads, 
-                unit_force=params['u_force'], unit_len=params['u_len'],
-                dl_factor=params['gamma_dead'], ll_factor=params['gamma_live']
+        # Inputs for each span
+        new_spans = []
+        cols = st.columns(min(num_spans, 4))
+        for i in range(num_spans):
+            with cols[i % 4]:
+                val = st.number_input(f"Span {i+1} Length (m)", value=float(current_spans[i]), min_value=0.1, key=f"span_{i}")
+                new_spans.append(val)
+        st.session_state['spans'] = new_spans
+        
+    st.info(f"Total Length: {sum(new_spans):.2f} m")
+
+# --- TAB 2: SUPPORTS ---
+with tab2:
+    st.subheader("Define Supports")
+    num_nodes = len(st.session_state['spans']) + 1
+    
+    # Create a DataFrame for editing
+    sup_data = []
+    existing_sups = {s['id']: s['type'] for s in st.session_state['supports']}
+    
+    for i in range(num_nodes):
+        stype = existing_sups.get(i, "None")
+        sup_data.append({"Node ID": i, "Support Type": stype})
+    
+    df_sup = pd.DataFrame(sup_data)
+    
+    edited_df = st.data_editor(
+        df_sup,
+        column_config={
+            "Node ID": st.column_config.NumberColumn(disabled=True),
+            "Support Type": st.column_config.SelectboxColumn(
+                "Type", options=["None", "Pin", "Roller", "Fixed"], required=True
             )
-            
-            # --- 6. Results & RC Design ---
-            c1, c2 = st.columns([1, 2])
-            with c1:
-                design_view.render_result_tables(df_results, reactions, spans, params['u_force'], params['u_len'])
-            
-            with c2:
-                st.markdown("### 🏗️ RC Design Results")
-                # Find Max Positive and Negative Moments
-                max_pos_M = df_results['moment'].max()
-                max_neg_M = df_results['moment'].min()
-                max_V = df_results['shear'].abs().max()
-                
-                # Design Tabs
-                tab1, tab2 = st.tabs(["Top/Bottom Rebar", "Shear Links"])
-                
-                with tab1:
-                    # Positive Moment Design (Bottom Steel)
-                    if max_pos_M > 0:
-                        res_pos = rc_design.calculate_flexure_sdm(max_pos_M, "Max Positive (Bottom)", 30, 60, 4, params)
-                        st.success(f"**{res_pos['Type']}**")
-                        st.write(f"Use: **{res_pos['Bars']}**")
-                        with st.expander("Calculation Details"):
-                            for line in res_pos['Log']: st.write(line)
-                    
-                    st.divider()
-                    
-                    # Negative Moment Design (Top Steel)
-                    if max_neg_M < 0:
-                        res_neg = rc_design.calculate_flexure_sdm(abs(max_neg_M), "Max Negative (Top)", 30, 60, 4, params)
-                        st.error(f"**{res_neg['Type']}**")
-                        st.write(f"Use: **{res_neg['Bars']}**")
-                        with st.expander("Calculation Details"):
-                            for line in res_neg['Log']: st.write(line)
+        },
+        hide_index=True,
+        use_container_width=True
+    )
+    
+    # Save back to session state
+    new_sups = []
+    for index, row in edited_df.iterrows():
+        if row['Support Type'] != "None":
+            new_sups.append({'id': int(row['Node ID']), 'type': row['Support Type']})
+    st.session_state['supports'] = new_sups
 
-                with tab2:
-                     res_shear = rc_design.calculate_shear_capacity(max_V, 30, 60, 4, params)
-                     st.info(f"**Max Shear: {max_V:.2f}**")
-                     st.write(f"Stirrups: **{res_shear['Stirrups']}**")
-                     with st.expander("Shear Check Log"):
-                            for line in res_shear['Log']: st.write(line)
+# --- TAB 3: LOADS (UPDATED with Start/End for UDL) ---
+with tab3:
+    st.subheader("Add Applied Loads")
+    
+    c1, c2, c3 = st.columns([1, 1, 2])
+    
+    with c1:
+        span_idx_load = st.selectbox("Select Span", options=list(range(len(st.session_state['spans']))), format_func=lambda x: f"Span {x+1}")
+        current_span_len = st.session_state['spans'][span_idx_load]
+        st.caption(f"Span Length: {current_span_len} m")
+        
+    with c2:
+        load_type = st.selectbox("Load Type", ["Point Load (P)", "Uniform Load (U)", "Moment (M)"])
+        load_case = st.selectbox("Load Case", ["DL", "LL"])
 
+    with c3:
+        mag = st.number_input("Magnitude (kg, kg/m, kg-m)", value=1000.0)
+        
+        # --- UI LOGIC FOR LOAD POSITION ---
+        if "Uniform" in load_type:
+            # 🟢 UPDATED: Start and End Inputs for Uniform Load
+            cols_pos = st.columns(2)
+            with cols_pos[0]:
+                x_start = st.number_input("Start Position (x1) [m]", 
+                                          min_value=0.0, max_value=float(current_span_len), value=0.0)
+            with cols_pos[1]:
+                x_end = st.number_input("End Position (x2) [m]", 
+                                        min_value=0.0, max_value=float(current_span_len), value=float(current_span_len))
+            
+            # Validation logic handled during 'Add Load'
+            dist_val = x_end - x_start
+            x_loc = x_start
+            
+            if x_end < x_start:
+                st.warning("⚠️ End position must be greater than Start position.")
+        
+        else:
+            # Point Load or Moment
+            x_loc = st.number_input("Position x (m) from left of span", 
+                                    min_value=0.0, max_value=float(current_span_len), value=float(current_span_len)/2)
+            dist_val = 0 # Not used for Point/Moment
+            
+    if st.button("➕ Add Load", type="primary"):
+        # Validate Uniform Load
+        valid = True
+        if "Uniform" in load_type:
+            if dist_val <= 0:
+                st.error("Error: Uniform load length must be greater than 0.")
+                valid = False
+        
+        if valid:
+            l_type_code = 'P'
+            if 'Uniform' in load_type: l_type_code = 'U'
+            elif 'Moment' in load_type: l_type_code = 'M'
+            
+            new_load = {
+                'span_idx': span_idx_load,
+                'type': l_type_code,
+                'mag': mag,
+                'x': x_loc,
+                'dist': dist_val, # Save the calculated distance
+                'case': load_case
+            }
+            st.session_state['loads'].append(new_load)
+            st.success("Load added!")
+            st.rerun()
+
+    # Display Loads Table
+    if st.session_state['loads']:
+        st.markdown("##### Current Loads List")
+        # Process data for display
+        display_data = []
+        for i, l in enumerate(st.session_state['loads']):
+            s_num = l['span_idx'] + 1
+            l_t = l['type']
+            
+            pos_desc = f"x={l['x']:.2f} m"
+            if l_t == 'U':
+                end_pos = l['x'] + l.get('dist', 0)
+                pos_desc = f"x={l['x']:.2f} to {end_pos:.2f} m"
+                
+            display_data.append({
+                "Index": i,
+                "Span": s_num,
+                "Type": l_t,
+                "Mag": l['mag'],
+                "Case": l['case'],
+                "Position": pos_desc
+            })
+            
+        df_loads = pd.DataFrame(display_data)
+        st.dataframe(df_loads, use_container_width=True, hide_index=True)
+        
+        # Remove Load
+        col_del, _ = st.columns([1, 3])
+        with col_del:
+            idx_to_del = st.number_input("Remove Load Index", min_value=0, max_value=max(0, len(st.session_state['loads'])-1), step=1)
+            if st.button("🗑️ Remove Load"):
+                if 0 <= idx_to_del < len(st.session_state['loads']):
+                    st.session_state['loads'].pop(idx_to_del)
+                    st.rerun()
+
+# --- CALCULATION & RESULTS ---
+st.markdown("---")
+if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
+    
+    # Prepare Data
+    spans = st.session_state['spans']
+    supports_df = pd.DataFrame(st.session_state['supports'])
+    loads_df = pd.DataFrame(st.session_state['loads'])
+    
+    # Check minimum stability (Basic check)
+    if len(supports_df) < 2:
+        st.error("Structure unstable: Need at least 2 supports.")
+    else:
+        try:
+            # FACTORED LOADS CALCULATION
+            # Create a copy of loads to apply factors before sending to solver
+            calc_loads = loads_df.copy()
+            if not calc_loads.empty:
+                # Apply factors based on 'case'
+                # row['mag'] * factor
+                def apply_factor(row):
+                    f = dl_factor if row['case'] == 'DL' else ll_factor
+                    return row['mag'] * f
+                
+                calc_loads['mag'] = calc_loads.apply(apply_factor, axis=1)
+            
+            # Initialize Solver
+            solver = BeamSolver(spans, supports_df, calc_loads, E, I)
+            
+            # Solve
+            df_res, reactions = solver.solve()
+            
+            # Visualization
+            design_view.draw_interactive_diagrams(df_res, reactions, spans, supports_df, st.session_state['loads'], dl_factor=dl_factor, ll_factor=ll_factor)
+            design_view.render_result_tables(df_res, reactions, spans)
+            
         except Exception as e:
             st.error(f"Analysis Failed: {str(e)}")
-            st.exception(e) # Show stack trace for debugging
-
-if __name__ == "__main__":
-    main()
+            st.code(e)
