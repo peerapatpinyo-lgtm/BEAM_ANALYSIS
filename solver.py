@@ -4,9 +4,7 @@ import pandas as pd
 class BeamSolver:
     def __init__(self, spans, supports, loads, E, I, A=None, G=None):
         """
-        Modified for Timoshenko:
-        - A: Cross-sectional Area (Required for Shear calc)
-        - G: Shear Modulus (If None, calculated from E assuming steel v=0.3)
+        Modified for Timoshenko + Critical Values Summary
         """
         self.spans = spans
         self.supports = supports if isinstance(supports, pd.DataFrame) else pd.DataFrame(supports)
@@ -15,22 +13,16 @@ class BeamSolver:
         self.I = float(I)
         
         # --- TIMOSHENKO PARAMETERS ---
-        # If A is not provided, estimate from I assuming square section (Fallback)
         if A is None:
-            # h^4 = 12*I / b (assuming b=h) -> h = (12I)^0.25 -> A = h^2
-            # This is a rough estimation to prevent crash if user forgets A
             self.A = (12 * self.I)**0.5 
         else:
             self.A = float(A)
             
-        # If G is not provided, assume Steel (v = 0.3) -> G = E / 2(1+v)
         if G is None:
             self.G = self.E / (2 * (1 + 0.3))
         else:
             self.G = float(G)
             
-        # Shear Correction Factor (k)
-        # Rectangular = 5/6, Circular = 0.9. Let's use 5/6 as standard default.
         self.kappa = 5/6 
 
         self.num_nodes = len(spans) + 1
@@ -44,9 +36,7 @@ class BeamSolver:
         
         # 2. Build Stiffness & Load Vector
         for i, L in enumerate(self.spans):
-            # --- Modified: Get Timoshenko Stiffness ---
             k_local = self._get_element_stiffness(L)
-            
             idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
             
             for r in range(4):
@@ -86,7 +76,8 @@ class BeamSolver:
         try:
             u_f = np.linalg.solve(K_ff, F_f)
         except np.linalg.LinAlgError:
-            return pd.DataFrame(), np.zeros(num_dof)
+            # Return empty structure with summary error
+            return pd.DataFrame(), np.zeros(num_dof), {"error": "Unstable Structure"}
 
         U_global = np.zeros(num_dof)
         U_global[free_dofs] = u_f
@@ -119,7 +110,7 @@ class BeamSolver:
             V0 = f_total_start[0]
             M0 = -f_total_start[1]
             
-            # Points Generation (Same as before)
+            # Points Generation (With Epsilon for Vertical Drops)
             x_eval = set(np.linspace(0, L, 100))
             x_eval.update([0, L])
             load_locs = set()
@@ -140,7 +131,6 @@ class BeamSolver:
             
             for x in unique_points:
                 V, M = self._calculate_statics_at_x(x, V0, M0, span_loads)
-                # --- Modified: Get Timoshenko Deflection ---
                 D = self._get_deflection(x, L, u_elem)
                 
                 results.append({
@@ -152,24 +142,46 @@ class BeamSolver:
             
             x_cursor += L
 
-        return pd.DataFrame(results), Reactions
+        df_results = pd.DataFrame(results)
+        
+        # --- NEW: Extract Critical Values Summary ---
+        summary = self._extract_critical_values(df_results)
+
+        return df_results, Reactions, summary
+
+    def _extract_critical_values(self, df):
+        if df.empty: return {}
+        
+        # Helper to find row with max value
+        def get_peak(col, mode='max'):
+            if mode == 'max':
+                idx = df[col].idxmax()
+            else:
+                idx = df[col].idxmin()
+            return {'value': df.loc[idx, col], 'x': df.loc[idx, 'x']}
+        
+        # Helper for absolute max (Deflection)
+        def get_abs_max(col):
+            idx = df[col].abs().idxmax()
+            return {'value': df.loc[idx, col], 'x': df.loc[idx, 'x']}
+
+        return {
+            'V_max': get_peak('shear', 'max'),  # Max Positive Shear
+            'V_min': get_peak('shear', 'min'),  # Max Negative Shear
+            'M_pos': get_peak('moment', 'max'), # Max Sagging Moment
+            'M_neg': get_peak('moment', 'min'), # Max Hogging Moment
+            'D_max': get_abs_max('deflection')  # Max Deflection (Up or Down)
+        }
 
     def _get_phi(self, L):
-        # Calculate Shear Deformation Parameter (Phi)
-        # Phi = 12 * EI / (k * G * A * L^2)
-        if self.G * self.A == 0: return 0 # Avoid div by zero
+        if self.G * self.A == 0: return 0 
         return (12 * self.E * self.I) / (self.kappa * self.G * self.A * L**2)
 
     def _get_element_stiffness(self, L):
-        # --- TIMOSHENKO STIFFNESS MATRIX ---
         E, I = self.E, self.I
         Phi = self._get_phi(L)
-        
-        # Common multiplier
-        # For Timoshenko: EI / (L^3 * (1+Phi))
         C = (E * I) / (L**3 * (1 + Phi))
         
-        # Matrix Coefficients
         k11 = 12
         k12 = 6 * L
         k22 = (4 + Phi) * L**2
@@ -181,14 +193,9 @@ class BeamSolver:
             [-k11,  -k12,    k11,   -k12],
             [k12,    k24,   -k12,    k22]
         ])
-        
         return C * k
 
     def _calc_equivalent_nodal_forces(self, load, L):
-        # Note: Ideally, Timoshenko shape functions should be used here too.
-        # But for standard loads (P, U), the work-equivalent loads are 
-        # identical or negligibly different for visualization purposes.
-        # Keeping this standard prevents over-complication while K matrix handles the main behavior.
         f = np.zeros(4)
         mag = float(load['mag']) 
         a = float(load['x']) 
@@ -216,8 +223,6 @@ class BeamSolver:
         return f
 
     def _calculate_statics_at_x(self, x, V0, M0, loads):
-        # Statics Equilibrium is independent of Material (E, I, G, A)
-        # So this remains exactly the same logic.
         V_x = V0
         M_x = M0 + V0 * x 
         
@@ -249,15 +254,10 @@ class BeamSolver:
         return V_x, M_x
 
     def _get_deflection(self, x, L, u_elem):
-        # --- TIMOSHENKO SHAPE FUNCTIONS ---
-        # These are different from Euler-Bernoulli to account for shear deformation
         Phi = self._get_phi(L)
         xi = x/L
-        
-        # Denominator
         D = 1 + Phi
         
-        # Shape Functions N1..N4 depending on Phi
         N1 = (1 / D) * (1 - 3*xi**2 + 2*xi**3 + Phi*(1 - xi))
         N2 = (L / D) * (xi - 2*xi**2 + xi**3 + (Phi/2)*(xi - xi**2))
         N3 = (1 / D) * (3*xi**2 - 2*xi**3 + Phi*xi)
