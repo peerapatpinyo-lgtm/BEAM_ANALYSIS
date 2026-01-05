@@ -3,66 +3,78 @@ import pandas as pd
 from scipy.linalg import solve
 
 class BeamSolver:
-    def __init__(self, spans, supports_df, loads_input, E, I, A=None, G=None):
+    def __init__(self, spans, supports_input, loads_input, E, I, A=None, G=None):
         self.spans = [float(s) for s in spans]
         self.E = float(E)
         self.I = float(I)
         self.A = float(A) if A is not None else 0.01
         self.G = float(G) if G is not None else 7.7e10
         
-        # ปัดเศษทศนิยมเพื่อความแม่นยำในการเปรียบเทียบตำแหน่ง
+        # 1. กำหนดตำแหน่ง Node หลักจากความยาว Span (ใช้ทศนิยม 4 ตำแหน่งเพื่อความนิ่ง)
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
         
+        # 2. จัดการข้อมูล Support และ Load ให้พร้อม
+        self.supports_df = self._sanitize_supports(supports_input)
         self.loads_df = self._sanitize_loads(loads_input)
-        self.supports_df = self._sanitize_supports(supports_df)
+
+    def _sanitize_supports(self, supports_input):
+        """แก้ไข: ดึงข้อมูลให้ตรงกับคีย์ที่มาจาก app.py (Node ID, Support Type)"""
+        if isinstance(supports_input, pd.DataFrame):
+            data = supports_input.to_dict('records')
+        else:
+            data = supports_input
+            
+        sanitized = []
+        for s in data:
+            # ตรวจสอบคีย์ทั้งสองแบบ (เผื่อทั้งจาก session_state และ data_editor)
+            node_id = s.get('id', s.get('Node ID'))
+            s_type = s.get('type', s.get('Support Type', 'None'))
+            
+            if node_id is not None:
+                idx = int(node_id)
+                # ถ้ามาจาก Node ID (1, 2, 3...) ให้ลบ 1 เพื่อเป็น Index (0, 1, 2...)
+                if 'Node ID' in s: idx = idx - 1
+                
+                if 0 <= idx < len(self.cum_spans):
+                    sanitized.append({
+                        'x': self.cum_spans[idx],
+                        'type': str(s_type)
+                    })
+        return pd.DataFrame(sanitized)
 
     def _sanitize_loads(self, loads_input):
         if not loads_input:
             return pd.DataFrame(columns=['span_idx', 'type', 'mag', 'x', 'dist', 'case'])
+        
         df = pd.DataFrame(loads_input)
         def get_global_x(row):
             s_idx = int(row.get('span_index', row.get('span_idx', 0)))
             local_x = float(row.get('x', 0))
             return round(self.cum_spans[s_idx] + local_x, 4)
+            
         df['x'] = df.apply(get_global_x, axis=1)
         return df
-
-    def _sanitize_supports(self, supports_input):
-        if isinstance(supports_input, pd.DataFrame):
-            data = supports_input.to_dict('records')
-        else:
-            data = supports_input
-        sanitized = []
-        for s in data:
-            node_id = int(s.get('id', s.get('Node ID', 0)))
-            if node_id < len(self.cum_spans):
-                sanitized.append({
-                    'x': self.cum_spans[node_id], # ใช้ค่าจาก cum_spans โดยตรงเพื่อให้เป๊ะ
-                    'type': s.get('type', s.get('Support Type', 'None'))
-                })
-        return pd.DataFrame(sanitized)
 
     def _find_nearest_node(self, nodes, val):
         arr = np.array(nodes)
         diff = np.abs(arr - val)
         idx = diff.argmin()
-        if diff[idx] < 1e-3: # เพิ่ม Tolerance ให้กว้างขึ้นเล็กน้อยเพื่อความปลอดภัย
+        if diff[idx] < 1e-3: 
             return idx
         return -1
 
     def solve(self):
-        # 1. รวบรวมตำแหน่ง Nodes ทั้งหมด
+        # 1. รวบรวมตำแหน่งที่ต้องมี Node ทั้งหมด
         points = set([round(x, 4) for x in self.cum_spans])
         for _, l in self.loads_df.iterrows():
             points.add(round(l['x'], 4))
-            if l['type'] == 'U': 
-                points.add(round(l['x'] + l['dist'], 4))
+            if l['type'] == 'U': points.add(round(l['x'] + l['dist'], 4))
         
         nodes = sorted(list(points))
         num_nodes = len(nodes)
         dof = 2 * num_nodes
         
-        # 2. Stiffness Matrix K
+        # 2. สร้าง Global Stiffness Matrix
         K = np.zeros((dof, dof))
         elements = []
         for i in range(num_nodes - 1):
@@ -73,7 +85,7 @@ class BeamSolver:
                 idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
                 K[np.ix_(idx, idx)] += k_el
 
-        # 3. Load Vector F (Equivalent Nodal Forces)
+        # 3. สร้าง Load Vector (F)
         F = np.zeros(dof)
         for _, load in self.loads_df.iterrows():
             lx, lmag = load['x'], load['mag']
@@ -86,35 +98,39 @@ class BeamSolver:
                     ex1, ex2 = nodes[elem['n1']], nodes[elem['n2']]
                     overlap = min(end, ex2) - max(start, ex1)
                     if overlap > 1e-6:
+                        # กระจาย Uniform Load เข้า Node (Simple Equivalent)
                         F[2*elem['n1']] -= lmag * overlap * 0.5
                         F[2*elem['n2']] -= lmag * overlap * 0.5
 
-        # 4. Boundary Conditions (จุดที่เคยพลาด)
+        # 4. ใส่ Boundary Conditions (จุดที่แก้ให้ Support แสดงผล)
         free_dof = np.full(dof, True)
         for _, sup in self.supports_df.iterrows():
             nid = self._find_nearest_node(nodes, sup['x'])
-            if nid != -1 and sup['type'] != "None":
-                if sup['type'] in ['Pin', 'Roller', 'Fixed']:
-                    free_dof[2*nid] = False # ล็อคแกน Y
-                if sup['type'] == 'Fixed':
-                    free_dof[2*nid+1] = False # ล็อค Moment
+            stype = str(sup['type'])
+            if nid != -1 and stype != "None":
+                if stype in ['Pin', 'Roller', 'Fixed']:
+                    free_dof[2*nid] = False # ล็อค Fy
+                if stype == 'Fixed':
+                    free_dof[2*nid+1] = False # ล็อค Mz
 
-        # 5. Solve U
+        # 5. แก้สมการ Displacement (U)
         U = np.zeros(dof)
         if not np.all(free_dof):
-            K_reduced = K[np.ix_(free_dof, free_dof)]
-            F_reduced = F[free_dof]
-            U[free_dof] = solve(K_reduced, F_reduced)
+            try:
+                K_sub = K[np.ix_(free_dof, free_dof)]
+                F_sub = F[free_dof]
+                U[free_dof] = solve(K_sub, F_sub)
+            except: pass
 
-        # 6. Reactions
+        # 6. คำนวณ Reactions (R = K*U - F)
         R = K @ U - F
 
-        # 7. Internal Forces (Statics Integration)
+        # 7. คำนวณค่าภายใน (Shear, Moment) สำหรับวาดกราฟ
         results = []
-        plot_x = np.unique(np.concatenate([np.linspace(0, nodes[-1], 300), nodes]))
+        plot_x = np.unique(np.concatenate([np.linspace(0, nodes[-1], 350), nodes]))
         for x in plot_x:
             V, M, defl = 0.0, 0.0, 0.0
-            # Calculation for Deflection ...
+            # หา Deflection จาก Shape Function
             for elem in elements:
                 x1, x2 = nodes[elem['n1']], nodes[elem['n2']]
                 if x1 <= x <= x2 + 1e-6:
@@ -124,7 +140,7 @@ class BeamSolver:
                     defl = np.dot(H, U[idx])
                     break
             
-            # Sum forces from left to x
+            # รวมแรงจากซ้ายไปขวา (Statics Integration)
             for i, nx in enumerate(nodes):
                 if nx <= x + 1e-4:
                     V += R[2*i]
@@ -148,11 +164,14 @@ class BeamSolver:
     def _get_k(self, L):
         EI = self.E * self.I
         return (EI / L**3) * np.array([
-            [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
-            [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
+            [12, 6*L, -12, 6*L],
+            [6*L, 4*L**2, -6*L, 2*L**2],
+            [-12, -6*L, 12, -6*L],
+            [6*L, 2*L**2, -6*L, 4*L**2]
         ])
 
     def _create_summary(self, df):
+        if df.empty: return {}
         return {
             'V_max': {'value': df['shear'].abs().max(), 'x': df.iloc[df['shear'].abs().idxmax()]['x']},
             'M_pos': {'value': df['moment'].max(), 'x': df.iloc[df['moment'].idxmax()]['x']},
