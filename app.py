@@ -230,45 +230,60 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
             else:
                 st.markdown("### 🎯 Analysis Results")
 
-                # --- 1. กราฟ (Diagrams) แสดงเป็นอันดับแรก ---
+                # --- 1. กราฟ (Diagrams) แสดงบนสุด ---
                 design_view.draw_interactive_diagrams(
                     df_res, reactions, spans, supports_df, 
                     st.session_state['loads'], 
                     dl_factor=dl_factor, ll_factor=ll_factor
                 )
                 
-                # --- 2. ส่วนรายละเอียด (Drop Down / Expander) ---
-                with st.expander("📊 View Critical Values, Reactions & Tables", expanded=False):
+                # --- 2. Drop Down (View Results) ---
+                with st.expander("📊 View Critical Values & Reactions Details", expanded=False):
                     
+                    # --- A. Critical Values & Deflection Check ---
                     if summary:
                         st.markdown("#### 1. Critical Design Values (Envelope)")
-                        # ส่วน Critical Values
+                        
                         col_c1, col_c2, col_c3, col_c4 = st.columns(4)
                         col_c1.metric("Max Shear", f"{summary['V_max']['value']:.2f}", f"@ {summary['V_max']['x']:.2f} m")
                         col_c2.metric("Max Moment (+)", f"{summary['M_pos']['value']:.2f}", f"@ {summary['M_pos']['x']:.2f} m")
                         col_c3.metric("Max Moment (-)", f"{summary['M_neg']['value']:.2f}", f"@ {summary['M_neg']['x']:.2f} m", delta_color="inverse")
-                        col_c4.metric("Max Deflection", f"{summary['D_max']['value']*1000:.4f} mm", f"@ {summary['D_max']['x']:.2f} m")
+                        
+                        # Deflection Check Logic (ที่คุณชอบ)
+                        with col_c4:
+                            limit_val = max(spans)/360 * 1000 # mm
+                            actual_val_mm = summary['D_max']['value'] * 1000
+                            status_text = "✅ PASS (L/360)" if abs(actual_val_mm) < limit_val else "⚠️ CHECK"
+                            
+                            st.metric("Max Deflection", 
+                                      f"{actual_val_mm:.4f} mm",
+                                      status_text)
                         
                         st.markdown("---")
                         
-                        st.markdown("#### 2. Key Reactions")
-                        # ส่วน Reactions
-                        cols_r = st.columns(len(spans)+1)
-                        for i in range(len(spans)+1):
-                            fy = reactions[2*i]
-                            mz = reactions[2*i+1]
-                            with cols_r[i]:
-                                if abs(fy) > 0.01 or abs(mz) > 0.01:
-                                    st.markdown(f"**Node {i}**")
-                                    if abs(fy) > 0.01: st.write(f"Fy: `{fy:.2f}`")
-                                    if abs(mz) > 0.01: st.write(f"Mz: `{mz:.2f}`")
-                                else:
-                                    st.caption(f"Node {i}: No Force")
-
+                        st.markdown("#### 2. Support Reactions")
+                        
+                        # --- แก้ไขตรงนี้: ดึง Reaction ตาม Support ID จริงๆ ไม่ซ่อน Node ---
+                        support_ids = supports_df['id'].tolist()
+                        
+                        # สร้าง Container แสดงผล
+                        # ใช้ List เพื่อจัดกลุ่มแล้วแสดงทีเดียว จะได้ไม่ตกหล่น
+                        r_cols = st.columns(len(support_ids))
+                        
+                        for idx, node_id in enumerate(support_ids):
+                            fy = reactions[2*node_id]
+                            mz = reactions[2*node_id+1]
+                            sup_type = supports_df[supports_df['id'] == node_id]['type'].values[0]
+                            
+                            with r_cols[idx]:
+                                st.markdown(f"**Node {node_id} ({sup_type})**")
+                                st.write(f"Fy: `{fy:.2f}` N")
+                                if sup_type == 'Fixed' or abs(mz) > 0.01:
+                                    st.write(f"Mz: `{mz:.2f}` Nm")
+                        
                         st.markdown("---")
                     
                     st.markdown("#### 3. Detailed Data Table")
-                    # ส่วนตารางละเอียด (เรียกฟังก์ชันเดิม)
                     design_view.render_result_tables(df_res, reactions, spans)
             
         except Exception as e:
