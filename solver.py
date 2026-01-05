@@ -8,14 +8,8 @@ class BeamSolver:
         self.supports_df = supports_df
         self.E = E
         self.I = I
-        
-        # --- 1. Auto-Fix Loads Data ---
+        # Robust Load Sanitization
         self.loads_df = self._sanitize_loads(loads_input)
-        
-        # --- DEBUG: Print to Terminal to check data ---
-        print("\n--- DEBUG: LOADS RECEIVED BY SOLVER ---")
-        print(self.loads_df)
-        print("---------------------------------------\n")
 
     def _sanitize_loads(self, loads_input):
         # 1. Convert to DataFrame
@@ -29,46 +23,36 @@ class BeamSolver:
         if df.empty:
             return pd.DataFrame(columns=['x', 'mag', 'type', 'dist'])
 
-        # 2. Normalize Column Names (แก้ปัญหาชื่อไม่ตรง)
-        # แปลงชื่อคอลัมน์ทั้งหมดเป็นตัวเล็กก่อน
+        # 2. Rename Columns (Map common names to standard)
         df.columns = [str(c).lower().strip() for c in df.columns]
-        
-        # สร้าง Map สำหรับแปลงชื่อตัวแปรที่คนมักใช้ผิด
-        col_mapper = {
-            'location': 'x', 'pos': 'x', 'position': 'x', 'loc': 'x',
-            'magnitude': 'mag', 'load': 'mag', 'value': 'mag', 'force': 'mag', 'p': 'mag', 'w': 'mag',
-            'load_type': 'type', 'kind': 'type',
-            'distance': 'dist', 'span': 'dist', 'length': 'dist'
+        mapper = {
+            'location': 'x', 'pos': 'x', 'loc': 'x',
+            'magnitude': 'mag', 'force': 'mag', 'val': 'mag', 'p': 'mag',
+            'kind': 'type', 'load_type': 'type',
+            'length': 'dist', 'span': 'dist'
         }
-        df.rename(columns=col_mapper, inplace=True)
+        df.rename(columns=mapper, inplace=True)
 
-        # 3. Normalize Load Types (แก้ปัญหาคำว่า Point Load vs P)
-        # ถ้าไม่มี column type ให้เดาว่าเป็น P ไว้ก่อน
-        if 'type' not in df.columns:
-            df['type'] = 'P'
-        
-        def clean_type(val):
-            s = str(val).upper().strip()
-            if 'POINT' in s or s == 'P': return 'P'
-            if 'UNIFORM' in s or 'UDL' in s or s == 'U': return 'U'
-            if 'MOMENT' in s or s == 'M': return 'M'
-            return 'P' # Default fallback
-            
-        df['type'] = df['type'].apply(clean_type)
-
-        # 4. Fill Missing Columns with Defaults
-        if 'x' not in df.columns: df['x'] = 0.0
-        if 'mag' not in df.columns: df['mag'] = 0.0
+        # 3. Clean Types & Values
+        if 'type' not in df.columns: df['type'] = 'P'
         if 'dist' not in df.columns: df['dist'] = 0.0
-
-        # 5. Convert to Numeric (Force Float)
-        for col in ['x', 'mag', 'dist']:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
-
+        
+        # Standardize Load Type Chars
+        def clean_t(t):
+            t = str(t).upper()
+            if 'U' in t: return 'U'
+            if 'M' in t: return 'M'
+            return 'P'
+        df['type'] = df['type'].apply(clean_t)
+        
+        # Ensure Numeric
+        for c in ['x', 'mag', 'dist']:
+            df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+            
         return df
 
     def solve(self):
-        # --- 2. Model Discretization ---
+        # --- 1. Discretize Model (Generate Nodes) ---
         nodes, elements = self._discretize_model()
         num_nodes = len(nodes)
         dof = 2 * num_nodes
@@ -76,134 +60,128 @@ class BeamSolver:
         K = np.zeros((dof, dof))
         F = np.zeros(dof)
         
-        # --- 3. Stiffness Matrix ---
+        # --- 2. Stiffness Matrix ---
         for elem in elements:
-            n1, n2 = elem['n1'], elem['n2']
-            x1, x2 = nodes[n1], nodes[n2]
-            L = x2 - x1
+            L = nodes[elem['n2']] - nodes[elem['n1']]
             k_local = self._get_element_stiffness(L)
-            
-            idx = [2*n1, 2*n1+1, 2*n2, 2*n2+1]
+            idx = [2*elem['n1'], 2*elem['n1']+1, 2*elem['n2'], 2*elem['n2']+1]
             for r in range(4):
                 for c in range(4):
                     K[idx[r], idx[c]] += k_local[r, c]
                     
-        # --- 4. Force Vector Assembly ---
-        # A. Nodal Loads
+        # --- 3. Loads (Mapping to Nodes) ---
         for _, load in self.loads_df.iterrows():
-            # Find closest node
-            node_idx = -1
-            min_dist = 1e9
-            for i, x in enumerate(nodes):
-                dist = abs(x - load['x'])
-                if dist < 1e-4:
-                    node_idx = i
-                    break
+            # Find closest node index for load
+            nid = self._find_node_idx(nodes, load['x'])
             
-            if node_idx != -1:
-                # Direct Nodal Load
-                if load['type'] == 'P':
-                    F[2 * node_idx] -= load['mag']
-                elif load['type'] == 'M':
-                    F[2 * node_idx + 1] += load['mag']
-
-        # B. Member Loads (Equivalent Nodal Forces)
-        for _, load in self.loads_df.iterrows():
-            if load['type'] == 'U':
-                start, end = load['x'], load['x'] + load['dist']
-                mag = load['mag']
-                
+            if load['type'] == 'P' and nid is not None:
+                F[2*nid] -= load['mag']
+            elif load['type'] == 'M' and nid is not None:
+                F[2*nid+1] += load['mag']
+            elif load['type'] == 'U':
+                # Equivalent Nodal Forces for UDL
+                start, dist, mag = load['x'], load['dist'], load['mag']
+                end = start + dist
                 for elem in elements:
                     x1, x2 = nodes[elem['n1']], nodes[elem['n2']]
                     L = x2 - x1
-                    if L <= 1e-9: continue
+                    if L < 1e-9: continue
                     
-                    overlap_start = max(start, x1)
-                    overlap_end = min(end, x2)
-                    
-                    if overlap_end > overlap_start + 1e-6:
-                        # Gauss Quadrature for FE
-                        a, b = overlap_start - x1, overlap_end - x1
-                        load_len = b - a
-                        mid = (a + b) / 2
-                        
+                    # Calculate overlap
+                    ov_st = max(start, x1)
+                    ov_en = min(end, x2)
+                    if ov_en > ov_st + 1e-6:
+                        # Integration
+                        a, b = ov_st - x1, ov_en - x1
+                        length = b - a
+                        mid = (a + b)/2
                         fe = np.zeros(4)
-                        for gp in [-0.57735, 0.57735]: # 2-point Gauss
-                            x_loc = mid + (load_len/2)*gp
-                            s = x_loc / L
-                            # Shape Functions
-                            N = np.array([1-3*s**2+2*s**3, x_loc*(1-s)**2, 3*s**2-2*s**3, x_loc*(s**2-s)])
-                            fe += N * (-mag) * (load_len/2) # Weight=1.0
-                            
+                        for gp in [-0.57735, 0.57735]:
+                            loc = mid + (length/2)*gp
+                            s = loc / L
+                            N = np.array([1-3*s**2+2*s**3, loc*(1-s)**2, 3*s**2-2*s**3, loc*(s**2-s)])
+                            fe += N * (-mag) * (length/2)
+                        
                         idx = [2*elem['n1'], 2*elem['n1']+1, 2*elem['n2'], 2*elem['n2']+1]
                         F[idx] += fe
 
-        # --- 5. Boundary Conditions ---
+        # --- 4. Boundary Conditions (FIXED THIS PART) ---
         free_dof = np.full(dof, True)
-        if isinstance(self.supports_df, list):
-             sup_data = self.supports_df
+        
+        # Convert supports to list of dicts
+        if isinstance(self.supports_df, pd.DataFrame):
+            sup_data = self.supports_df.to_dict('records')
         else:
-             sup_data = self.supports_df.to_dict('records')
+            sup_data = self.supports_df
 
         for sup in sup_data:
-            try:
-                nid = int(sup['id'])
-                if nid < num_nodes:
-                    stype = sup['type']
-                    if stype in ['Pin', 'Roller', 'Fixed']: free_dof[2*nid] = False
-                    if stype == 'Fixed': free_dof[2*nid+1] = False
-            except: pass
-        
-        # --- 6. Solve ---
-        U = np.zeros(dof)
-        if np.sum(free_dof) > 0:
-            try:
-                K_red = K[np.ix_(free_dof, free_dof)]
-                F_red = F[free_dof]
-                U[free_dof] = solve(K_red, F_red)
-            except:
-                print("Error: Singular Matrix")
-                return pd.DataFrame(), [], {}
+            # Check if 'x' or 'location' exists, otherwise try 'id'
+            sx = sup.get('x', sup.get('location', None))
+            
+            # Map Support X to Closest Node
+            target_node = -1
+            if sx is not None:
+                target_node = self._find_node_idx(nodes, sx)
+            elif 'id' in sup:
+                # Fallback to ID if no X provided (less safe)
+                target_node = int(sup['id']) if int(sup['id']) < num_nodes else -1
 
+            if target_node != -1:
+                stype = sup.get('type', 'Pin')
+                # Apply Constraints
+                if stype in ['Pin', 'Roller', 'Fixed']:
+                    free_dof[2*target_node] = False # Fix Y
+                if stype == 'Fixed':
+                    free_dof[2*target_node+1] = False # Fix Rotation
+
+        # --- 5. Solve ---
+        U = np.zeros(dof)
+        if np.sum(free_dof) < dof: # Only solve if constrained
+            try:
+                K_free = K[np.ix_(free_dof, free_dof)]
+                F_free = F[free_dof]
+                U[free_dof] = solve(K_free, F_free)
+            except:
+                print("Error: Matrix Singular (Unstable)")
+                return pd.DataFrame(), [], {}
+        
         R = K @ U - F
         
-        # --- 7. Generate Graph Points (Hybrid Method) ---
-        x_eval = np.linspace(0, nodes[-1], 200)
+        # --- 6. Results Generation (Hybrid) ---
+        x_eval = np.linspace(0, nodes[-1], 300)
         results = []
         
         for x in x_eval:
-            # Deflection
+            # Deflection (Shape Function)
             defl = 0
             for elem in elements:
                 x1, x2 = nodes[elem['n1']], nodes[elem['n2']]
                 if x1 <= x <= x2 + 1e-6:
-                    s = (x - x1) / (x2 - x1)
-                    u_local = U[[2*elem['n1'], 2*elem['n1']+1, 2*elem['n2'], 2*elem['n2']+1]]
+                    s = (x - x1)/(x2 - x1)
+                    idx = [2*elem['n1'], 2*elem['n1']+1, 2*elem['n2'], 2*elem['n2']+1]
                     N = np.array([1-3*s**2+2*s**3, (x-x1)*(1-s)**2, 3*s**2-2*s**3, (x-x1)*(s**2-s)])
-                    defl = np.dot(N, u_local)
+                    defl = np.dot(N, U[idx])
                     break
             
-            # Shear & Moment (Statics Integration)
+            # Shear/Moment (Sum of Forces)
             V, M = 0.0, 0.0
             
-            # Reactions
+            # Reactions contribution
             for i, nx in enumerate(nodes):
                 if nx <= x + 1e-5:
                     V += R[2*i]
                     M += R[2*i]*(x-nx) + R[2*i+1]
             
-            # Loads
-            for _, load in self.loads_df.iterrows():
-                lx, mag = load['x'], load['mag']
-                ltype = load['type']
-                
-                if ltype == 'P' and lx <= x + 1e-5:
+            # Loads contribution
+            for _, l in self.loads_df.iterrows():
+                lx, mag = l['x'], l['mag']
+                if l['type'] == 'P' and lx <= x + 1e-5:
                     V -= mag
-                    M -= mag * (x - lx)
-                elif ltype == 'M' and lx <= x + 1e-5:
-                    M -= mag # Assuming CW applied moment
-                elif ltype == 'U':
-                    start, end = lx, lx + load['dist']
+                    M -= mag*(x-lx)
+                elif l['type'] == 'M' and lx <= x + 1e-5:
+                    M += mag # Adjust sign based on convention
+                elif l['type'] == 'U':
+                    start, end = lx, lx + l['dist']
                     if start < x:
                         act_end = min(x, end)
                         cov = act_end - start
@@ -217,6 +195,7 @@ class BeamSolver:
         return pd.DataFrame(results), R, {}
 
     def _discretize_model(self):
+        # Gather all critical points
         pts = {0.0}
         curr = 0
         for s in self.spans:
@@ -226,8 +205,21 @@ class BeamSolver:
             pts.add(round(l['x'], 5))
             if l['type'] == 'U': pts.add(round(l['x']+l['dist'], 5))
         
+        # Convert supports to points too
+        if isinstance(self.supports_df, pd.DataFrame):
+            for _, s in self.supports_df.iterrows():
+                if 'x' in s: pts.add(round(s['x'], 5))
+                elif 'location' in s: pts.add(round(s['location'], 5))
+        
         sx = sorted(list(pts))
         return sx, [{'n1':i, 'n2':i+1} for i in range(len(sx)-1)]
+        
+    def _find_node_idx(self, nodes, x_val):
+        # Helper to find closest node index
+        for i, val in enumerate(nodes):
+            if abs(val - x_val) < 1e-4:
+                return i
+        return None
 
     def _get_element_stiffness(self, L):
         k = np.zeros((4,4))
