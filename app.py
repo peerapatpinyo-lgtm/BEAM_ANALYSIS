@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 
-# Import modules (ตรวจสอบว่าไฟล์ solver.py และ design_view.py อยู่ในโฟลเดอร์เดียวกัน)
+# Import modules (ต้องแน่ใจว่า solver.py และ design_view.py อยู่ในโฟลเดอร์เดียวกัน)
 from solver import BeamSolver
 import design_view
 
@@ -105,7 +105,7 @@ with tab2:
             new_sups.append({'id': int(row['Node ID']), 'type': row['Support Type']})
     st.session_state['supports'] = new_sups
 
-# --- TAB 3: LOADS (UPDATED with Start/End for UDL) ---
+# --- TAB 3: LOADS ---
 with tab3:
     st.subheader("Add Applied Loads")
     
@@ -125,7 +125,7 @@ with tab3:
         
         # --- UI LOGIC FOR LOAD POSITION ---
         if "Uniform" in load_type:
-            # 🟢 UPDATED: Start and End Inputs for Uniform Load
+            # Inputs for Uniform Load Start/End
             cols_pos = st.columns(2)
             with cols_pos[0]:
                 x_start = st.number_input("Start Position (x1) [m]", 
@@ -134,7 +134,7 @@ with tab3:
                 x_end = st.number_input("End Position (x2) [m]", 
                                         min_value=0.0, max_value=float(current_span_len), value=float(current_span_len))
             
-            # Validation logic handled during 'Add Load'
+            # Calculation for internal logic
             dist_val = x_end - x_start
             x_loc = x_start
             
@@ -226,7 +226,6 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
             calc_loads = loads_df.copy()
             if not calc_loads.empty:
                 # Apply factors based on 'case'
-                # row['mag'] * factor
                 def apply_factor(row):
                     f = dl_factor if row['case'] == 'DL' else ll_factor
                     return row['mag'] * f
@@ -234,13 +233,20 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                 calc_loads['mag'] = calc_loads.apply(apply_factor, axis=1)
             
             # Initialize Solver
+            # หมายเหตุ: จำเป็นต้องมีไฟล์ solver.py ที่มีคลาส BeamSolver
             solver = BeamSolver(spans, supports_df, calc_loads, E, I)
             
             # Solve
             df_res, reactions = solver.solve()
             
             # Visualization
-            design_view.draw_interactive_diagrams(df_res, reactions, spans, supports_df, st.session_state['loads'], dl_factor=dl_factor, ll_factor=ll_factor)
+            # ส่ง loads ต้นฉบับ (loads_df) ไปแสดงผลในตาราง เพื่อให้เห็นค่า Service Load
+            design_view.draw_interactive_diagrams(
+                df_res, reactions, spans, supports_df, 
+                st.session_state['loads'], # Original inputs
+                dl_factor=dl_factor, ll_factor=ll_factor
+            )
+            
             design_view.render_result_tables(df_res, reactions, spans)
             
         except Exception as e:
