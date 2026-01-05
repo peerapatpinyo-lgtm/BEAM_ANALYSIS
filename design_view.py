@@ -1,246 +1,22 @@
 import streamlit as st
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 import numpy as np
-
-def draw_interactive_diagrams(df, reac, spans, sup_df, raw_loads):
-    """
-    Engineering Grade Visualization
-    - Fixes Alignment: Forces all X-axes to match perfectly.
-    - Fixes Scaling: Locks Visual Aspect Ratio (no more wasted whitespace).
-    - Professional Look: Clean lines, clear labels, no clipping.
-    """
-    
-    # --- 1. PREPARE DATA ---
-    nodes = [0] + list(np.cumsum(spans))
-    total_len = nodes[-1]
-    
-    # Find Global Max for Scaling (เพื่อให้สัดส่วน Load ดูสมจริงเทียบกันทั้งกระดาน)
-    all_mags = [l['mag'] for l in raw_loads]
-    max_load_val = max(all_mags) if all_mags else 1000.0
-    
-    # Visual Constants (หน่วยเป็นแกน Y สมมติของรูปบนสุด)
-    BEAM_Y_ZERO = 0         # ระดับหลังคาน
-    BEAM_THICK = 0.5        # ความหนาคาน
-    MAX_VISUAL_HEIGHT = 2.5 # ความสูงสูงสุดที่ยอมให้ Load พุ่งขึ้นไป (Lock ไว้เลย)
-
-    # --- 2. SETUP PLOT LAYOUT ---
-    fig = make_subplots(
-        rows=4, cols=1, 
-        shared_xaxes=True, # สำคัญ: แชร์แกน X
-        vertical_spacing=0.04,
-        row_heights=[0.3, 0.23, 0.25, 0.22], # ให้พื้นที่รูปคานเยอะสุด
-        subplot_titles=(
-            "", # เว้นว่างไว้ เดี๋ยวใส่ Annotation แทนจะได้ไม่ทับ
-            "", 
-            "", 
-            ""
-        )
-    )
-
-    # ==========================================
-    # ROW 1: FREE BODY DIAGRAM (Engineering Style)
-    # ==========================================
-    
-    # 1.1 The Beam (วาดเป็น Shape สี่เหลี่ยมตายตัว)
-    fig.add_shape(type="rect",
-        x0=0, x1=total_len, 
-        y0=-BEAM_THICK, y1=BEAM_Y_ZERO, # คานอยู่ใต้แกน 0
-        fillcolor="#EEEEEE", line=dict(color="#424242", width=2.5),
-        row=1, col=1
-    )
-    
-    # 1.2 Supports (วาดตามตำแหน่ง Node จริง)
-    if not sup_df.empty:
-        for _, s in sup_df.iterrows():
-            idx = int(s['id'])
-            if idx < len(nodes):
-                x_pos = nodes[idx]
-                stype = s['type']
-                
-                # Support Graphics
-                if stype == "Pin":
-                    # สามเหลี่ยม
-                    fig.add_trace(go.Scatter(
-                        x=[x_pos], y=[-BEAM_THICK], mode="markers",
-                        marker=dict(symbol="triangle-up", size=14, color="#37474F"),
-                        hoverinfo="skip", showlegend=False
-                    ), row=1, col=1)
-                    # ฐานรอง
-                    fig.add_shape(type="line", x0=x_pos-0.2, x1=x_pos+0.2, y0=-BEAM_THICK-0.2, y1=-BEAM_THICK-0.2,
-                        line=dict(color="#37474F", width=2), row=1, col=1)
-
-                elif stype == "Roller":
-                    fig.add_trace(go.Scatter(
-                        x=[x_pos], y=[-BEAM_THICK-0.15], mode="markers",
-                        marker=dict(symbol="circle", size=12, color="#37474F", line=dict(width=1.5, color="white")),
-                        showlegend=False, hoverinfo="skip"
-                    ), row=1, col=1)
-                    fig.add_shape(type="line", x0=x_pos-0.2, x1=x_pos+0.2, y0=-BEAM_THICK-0.4, y1=-BEAM_THICK-0.4,
-                        line=dict(color="#37474F", width=2), row=1, col=1)
-                
-                elif stype == "Fixed":
-                     fig.add_shape(type="line", x0=x_pos, x1=x_pos, y0=-BEAM_THICK-0.3, y1=BEAM_Y_ZERO+0.5,
-                        line=dict(color="#37474F", width=4), row=1, col=1)
-
-    # 1.3 Loads (Unified Scaling)
-    for l in raw_loads:
-        span_idx = int(l['span_idx'])
-        if span_idx >= len(spans): continue
-        
-        x_start = nodes[span_idx] + l['x']
-        
-        # Calculate Visual Height (Normalized)
-        # Load 100% = สูง 2.5 หน่วย (Visual Units)
-        ratio = l['mag'] / max_load_val
-        vis_h = max(0.8, ratio * MAX_VISUAL_HEIGHT) 
-
-        color = "#C62828" if l['case'] == 'LL' else "#1565C0" # Red/Blue
-
-        if l['type'] == 'P':
-            # Point Load
-            fig.add_annotation(
-                x=x_start, y=BEAM_Y_ZERO,
-                ax=0, ay=-vis_h*35, # Vector length based on visual height
-                xref="x1", yref="y1",
-                text=f"<b>P={l['mag']:,.0f}</b>",
-                showarrow=True, arrowhead=2, arrowwidth=2, arrowcolor=color, arrowsize=1,
-                font=dict(color=color, size=11), bgcolor="rgba(255,255,255,0.8)",
-                row=1, col=1
-            )
-        elif l['type'] == 'U':
-            # Distributed Load
-            span_len = spans[span_idx]
-            x_end = nodes[span_idx] + l.get('end', span_len)
-            
-            # Shaded Box
-            fig.add_trace(go.Scatter(
-                x=[x_start, x_end, x_end, x_start],
-                y=[BEAM_Y_ZERO, BEAM_Y_ZERO, vis_h, vis_h],
-                fill='toself', fillcolor=f"rgba{tuple(int(color.lstrip('#')[i:i+2], 16) for i in (0, 2, 4)) + (0.1,)}",
-                mode='none', hoverinfo='skip', showlegend=False
-            ), row=1, col=1)
-            
-            # Top Line
-            fig.add_trace(go.Scatter(
-                x=[x_start, x_end], y=[vis_h, vis_h],
-                mode='lines', line=dict(color=color, width=1.5), showlegend=False
-            ), row=1, col=1)
-            
-            # Arrows (Distributed)
-            n_arr = max(3, int((x_end-x_start)*1.5))
-            for ax in np.linspace(x_start, x_end, n_arr):
-                fig.add_annotation(
-                    x=ax, y=BEAM_Y_ZERO, ax=0, ay=-vis_h*35,
-                    xref="x1", yref="y1", showarrow=True, arrowhead=2, arrowwidth=1, arrowcolor=color, arrowsize=0.8,
-                    row=1, col=1
-                )
-            # Label
-            fig.add_annotation(
-                x=(x_start+x_end)/2, y=vis_h, text=f"<b>w={l['mag']:,.0f}</b>",
-                yshift=10, showarrow=False, font=dict(color=color, size=11), bgcolor="white",
-                row=1, col=1
-            )
-
-    # --- LOCK VIEW ROW 1 (The Fix for Whitespace) ---
-    # บังคับแกน Y ของรูปแรกให้ Fix เลย จะได้ไม่เหลือที่ว่างเยอะ
-    fig.update_yaxes(range=[-1.5, MAX_VISUAL_HEIGHT + 1.0], fixedrange=True, visible=False, row=1, col=1)
-
-
-    # ==========================================
-    # ROWS 2-4: GRAPHS (Aligned)
-    # ==========================================
-    
-    # Shear
-    fig.add_trace(go.Scatter(x=df['x'], y=df['shear'], mode='lines', fill='tozeroy', 
-        line=dict(color='#FFA000', width=2), fillcolor='rgba(255, 160, 0, 0.2)', name="V"), row=2, col=1)
-    
-    # Moment (Inverted Logic)
-    fig.add_trace(go.Scatter(x=df['x'], y=df['moment'], mode='lines', 
-        line=dict(color='#455A64', width=2), fill='tozeroy', fillcolor='rgba(69, 90, 100, 0.1)', name="M"), row=3, col=1)
-
-    # Deflection
-    fig.add_trace(go.Scatter(x=df['x'], y=df['deflection']*1000, mode='lines', 
-        line=dict(color='#2E7D32', width=2, dash='dot'), name="Deflection"), row=4, col=1)
-
-    # --- ANNOTATIONS (Smart Labels) ---
-    def smart_label(row, col, x, y, txt, color, anchor="bottom"):
-        yshift = 15 if anchor == "bottom" else -15
-        fig.add_annotation(x=x, y=y, text=f"<b>{txt}</b>", showarrow=False, yshift=yshift,
-            font=dict(color=color, size=10), bgcolor="white", bordercolor=color, borderwidth=1, borderpad=2,
-            row=row, col=col)
-
-    # Add Max/Min labels (ตัวอย่าง Shear)
-    v_max = df['shear'].max()
-    smart_label(2, 1, df.loc[df['shear'].idxmax(), 'x'], v_max, f"{v_max:.0f}", "#FFA000")
-
-    # Add Moment Labels
-    m_min = df['moment'].min() # Negative moment usually governs design
-    smart_label(3, 1, df.loc[df['moment'].idxmin(), 'x'], m_min, f"{m_min:.0f}", "#C2185B", anchor="top")
-
-
-    # ==========================================
-    # GLOBAL LAYOUT (Professional Grid)
-    # ==========================================
-    
-    # *** CRITICAL FIX: FORCED X-RANGE ***
-    # บังคับให้ทุกกราฟเริ่มและจบที่เดียวกันเป๊ะๆ เพื่อให้ Grid Line ตรงกัน
-    common_x_range = [-0.5, total_len + 0.5]
-    
-    grid_style = dict(
-        showgrid=True, gridcolor='#E0E0E0', gridwidth=1,
-        showline=True, linecolor='black', linewidth=1,
-        mirror=True
-    )
-
-    fig.update_layout(height=1200, template="plotly_white", showlegend=False, 
-                      margin=dict(t=40, b=40, l=60, r=40),
-                      font=dict(family="Arial", size=12))
-
-    # Apply Styles
-    # Row 1: Beam (Hide Grid)
-    fig.update_xaxes(range=common_x_range, showgrid=False, visible=False, row=1, col=1)
-    
-    # Row 2: Shear
-    fig.update_xaxes(range=common_x_range, matches='x', **grid_style, row=2, col=1)
-    fig.update_yaxes(title="<b>Shear (kg)</b>", **grid_style, row=2, col=1)
-    
-    # Row 3: Moment
-    fig.update_xaxes(range=common_x_range, matches='x', **grid_style, row=3, col=1)
-    fig.update_yaxes(title="<b>Moment (kg-m)</b>", autorange="reversed", **grid_style, row=3, col=1)
-    
-    # Row 4: Deflection
-    fig.update_xaxes(title="<b>Distance (m)</b>", range=common_x_range, matches='x', **grid_style, row=4, col=1)
-    fig.update_yaxes(title="<b>Deflection (mm)</b>", **grid_style, row=4, col=1)
-    
-    # Titles inside plots instead of Subplot Titles (ประหยัดที่)
-    fig.add_annotation(text="Free Body Diagram", xref="paper", yref="paper", x=0, y=1.01, showarrow=False, font=dict(size=14, color="#333"), row=1, col=1)
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    # ... (Render Tables function remains the same)
-
-
-# --- ให้ก๊อปปี้ส่วนนี้ไปวางเพิ่มในไฟล์ design_view.py (ไม่ต้องลบของเก่า) ---
-import streamlit as st
-import pandas as pd
 
 def render_result_tables(df_res, reactions, spans, unit_force="kg", unit_len="m"):
     """
-    ฟังก์ชันสำหรับแสดงตารางผลลัพธ์ (Reactions และ Max Values)
+    ฟังก์ชันแสดงตารางผลลัพธ์ (รองรับ NumPy Array และแก้บั๊ก AttributeError)
     """
     st.markdown("---")
-    st.subheader("📋 สรุปผลการคำนวณ (Analysis Results)")
+    st.subheader("📋 Analysis Results")
 
     col1, col2 = st.columns(2)
 
-    # --- Col 1: แสดงแรงปฏิกิริยา (Reactions) ---
+    # --- Col 1: Reactions ---
     with col1:
-        st.markdown(f"**📍 แรงปฏิกิริยาที่จุดรองรับ ({unit_force})**")
-        
-        # --- แก้ไขตรงนี้ (FIXED) ---
-        # ใช้ len() เช็คความยาวแทนการเช็คค่าตรงๆ เพื่อรองรับ NumPy Array
+        st.markdown(f"**📍 Support Reactions ({unit_force})**")
+        # ใช้ len() > 0 เพื่อป้องกัน Error กับ NumPy Array
         if reactions is not None and len(reactions) > 0:
             react_data = []
             for i, r in enumerate(reactions):
@@ -253,14 +29,152 @@ def render_result_tables(df_res, reactions, spans, unit_force="kg", unit_len="m"
         else:
             st.warning("No reaction data available.")
 
-    # --- Col 2: แสดงค่า Max/Min (Shear & Moment) ---
+    # --- Col 2: Critical Values ---
     with col2:
-        st.markdown(f"**📊 ค่าวิกฤต (Critical Values)**")
+        st.markdown(f"**📊 Critical Design Values**")
         if df_res is not None and not df_res.empty:
-            # จัดรูปแบบตัวเลขทศนิยม 2 ตำแหน่ง
             st.dataframe(df_res.style.format({
                 "Value": "{:,.2f}",
-                # "Position": "{:.2f}" 
+                "Position": "{:.2f}"
             }))
         else:
             st.info("No result data to display.")
+    
+    total_len = sum(spans) if isinstance(spans, list) else spans
+    st.caption(f"Total Span Length: {total_len:.2f} {unit_len}")
+
+def plot_professional_diagrams(L_total, loads, reactions_locs, shear_x, shear_y, moment_x, moment_y):
+    """
+    วาดกราฟแบบ Professional Engineering Style (เหมือนใน Textbook)
+    - Support แยกออกจากคาน
+    - Load Uniform แบบหวี (Comb style)
+    - คานมีความหนา
+    """
+    # ตั้งค่า Font และ Style
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.style.use('default')
+    
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12), sharex=True, 
+                                        gridspec_kw={'height_ratios': [1, 1, 1]})
+    
+    # ==========================================
+    # 1. Free Body Diagram (FBD)
+    # ==========================================
+    # กำหนดความหนาคานให้ดูสมส่วน
+    beam_height = L_total * 0.06 
+    if beam_height < 0.3: beam_height = 0.3 # ขั้นต่ำ
+    
+    # 1.1 วาดตัวคาน (Beam Rectangle)
+    beam_rect = patches.Rectangle((0, -beam_height/2), L_total, beam_height, 
+                                  linewidth=2, edgecolor='#333333', facecolor='#f9f9f9', zorder=2)
+    ax1.add_patch(beam_rect)
+    
+    # 1.2 วาด Support (อยู่ *ใต้* คาน ไม่ทับ)
+    support_h = beam_height * 0.8
+    support_w = beam_height * 0.8
+    
+    for loc in reactions_locs:
+        # วาดสามเหลี่ยม Support
+        triangle = patches.Polygon([
+            [loc, -beam_height/2],  # ยอด (แตะขอบล่างคาน)
+            [loc - support_w/2, -beam_height/2 - support_h], # ฐานซ้าย
+            [loc + support_w/2, -beam_height/2 - support_h]  # ฐานขวา
+        ], closed=True, edgecolor='#333333', facecolor='#ffffff', linewidth=1.5, zorder=1)
+        ax1.add_patch(triangle)
+        
+        # วาดเส้นพื้น (Ground)
+        ax1.plot([loc - support_w, loc + support_w], 
+                 [-beam_height/2 - support_h]*2, color='black', linewidth=1.5)
+        
+        # Hash marks (แรเงาพื้น)
+        for i in np.linspace(-support_w, support_w, 4):
+             ax1.plot([loc + i, loc + i - support_w/3], 
+                      [-beam_height/2 - support_h, -beam_height/2 - support_h*1.3], 
+                      color='black', linewidth=0.8)
+
+    # 1.3 วาด Loads (ให้ดูโปร)
+    max_load_h = beam_height * 2.0 
+    
+    for load in loads:
+        l_type = load[0]
+        val = load[1]
+        
+        if l_type == 'udl':
+            start, end = load[2], load[3]
+            
+            # วาดเส้น Load ด้านบน (คานรับ Load)
+            load_top_y = beam_height/2 + max_load_h
+            ax1.plot([start, end], [load_top_y]*2, color='#005b96', linewidth=1.5)
+            # ปิดหัวท้าย
+            ax1.plot([start, start], [beam_height/2, load_top_y], color='#005b96', linewidth=1.5)
+            ax1.plot([end, end], [beam_height/2, load_top_y], color='#005b96', linewidth=1.5)
+            
+            # วาดลูกศรถี่ๆ (Comb Style) ให้ดูเหมือน Textbook
+            # คำนวณจำนวนลูกศรตามความยาว
+            dist = end - start
+            n_arrows = max(3, int(dist * 3)) # อย่างน้อย 3 ตัว หรือ 3 ตัวต่อเมตร
+            x_arrows = np.linspace(start, end, n_arrows)
+            
+            for x in x_arrows:
+                ax1.arrow(x, load_top_y, 0, -max_load_h*0.85, 
+                          head_width=L_total*0.015, head_length=max_load_h*0.15, 
+                          fc='#005b96', ec='#005b96', length_includes_head=True)
+            
+            # Text Label
+            ax1.text((start+end)/2, load_top_y + beam_height*0.2, f"w = {val:,.0f}", 
+                     ha='center', va='bottom', color='#005b96', fontweight='bold')
+
+        elif l_type == 'point':
+            pos = load[2]
+            load_top_y = beam_height/2 + max_load_h
+            # ลูกศรตัวใหญ่
+            ax1.arrow(pos, load_top_y, 0, -max_load_h*0.9, 
+                      head_width=L_total*0.02, head_length=max_load_h*0.2, 
+                      fc='#d9534f', ec='#d9534f', width=L_total*0.003, length_includes_head=True)
+            # Text Label
+            ax1.text(pos, load_top_y + beam_height*0.2, f"P = {val:,.0f}", 
+                     ha='center', va='bottom', color='#d9534f', fontweight='bold')
+
+    ax1.set_title("Free Body Diagram", fontsize=14, fontweight='bold', pad=15)
+    ax1.set_ylim(-beam_height*4, beam_height*5)
+    ax1.axis('off')
+
+    # ==========================================
+    # 2. Shear Force Diagram (SFD)
+    # ==========================================
+    ax2.plot(shear_x, shear_y, color='#ff9f43', linewidth=2)
+    ax2.fill_between(shear_x, shear_y, 0, facecolor='#ff9f43', alpha=0.15)
+    ax2.axhline(0, color='black', linewidth=0.8)
+    ax2.set_ylabel("Shear Force", fontsize=10, fontweight='bold')
+    ax2.grid(True, linestyle=':', alpha=0.6)
+    
+    # Annotate Max/Min
+    v_max_idx = np.argmax(shear_y)
+    v_min_idx = np.argmin(shear_y)
+    for idx in [v_max_idx, v_min_idx]:
+        val = shear_y[idx]
+        if abs(val) > 0.1:
+            ax2.text(shear_x[idx], val, f"{val:,.0f}", ha='center', va='bottom' if val > 0 else 'top',
+                     fontsize=9, bbox=dict(facecolor='white', edgecolor='#ff9f43', boxstyle='round,pad=0.2'))
+
+    # ==========================================
+    # 3. Bending Moment Diagram (BMD)
+    # ==========================================
+    ax3.plot(moment_x, moment_y, color='#54a0ff', linewidth=2)
+    ax3.fill_between(moment_x, moment_y, 0, facecolor='#54a0ff', alpha=0.15)
+    ax3.axhline(0, color='black', linewidth=0.8)
+    ax3.set_ylabel("Moment", fontsize=10, fontweight='bold')
+    ax3.set_xlabel("Beam Length (m)", fontsize=10)
+    ax3.grid(True, linestyle=':', alpha=0.6)
+
+    # Annotate Max/Min Moment
+    m_max_idx = np.argmax(moment_y)
+    m_min_idx = np.argmin(moment_y)
+    for idx in [m_max_idx, m_min_idx]:
+        val = moment_y[idx]
+        if abs(val) > 0.1:
+             ax3.text(moment_x[idx], val, f"{val:,.0f}", ha='center', va='bottom' if val > 0 else 'top',
+                     fontsize=9, bbox=dict(facecolor='white', edgecolor='#54a0ff', boxstyle='round,pad=0.2'))
+
+    plt.tight_layout()
+    return fig
