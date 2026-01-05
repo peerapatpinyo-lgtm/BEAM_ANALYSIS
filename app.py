@@ -221,68 +221,54 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                     return row['mag'] * f
                 calc_loads['mag'] = calc_loads.apply(apply_factor, axis=1)
             
-            # Solve (Timoshenko & A/G included)
+            # Solve
             solver = BeamSolver(spans, supports_df, calc_loads, E, I, A, G)
-            df_res, reactions, summary = solver.solve() # Unpack 3 values
+            df_res, reactions, summary = solver.solve()
             
             if df_res.empty:
                  st.error("Structure is Unstable or Error in calculation.")
             else:
                 st.markdown("### 🎯 Analysis Results")
-                
-                # --- NEW DASHBOARD LAYOUT ---
-                if summary:
-                    # แบ่ง 2 คอลัมน์: ค่าวิกฤต (70%) | แรงปฏิกิริยา (30%)
-                    col_res_1, col_res_2 = st.columns([2.5, 1])
-                    
-                    with col_res_1:
-                        with st.container(border=True):
-                            st.markdown("**📊 Critical Design Values (Envelope)**")
-                            
-                            c1, c2, c3 = st.columns(3)
-                            c1.metric("Max Shear (V)", f"{summary['V_max']['value']:.2f}", f"@ {summary['V_max']['x']:.2f} m")
-                            c2.metric("Max Moment (+)", f"{summary['M_pos']['value']:.2f}", f"@ {summary['M_pos']['x']:.2f} m")
-                            c3.metric("Max Moment (-)", f"{summary['M_neg']['value']:.2f}", f"@ {summary['M_neg']['x']:.2f} m", delta_color="inverse")
-                            
-                            st.divider()
-                            
-                            c4, c5 = st.columns([1, 1.5])
-                            with c4:
-                                st.metric("Max Deflection", f"{summary['D_max']['value']*1000:.4f} mm", f"@ {summary['D_max']['x']:.2f} m")
-                            with c5:
-                                # Quick Check L/360
-                                limit = max(spans)/360 * 1000
-                                passed = abs(summary['D_max']['value']*1000) < limit
-                                status = "✅ PASS" if passed else "⚠️ CHECK"
-                                st.caption(f"Serviceability Limit (L/360 = {limit:.2f} mm)")
-                                st.markdown(f"**Status: {status}**")
 
-                    with col_res_2:
-                        with st.container(border=True):
-                            st.markdown("**📍 Key Reactions**")
-                            # แสดงเฉพาะ Node ที่มีแรงกระทำจริงๆ
-                            has_reaction = False
-                            for i in range(len(spans)+1):
-                                fy = reactions[2*i]
-                                mz = reactions[2*i+1]
-                                if abs(fy) > 0.01 or abs(mz) > 0.01:
-                                    has_reaction = True
-                                    st.markdown(f"**Node {i}:**")
-                                    if abs(fy) > 0.01: st.write(f"Fy = `{fy:.2f}`")
-                                    if abs(mz) > 0.01: st.write(f"Mz = `{mz:.2f}`")
-                                    st.markdown("---")
-                            if not has_reaction:
-                                st.write("No major reactions.")
-
-                # --- PLOTTING (Original Design) ---
+                # --- 1. กราฟ (Diagrams) แสดงเป็นอันดับแรก ---
                 design_view.draw_interactive_diagrams(
                     df_res, reactions, spans, supports_df, 
                     st.session_state['loads'], 
                     dl_factor=dl_factor, ll_factor=ll_factor
                 )
                 
-                # --- Detailed Table (Hidden by default) ---
-                with st.expander("📄 Detailed Calculation Tables"):
+                # --- 2. ส่วนรายละเอียด (Drop Down / Expander) ---
+                with st.expander("📊 View Critical Values, Reactions & Tables", expanded=False):
+                    
+                    if summary:
+                        st.markdown("#### 1. Critical Design Values (Envelope)")
+                        # ส่วน Critical Values
+                        col_c1, col_c2, col_c3, col_c4 = st.columns(4)
+                        col_c1.metric("Max Shear", f"{summary['V_max']['value']:.2f}", f"@ {summary['V_max']['x']:.2f} m")
+                        col_c2.metric("Max Moment (+)", f"{summary['M_pos']['value']:.2f}", f"@ {summary['M_pos']['x']:.2f} m")
+                        col_c3.metric("Max Moment (-)", f"{summary['M_neg']['value']:.2f}", f"@ {summary['M_neg']['x']:.2f} m", delta_color="inverse")
+                        col_c4.metric("Max Deflection", f"{summary['D_max']['value']*1000:.4f} mm", f"@ {summary['D_max']['x']:.2f} m")
+                        
+                        st.markdown("---")
+                        
+                        st.markdown("#### 2. Key Reactions")
+                        # ส่วน Reactions
+                        cols_r = st.columns(len(spans)+1)
+                        for i in range(len(spans)+1):
+                            fy = reactions[2*i]
+                            mz = reactions[2*i+1]
+                            with cols_r[i]:
+                                if abs(fy) > 0.01 or abs(mz) > 0.01:
+                                    st.markdown(f"**Node {i}**")
+                                    if abs(fy) > 0.01: st.write(f"Fy: `{fy:.2f}`")
+                                    if abs(mz) > 0.01: st.write(f"Mz: `{mz:.2f}`")
+                                else:
+                                    st.caption(f"Node {i}: No Force")
+
+                        st.markdown("---")
+                    
+                    st.markdown("#### 3. Detailed Data Table")
+                    # ส่วนตารางละเอียด (เรียกฟังก์ชันเดิม)
                     design_view.render_result_tables(df_res, reactions, spans)
             
         except Exception as e:
