@@ -220,3 +220,45 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, raw_loads):
     st.plotly_chart(fig, use_container_width=True)
 
     # ... (Render Tables function remains the same)
+
+
+# --- ให้ก๊อปปี้ส่วนนี้ไปวางเพิ่มในไฟล์ design_view.py (ไม่ต้องลบของเก่า) ---
+import streamlit as st
+import pandas as pd
+
+def render_result_tables(df_res, reactions, spans, unit_force="kg", unit_len="m"):
+    """
+    ฟังก์ชันสำหรับแสดงตารางผลลัพธ์ (Reactions และ Max Values)
+    """
+    st.markdown("---")
+    st.subheader("📋 สรุปผลการคำนวณ (Analysis Results)")
+
+    col1, col2 = st.columns(2)
+
+    # --- Col 1: แสดงแรงปฏิกิริยา (Reactions) ---
+    with col1:
+        st.markdown(f"**📍 แรงปฏิกิริยาที่จุดรองรับ ({unit_force})**")
+        
+        if reactions:
+            react_data = []
+            for i, r in enumerate(reactions):
+                react_data.append({
+                    "Support": f"Support {i+1}",
+                    "Reaction": f"{r:,.2f}"
+                })
+            df_react = pd.DataFrame(react_data)
+            st.table(df_react)
+        else:
+            st.warning("No reaction data available.")
+
+    # --- Col 2: แสดงค่า Max/Min (Shear & Moment) ---
+    with col2:
+        st.markdown(f"**📊 ค่าวิกฤต (Critical Values)**")
+        if df_res is not None and not df_res.empty:
+            # จัดรูปแบบตัวเลขทศนิยม 2 ตำแหน่ง
+            st.dataframe(df_res.style.format({
+                "Value": "{:,.2f}",
+                # "Position": "{:.2f}" # บรรทัดนี้อาจต้อง comment ออกถ้าคอลัมน์ชื่อไม่ตรงเป๊ะ
+            }))
+        else:
+            st.info("No result data to display.")
