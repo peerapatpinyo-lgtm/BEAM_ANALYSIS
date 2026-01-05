@@ -3,10 +3,10 @@ import pandas as pd
 from scipy import integrate
 
 class BeamSolver:
-    def __init__(self, spans, supports, loads, E=2e6, I=1e-4):
+    def __init__(self, spans, supports, loads, E, I):
         self.spans = spans
-        self.supports = supports 
-        self.loads = loads if loads is not None else pd.DataFrame()
+        self.supports = supports
+        self.loads = loads
         self.E = E
         self.I = I
         self.nodes = [0] + list(np.cumsum(spans))
@@ -14,129 +14,116 @@ class BeamSolver:
         self.total_len = self.nodes[-1]
         
     def solve(self):
-        # --- 1. Matrix Stiffness Method (FEM) ---
+        # 1. Global Stiffness Matrix
         n_dof = 2 * self.n_nodes
-        K_global = np.zeros((n_dof, n_dof))
-        F_global = np.zeros(n_dof)
+        K = np.zeros((n_dof, n_dof))
+        F = np.zeros(n_dof)
         
         for i, L in enumerate(self.spans):
-            # Stiffness Matrix
-            k_val = (self.E * self.I / L**3)
-            k_el = k_val * np.array([
-                [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
-                [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
+            k = self.E * self.I / L**3
+            k_el = k * np.array([
+                [12, 6*L, -12, 6*L],
+                [6*L, 4*L**2, -6*L, 2*L**2],
+                [-12, -6*L, 12, -6*L],
+                [6*L, 2*L**2, -6*L, 4*L**2]
             ])
             idx = [2*i, 2*i+1, 2*i+2, 2*i+3]
-            
-            # Assembly
             for r in range(4):
                 for c in range(4):
-                    K_global[idx[r], idx[c]] += k_el[r, c]
-            
-            # Fixed End Forces (FEM)
+                    K[idx[r], idx[c]] += k_el[r, c]
+                    
+            # Fixed End Moments (FEM)
             fem = np.zeros(4)
             if not self.loads.empty:
-                span_loads = self.loads[self.loads['span_idx'] == i].to_dict('records')
-                for load in span_loads:
-                    val = load['mag']
-                    if load['type'] == 'P':
-                        a = load['x']; b = L - a
-                        fem[0] += val * b**2 * (3*a + b) / L**3
-                        fem[1] += val * a * b**2 / L**2
-                        fem[2] += val * a**2 * (a + 3*b) / L**3
-                        fem[3] -= val * a**2 * b / L**2
-                    elif load['type'] == 'U':
-                        w = val
-                        fem[0] += w * L / 2; fem[1] += w * L**2 / 12
-                        fem[2] += w * L / 2; fem[3] -= w * L**2 / 12
+                span_loads = self.loads[self.loads['span_idx'] == i]
+                for _, l in span_loads.iterrows():
+                    val = l['mag']
+                    if l['type'] == 'P':
+                        a = l['x']; b = L - a
+                        fem += val * np.array([
+                            (b**2 * (3*a+b))/L**3, (a * b**2)/L**2,
+                            (a**2 * (a+3*b))/L**3, -(a**2 * b)/L**2
+                        ])
+                    elif l['type'] == 'U':
+                        # Assuming full span uniform for simplicity
+                        fem += val * np.array([L/2, L**2/12, L/2, -L**2/12])
             
-            F_global[idx] -= fem
+            F[idx] -= fem
 
-        # --- 2. Boundary Conditions ---
-        free_dofs = list(range(n_dof))
-        if not self.supports.empty:
-            for _, row in self.supports.iterrows():
-                node_idx = int(row['id'])
-                # Fix Vertical (Y)
-                if 2*node_idx in free_dofs: free_dofs.remove(2*node_idx)
-                # Fix Rotation if Fixed
-                if row['type'] == 'Fixed':
-                    if 2*node_idx+1 in free_dofs: free_dofs.remove(2*node_idx+1)
+        # 2. Boundary Conditions
+        free_dof = list(range(n_dof))
+        for _, s in self.supports.iterrows():
+            node = int(s['id'])
+            if 2*node in free_dof: free_dof.remove(2*node) # Fix Y
+            if s['type'] == 'Fixed' and (2*node+1 in free_dof):
+                free_dof.remove(2*node+1) # Fix Rotation
 
-        # --- 3. Solve Displacements ---
-        U_global = np.zeros(n_dof)
-        if free_dofs:
+        # 3. Solve
+        U = np.zeros(n_dof)
+        if free_dof:
             try:
-                U_global[free_dofs] = np.linalg.solve(K_global[np.ix_(free_dofs, free_dofs)], F_global[free_dofs])
-            except np.linalg.LinAlgError:
-                return None, None # Singular matrix
-
-        # --- 4. Reactions ---
-        Reactions = np.dot(K_global, U_global) - F_global
-
-        # --- 5. Post-Processing (Integration Method) ---
-        # Generate dense x array
-        x_points = set([0, self.total_len])
-        for n in self.nodes: x_points.add(n)
+                U[free_dof] = np.linalg.solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
+            except:
+                return None, None
+                
+        # 4. Reactions
+        R = K @ U - F
+        
+        # 5. Internal Forces (Integration Method)
+        # Create dense points
+        x_vals = sorted(list(set(
+            list(np.linspace(0, self.total_len, 500)) + 
+            self.nodes + 
+            [n + 0.001 for n in self.nodes] + [n - 0.001 for n in self.nodes]
+        )))
+        # Add load points
         if not self.loads.empty:
             for _, l in self.loads.iterrows():
-                abs_x = self.nodes[int(l['span_idx'])] + l['x']
-                x_points.add(abs_x)
-                x_points.add(abs_x - 1e-5)
-                x_points.add(abs_x + 1e-5)
+                lx = self.nodes[int(l['span_idx'])] + l['x']
+                x_vals.extend([lx, lx-0.001, lx+0.001])
+        x_vals = sorted(list(set([x for x in x_vals if 0 <= x <= self.total_len])))
         
-        dense_x = np.linspace(0, self.total_len, 501)
-        x_final = np.sort(np.unique(np.concatenate((list(x_points), dense_x))))
-        x_final = x_final[(x_final >= 0) & (x_final <= self.total_len)]
-
-        V_vals = np.zeros_like(x_final)
-        M_vals = np.zeros_like(x_final)
-
-        for i, x in enumerate(x_final):
-            v_sum = 0; m_sum = 0
+        V_res, M_res = [], []
+        
+        for x in x_vals:
+            v, m = 0, 0
+            # Reactions contribution
+            for i, node_x in enumerate(self.nodes):
+                if node_x <= x + 1e-6:
+                    v += R[2*i]
+                    m += R[2*i] * (x - node_x) + R[2*i+1]
             
-            # Reactions
-            for n_i, node_x in enumerate(self.nodes):
-                if node_x <= x + 1e-9:
-                    ry = Reactions[2*n_i]
-                    rm = Reactions[2*n_i+1]
-                    v_sum += ry
-                    m_sum += ry * (x - node_x) + rm
-            
-            # Loads
+            # Loads contribution
             if not self.loads.empty:
                 for _, l in self.loads.iterrows():
                     l_start = self.nodes[int(l['span_idx'])]
                     if l['type'] == 'P':
-                        abs_loc = l_start + l['x']
-                        if abs_loc <= x + 1e-9:
-                            v_sum -= l['mag']
-                            m_sum -= l['mag'] * (x - abs_loc)
+                        lp = l_start + l['x']
+                        if lp <= x + 1e-6:
+                            v -= l['mag']
+                            m -= l['mag'] * (x - lp)
                     elif l['type'] == 'U':
                         l_end = self.nodes[int(l['span_idx']) + 1]
-                        start_eff = l_start
-                        end_eff = min(x, l_end)
-                        if end_eff > start_eff:
-                            dist = end_eff - start_eff
+                        # Effective length of load to the left of x
+                        eff_start = l_start
+                        eff_end = min(x, l_end)
+                        if eff_end > eff_start:
+                            dist = eff_end - eff_start
                             load = l['mag'] * dist
-                            cent = start_eff + dist/2
-                            v_sum -= load
-                            m_sum -= load * (x - cent)
-
-            V_vals[i] = v_sum
-            M_vals[i] = m_sum
-
-        # Deflection
+                            centroid = eff_start + dist/2
+                            v -= load
+                            m -= load * (x - centroid)
+                            
+            V_res.append(v)
+            M_res.append(m)
+            
+        # Deflection (Double Integration of M/EI)
+        # Numerical integration
         if hasattr(integrate, 'cumulative_trapezoid'): cumtrapz = integrate.cumulative_trapezoid
         else: cumtrapz = integrate.cumtrapz
 
-        theta_rel = cumtrapz(M_vals, x_final, initial=0) / (self.E * self.I)
-        delta_rel = cumtrapz(theta_rel, x_final, initial=0)
+        curvature = np.array(M_res) / (self.E * self.I)
+        slope = cumtrapz(curvature, x_vals, initial=0) + U[1] # Add initial slope
+        defl = cumtrapz(slope, x_vals, initial=0) + U[0]      # Add initial defl
         
-        # Apply Boundary Constants (Use U_global[0] and U_global[1])
-        y0_true = U_global[0]
-        theta0_true = U_global[1]
-        
-        defl_final = delta_rel + theta0_true * x_final + y0_true
-
-        return pd.DataFrame({'x': x_final, 'shear': V_vals, 'moment': M_vals, 'deflection': defl_final}), Reactions
+        return pd.DataFrame({'x': x_vals, 'shear': V_res, 'moment': M_res, 'deflection': defl}), R
