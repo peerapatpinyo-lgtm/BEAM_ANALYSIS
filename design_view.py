@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 
 def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", unit_len="m", dl_factor=1.4, ll_factor=1.7):
     
-    # --- 0. Design Criteria & Setup (คงเดิม) ---
+    # --- 0. Design Criteria & Setup ---
     st.markdown("### ⚙️ Design Criteria & Load Combination")
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
@@ -17,7 +17,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         st.info(f"**Factored Load Analysis:**\n\nAll results (V, M, Deflection) shown below include safety factors.")
     st.markdown("---")
 
-    # --- Data Sanitization (คงเดิม) ---
+    # --- Data Sanitization ---
     if isinstance(spans, (pd.DataFrame, pd.Series)):
         spans_val = spans.values.flatten().tolist()
     elif isinstance(spans, list):
@@ -50,7 +50,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                     except (ValueError, TypeError):
                         continue
 
-    # --- 1. Load Calculation List (คงเดิม) ---
+    # --- 1. Load Calculation List ---
     st.markdown("### 📋 Applied Loads List (Unfactored Input)")
     if len(clean_loads) > 0:
         load_table_data = []
@@ -91,7 +91,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     st.markdown("---")
     st.markdown("### 📊 Structural Analysis Diagrams (Ultimate Limit State)")
 
-    # --- 2. DEFLECTION UNIT AUTO-SCALING (คงเดิม จากรอบที่แล้ว) ---
+    # --- 2. DEFLECTION UNIT AUTO-SCALING ---
     max_defl = df['deflection'].abs().max() if not df['deflection'].empty else 0
     defl_unit = unit_len
     defl_scale = 1.0
@@ -114,20 +114,25 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         row_heights=[0.20, 0.26, 0.26, 0.28]
     )
 
-    # --- ROW 1: STRUCTURE DIAGRAM (คงเดิม) ---
+    # ==========================================
+    # ROW 1: STRUCTURE DIAGRAM (FBD)
+    # ==========================================
     if isinstance(sup_df, list): sup_df = pd.DataFrame(sup_df)
     sup_map = {}
     if sup_df is not None and not sup_df.empty and 'id' in sup_df.columns:
         sup_map = {int(r['id']): r['type'] for _, r in sup_df.iterrows()}
 
     for i, x in enumerate(cum_spans):
+        # [แก้ไข] ย้าย Label ลงมาที่ y=-0.55 เพื่อไม่ให้ทับ Support
         fig.add_annotation(
-            x=x, y=0, ax=0, ay=-15,
+            x=x, y=-0.55, 
             text=f"Node {i+1}", showarrow=False,
-            font=dict(size=9, color="gray"), row=1, col=1
+            font=dict(size=10, color="gray"), row=1, col=1
         )
+        
         if i in sup_map:
             stype = sup_map[i]
+            # วาด Support (ตำแหน่งเดิม)
             if stype == 'Fixed':
                 fig.add_shape(type="line", x0=x, y0=0, x1=x, y1=-0.3, line=dict(width=4, color='black'), row=1, col=1)
                 fig.add_shape(type="line", x0=x-0.15, y0=-0.3, x1=x+0.15, y1=-0.3, line=dict(width=4, color='black'), row=1, col=1)
@@ -140,8 +145,10 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
                 fig.add_trace(go.Scatter(x=[x], y=[-0.15], mode='markers', marker=dict(symbol='circle', size=18, color='white', line=dict(color='black', width=2)), showlegend=False, hoverinfo='skip'), row=1, col=1)
                 fig.add_shape(type="line", x0=x-0.2, y0=-0.30, x1=x+0.2, y1=-0.30, line=dict(width=2, color='black'), row=1, col=1)
 
+    # Beam Line
     fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], line=dict(color='black', width=5), hoverinfo='skip', showlegend=False), row=1, col=1)
 
+    # Loads Drawing
     for l in clean_loads:
         x_abs_start = cum_spans[l['span_idx']] + l['x']
         mag = l['mag']
@@ -205,10 +212,9 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
             x_pos = x_arr[idx]
             y_plot = -val if invert_sign else val
             
-            # --- แก้ไข 1: เพิ่มระยะ @ x=... ---
             txt = f"<b>{val:.2f}</b><br><span style='font-size:9px'>@ {x_pos:.2f}m</span>" if abs(val) >= 0.01 else f"<b>{val:.4f}</b>"
             
-            ay_val = -40 if is_top else 40 # เพิ่มระยะ ay นิดหน่อยเพื่อให้ข้อความไม่ทับเส้น
+            ay_val = -40 if is_top else 40 
             fig.add_annotation(x=x_pos, y=y_plot, text=txt, ax=0, ay=ay_val, row=row_idx, col=1, **style)
 
         if abs(y_arr[max_idx]) > 1e-9: plot_lbl(max_idx, True)
@@ -237,7 +243,6 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
         d_x = df['x'].values[abs_d_idx]
         
         if abs(d_val_scaled) > 1e-5:
-             # Deflection Label (ก็เพิ่มระยะ @ ให้ด้วยเพื่อความสม่ำเสมอ)
              fig.add_annotation(
                 x=d_x, y=d_val_scaled,
                 text=f"<b>Max: {d_val_scaled:.2f} {defl_unit}</b><br><span style='font-size:9px'>@ {d_x:.2f}m</span>",
@@ -251,22 +256,24 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, unit_force="kg", u
     # ==========================================
     # GRID LINES (SUPPORT & MID-SPAN)
     # ==========================================
-    # 1. Support Lines (Existing)
+    # 1. Support Lines
     for node_x in cum_spans:
         for r_idx in [2, 3, 4]:
             fig.add_vline(x=node_x, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, row=r_idx, col=1)
     
-    # 2. Mid-Span Lines (--- แก้ไข 2: เพิ่มเส้นกึ่งกลางคาน ---)
+    # 2. Mid-Span Lines (ปรับให้เหมือน Support Lines เป๊ะๆ)
     for i, span_len in enumerate(spans_val):
         start_x = cum_spans[i]
         mid_x = start_x + (span_len / 2)
         for r_idx in [2, 3, 4]:
-            # ใช้เส้นประจุด (dot) ให้ต่างจากเส้น Support เพื่อไม่ให้สับสน
-            fig.add_vline(x=mid_x, line_width=1, line_dash="dot", line_color="silver", opacity=0.5, row=r_idx, col=1)
+            # [แก้ไข] ใช้ Style เดียวกับ Support: dash='dash', color='gray'
+            fig.add_vline(x=mid_x, line_width=1, line_dash="dash", line_color="gray", opacity=0.5, row=r_idx, col=1)
 
-    # Layout Updates (คงเดิม)
+    # Layout Updates
     fig.update_layout(height=1000, showlegend=False, template="plotly_white", margin=dict(l=60, r=30, t=40, b=50), hovermode="x unified")
-    fig.update_yaxes(visible=False, range=[-0.6, 0.8], row=1, col=1)
+    
+    # [แก้ไข] ปรับช่วงแกน Y Row 1 ให้ครอบคลุม Label ด้านล่าง
+    fig.update_yaxes(visible=False, range=[-0.65, 0.8], row=1, col=1)
     
     fig.update_yaxes(title_text=f"Vu ({unit_force})", row=2, col=1)
     fig.update_yaxes(title_text=f"Mu ({unit_force}-{unit_len})", row=3, col=1)
