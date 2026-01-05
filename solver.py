@@ -22,27 +22,25 @@ class BeamSolver:
         K = np.zeros((dof, dof))
         F = np.zeros(dof)
         
-        # 2. Assemble Stiffness Matrix
+        # 2. Assemble Stiffness
         for elem in elements:
-            # --- แก้ไขจุดที่ Error ---
             node_i = elem['n1']
             node_j = elem['n2']
             x1 = nodes[node_i]
             x2 = nodes[node_j]
-            L = x2 - x1  # คำนวณความยาวก่อน
+            L = x2 - x1
             
-            k_local = self._get_element_stiffness(L) # ส่งค่า L (ตัวเลข) เข้าไป
+            # ส่งค่า L ที่เป็นตัวเลขเข้าไปคำนวณ
+            k_local = self._get_element_stiffness(L)
             
-            # Map indices
             idx = [2*node_i, 2*node_i+1, 2*node_j, 2*node_j+1]
             for r in range(4):
                 for c in range(4):
                     K[idx[r], idx[c]] += k_local[r, c]
                     
         # 3. Assemble Forces
-        # A. Point Loads / Moments
         for _, load in self.loads_df.iterrows():
-            # Find closest node
+            # Point/Moment Loads
             node_idx = -1
             for i, x in enumerate(nodes):
                 if np.isclose(x, load['x'], atol=1e-5):
@@ -55,7 +53,7 @@ class BeamSolver:
                 elif load['type'] == 'M':
                     F[2 * node_idx + 1] -= load['mag'] 
 
-        # B. Distributed Loads (Equivalent Nodal Forces)
+        # Distributed Loads
         for _, load in self.loads_df.iterrows():
             if load['type'] == 'U':
                 start = load['x']
@@ -70,12 +68,10 @@ class BeamSolver:
                     overlap_end = min(end, x2)
                     
                     if overlap_end > overlap_start:
-                        # Load covers this element
                         a = overlap_start - x1
                         b = overlap_end - x1
-                        w = -mag # Downward
+                        w = -mag
                         
-                        # Numerical Integration (Gauss 2-point)
                         load_len = b - a
                         mid = (a + b) / 2
                         gauss_pts = [-0.57735, 0.57735]
@@ -84,16 +80,14 @@ class BeamSolver:
                         fe = np.zeros(4)
                         for gp, gw in zip(gauss_pts, gauss_w):
                             x_in_elem = mid + (load_len/2)*gp
-                            s = (x_in_elem - x1) / L_elem # Normalize 0 to 1 based on Element Start
+                            s = (x_in_elem - x1) / L_elem
                             
-                            # Shape Functions
                             n_vec = np.array([
                                 1 - 3*s**2 + 2*s**3,
                                 (x_in_elem - x1) * (1 - s)**2,
                                 3*s**2 - 2*s**3,
                                 (x_in_elem - x1) * (s**2 - s)
                             ])
-                            
                             fe += n_vec * w * gw * (load_len / 2)
 
                         idx = [2*elem['n1'], 2*elem['n1']+1, 2*elem['n2'], 2*elem['n2']+1]
@@ -122,7 +116,7 @@ class BeamSolver:
         
         R = K @ U - F
         
-        # 6. Post-Process (Diagrams)
+        # 6. Post-Process (Generate Results Table)
         results = []
         for elem in elements:
             node_i, node_j = elem['n1'], elem['n2']
@@ -134,11 +128,9 @@ class BeamSolver:
             x_vals = np.linspace(0, L, 50)
             for x_local in x_vals:
                 s = x_local / L
-                
-                # Shape Functions
                 N = np.array([1 - 3*s**2 + 2*s**3, x_local * (1 - s)**2, 3*s**2 - 2*s**3, x_local * (s**2 - s)])
                 
-                # Derivatives
+                # Derivatives for Moment/Shear
                 N_d2 = np.array([-6/L**2 + 12*x_local/L**3, -4/L + 6*x_local/L**2, 6/L**2 - 12*x_local/L**3, -2/L + 6*x_local/L**2])
                 N_d3 = np.array([12/L**3, 6/L**2, -12/L**3, 6/L**2])
                 
@@ -146,22 +138,21 @@ class BeamSolver:
                 m_val = self.E * self.I * np.dot(N_d2, u_ele)
                 v_val = self.E * self.I * np.dot(N_d3, u_ele)
                 
-                # Add Particular Solution (Load within element)
+                # Add Particular Solution for UDL
                 for _, load in self.loads_df.iterrows():
                     if load['type'] == 'U':
                         l_start = max(load['x'], x1)
                         l_end = min(load['x'] + load['dist'], x2)
-                        
                         if l_end > l_start:
                             a_local = l_start - x1
                             b_local = l_end - x1
                             w = -load['mag']
-                            
                             if x_local > a_local:
                                 cv_len = min(x_local, b_local) - a_local
                                 v_val -= w * cv_len
                                 m_val -= w * cv_len * (x_local - (a_local + cv_len/2))
-
+                
+                # --- ใช้ชื่อคอลัมน์ตัวใหญ่ (Capitalized) ---
                 results.append({'x': x1 + x_local, 'Deflection': y, 'Moment': m_val, 'Shear': v_val})
                 
         df_res = pd.DataFrame(results)
@@ -180,25 +171,20 @@ class BeamSolver:
         for s in self.spans:
             current_x += s
             x_points.add(round(current_x, 5))
-            
         for _, load in self.loads_df.iterrows():
             x_points.add(round(load['x'], 5))
             if load['type'] == 'U':
                 x_points.add(round(load['x'] + load['dist'], 5))
-                
         sorted_x = sorted(list(x_points))
         elements = [{'n1': i, 'n2': i+1} for i in range(len(sorted_x)-1)]
         return sorted_x, elements
 
     def _get_element_stiffness(self, L):
-        # รับค่า L เป็นตัวเลขแล้ว คำนวณได้ไม่ Error ครับ
         E, I = self.E, self.I
         k = np.zeros((4,4))
         factor = E * I / (L**3)
-        
         k[0,0] = 12;  k[0,1] = 6*L;    k[0,2] = -12;  k[0,3] = 6*L
         k[1,0] = 6*L; k[1,1] = 4*L**2; k[1,2] = -6*L; k[1,3] = 2*L**2
         k[2,0] = -12; k[2,1] = -6*L;   k[2,2] = 12;   k[2,3] = -6*L
         k[3,0] = 6*L; k[3,1] = 2*L**2; k[3,2] = -6*L; k[3,3] = 4*L**2
-        
         return k * factor
