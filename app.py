@@ -117,29 +117,68 @@ with tab3:
             st.session_state['loads'].pop()
             st.rerun()
 
+
 # --- RUN ---
 st.markdown("---")
 if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
     if len(st.session_state['supports']) < 2:
         st.error("Error: Unstable Structure. Please assign at least 2 supports.")
     else:
-        # Load Factors & Gravity
         g = 9.81
         calc_loads = []
-        total_applied_force_y = 0.0 # Magnitude sum of downward loads
         
+        # --- 1. PREPARE GEOMETRY DATA FOR CHECKING ---
+        # สร้างพิกัดสะสมของแต่ละ Span เพื่อแปลง Local -> Global
+        spans = st.session_state['spans']
+        cum_spans = [0.0] + list(np.cumsum(spans))
+        total_beam_length = cum_spans[-1]
+        
+        # ตัวแปรสำหรับเช็คสมดุล
+        check_applied_force_y = 0.0 
+        
+        # --- 2. PROCESS LOADS (WITH CLIPPING LOGIC) ---
         for l in st.session_state['loads']:
             fac = dl_factor if l['case']=='DL' else ll_factor
-            factored_mag = l['mag'] * fac * g # Convert kg -> N
+            factored_mag = l['mag'] * fac * g # Unit: N or N/m
             
+            # ส่งค่าดิบให้ Solver (Solver จัดการตัดส่วนเกินเอง)
             new_l = l.copy()
             new_l['mag'] = factored_mag
             calc_loads.append(new_l)
             
-            # Sum Applied Loads (Magnitude) for check
-            if l['type'] == 'P': total_applied_force_y += factored_mag
-            if l['type'] == 'U': total_applied_force_y += factored_mag * l['dist']
+            # --- INTELLIGENT SUMMATION FOR EQUILIBRIUM CHECK ---
+            # ต้องแปลงเป็น Global X และตัดส่วนที่เกินคานทิ้ง (Clipping)
+            span_idx = int(l.get('span_index', 0))
+            if span_idx < len(spans):
+                start_node_x = cum_spans[span_idx]
+                local_x = float(l['x'])
+                
+                # Global Position
+                global_start = start_node_x + local_x
+                
+                if l['type'] == 'P':
+                    # นับเฉพาะถ้าจุดที่ลงแรง อยู่ในความยาวคาน (เผื่อ User ใส่ x=100m)
+                    if 0 <= global_start <= total_beam_length + 1e-4:
+                        check_applied_force_y += factored_mag
+                        
+                elif l['type'] == 'U':
+                    dist = float(l['dist'])
+                    global_end = global_start + dist
+                    
+                    # Logic ตัดแรงส่วนเกิน (Clipping)
+                    # หาช่วงที่ทับซ้อนกับตัวคานจริงๆ (Intersection)
+                    overlap_start = max(0.0, global_start)
+                    overlap_end = min(total_beam_length, global_end)
+                    
+                    if overlap_end > overlap_start:
+                        effective_len = overlap_end - overlap_start
+                        check_applied_force_y += factored_mag * effective_len
+                        
+                        # แจ้งเตือนถ้าแรงโดนตัด (Optional Debug)
+                        if effective_len < dist - 1e-4:
+                            st.toast(f"⚠️ Load on Span {span_idx+1} was clipped by {dist-effective_len:.2f}m (Exceeds beam)", icon="✂️")
 
+        # --- 3. SOLVE ---
         solver = BeamSolver(st.session_state['spans'], st.session_state['supports'], calc_loads, E, I, A, G)
         df, r, summ = solver.solve()
         
@@ -177,7 +216,7 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                     with cols[i]:
                         Ry = r[2*i]
                         Mz = r[2*i+1]
-                        total_react_y += Ry # Solver gives reactions as Positive Upward for downward loads
+                        total_react_y += Ry
                         
                         has_sup = i in sup_map
                         has_force = abs(Ry) > 1.0 or abs(Mz) > 1.0
@@ -189,25 +228,21 @@ if st.button("🚀 Run Analysis", type="primary", use_container_width=True):
                             elif has_sup: st.write(f"Fy: 0.00 kN")
                             if abs(Mz) > 0.1: st.write(f"Mz: **{Mz/1000:.2f}** kNm")
                 
-                # --- EQUILIBRIUM CHECK (CORRECTED LOGIC) ---
+                # --- EQUILIBRIUM CHECK (FINALIZED) ---
                 st.markdown("---")
                 eq_col1, eq_col2 = st.columns(2)
                 
-                # Logic Fix: Reaction (Up) - Load (Down) should be ~0
-                # total_react_y from Solver is (+), total_applied_force_y we summed as magnitude (+)
-                err_val = total_react_y - total_applied_force_y 
+                # Check Difference
+                err_val = total_react_y - check_applied_force_y
                 
-                eq_col1.write(f"Total Applied Load (Fy): **{total_applied_force_y/1000:.2f} kN** (Down)")
+                eq_col1.write(f"Total Applied Load (on Beam): **{check_applied_force_y/1000:.2f} kN** (Down)")
                 eq_col2.write(f"Total Reaction (Fy): **{total_react_y/1000:.2f} kN** (Up)")
                 
-                # Tolerance check (10 Newtons)
-                if abs(err_val) < 10.0:
+                # Tolerance check (Allows small float errors)
+                if abs(err_val) < 10.0: # < 1 kg error
                     st.success(f"✅ Equilibrium Check Passed! (Diff: {err_val:.2f} N)")
                 else:
-                    # Calculate % Error for context
-                    denom = max(abs(total_applied_force_y), 1.0)
-                    err_pct = (abs(err_val) / denom) * 100
-                    st.error(f"❌ Equilibrium Error: {err_val:.2f} N ({err_pct:.2f}%). Model unstable or Check Logic Mismatch.")
+                    st.error(f"❌ Equilibrium Error: {err_val:.2f} N. Please check load positions vs beam length.")
 
                 st.markdown("---")
                 design_view.render_result_tables(df, r, st.session_state['spans'])
