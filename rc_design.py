@@ -1,133 +1,303 @@
 import numpy as np
+
 import math
 
-def get_rebar_area(size_str):
-    """Return area (cm2) based on standard Thai sizes"""
-    db_map = {
-        'RB6': 0.28, 'RB9': 0.64,
-        'DB12': 1.13, 'DB16': 2.01, 'DB20': 3.14, 'DB25': 4.91, 'DB28': 6.16
-    }
-    return db_map.get(size_str, 2.01)
+import re
 
-def calculate_flexure_sdm(Mu_kgm, section_name, b, h, cover, params):
-    """
-    Strength Design Method (SDM) Calculation with detailed logging.
-    """
-    logs = []
-    logs.append(f"<b>--- Design for {section_name} ---</b>")
-    
-    # 1. Constants
-    phi = 0.90
-    fc = params['fc']
-    fy = params['fy']
-    Mu = abs(Mu_kgm) * 100 # Convert kg-m -> kg-cm
-    
-    logs.append(f"Mu = {Mu_kgm:.2f} kg-m")
-    logs.append(f"Section {b}x{h} cm, fc'={fc} ksc, fy={fy} ksc")
 
-    # 2. Effective Depth (d)
-    # Estimate: cover + stirrup(0.9) + half_bar(1.0) approx 4-5 cm
-    d_est = h - cover - 2.0 
-    logs.append(f"Effective depth (d) ≈ {d_est:.2f} cm")
-    
-    if Mu <= 1e-3:
-        return {'Type': section_name, 'Mu': 0, 'Bars': "Min Steel", 'Status': 'OK', 'Log': logs + ["Moment is negligible."]}
 
-    # 3. Calculate Rn
-    # Mn_req = Mu / phi
-    Mn_req = Mu / phi
-    Rn = Mn_req / (b * d_est**2)
-    logs.append(f"Required Mn = {Mn_req:,.2f} kg-cm")
-    logs.append(f"Rn = {Rn:.2f} ksc")
+def safe_float(val, default=0.0):
+
+    try:
+
+        return float(val)
+
+    except (ValueError, TypeError):
+
+        return default
+
+
+
+def parse_bars(bar_str):
+
+    try:
+
+        if not bar_str or "Over" in str(bar_str) or "Too" in str(bar_str): return None
+
+        match = re.search(r'(\d+)-DB(\d+)', str(bar_str))
+
+        if match:
+
+            return int(match.group(1)), int(match.group(2))
+
+    except:
+
+        pass
+
+    return None
+
+
+
+def calculate_flexure_sdm(Mu, type_str, b_in, h_in, cv_in, params):
+
+    # 🔴 Convert inputs to float IMMEDIATELY
+
+    fc = safe_float(params['fc'])
+
+    fy = safe_float(params['fy'])
+
+    b = safe_float(b_in)
+
+    h = safe_float(h_in)
+
+    cv = safe_float(cv_in)
+
+    d = h - cv
+
+    Mu = safe_float(Mu)
+
+    db_select = int(params['db_main'])
+
+
+
+    phi_b = 0.90
+
+    beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*(fc-280)/70)
+
     
-    # 4. Check Rho Required
-    # rho = (1/m) * (1 - sqrt(1 - 2*m*Rn/fy))
-    beta1 = 0.85 if fc <= 280 else max(0.65, 0.85 - 0.05*((fc-280)/70))
-    m = fy / (0.85 * fc)
+
+    is_metric = 'Metric' in params['unit']
+
     
-    term = 1 - (2 * m * Rn / fy)
-    if term < 0:
-        logs.append(f"<span style='color:red'>Error: Section too small (Rn too high). Increase Depth.</span>")
-        return {'Type': section_name, 'Mu': Mu_kgm, 'Bars': "SIZE ERR", 'Status': 'Fail', 'Log': logs}
+
+    if is_metric:
+
+        M_design = abs(Mu) * 100 
+
+        fc_c, fy_c = fc, fy
+
+        b_c, d_c = b, d
+
+        rho_min = max(14/fy_c, 0.25*np.sqrt(fc_c)/fy_c) 
+
+    else: 
+
+        M_design = abs(Mu) * 1e6 
+
+        fc_c, fy_c = fc, fy
+
+        b_c, d_c = b*10, d*10
+
+        rho_min = max(1.4/fy_c, 0.25*np.sqrt(fc_c)/fy_c)
+
+
+
+    bal_const = 6120 if is_metric else 6000
+
+    try:
+
+        rho_bal = 0.85 * beta1 * (fc_c/fy_c) * (bal_const/(bal_const+fy_c))
+
+    except: rho_bal = 0.02
+
         
-    rho_req = (1/m) * (1 - math.sqrt(term))
-    logs.append(f"Rho required = {rho_req:.5f}")
-    
-    # 5. Check Limits (Rho_min, Rho_max)
-    rho_min = max(14/fy, 0.25*math.sqrt(fc)/fy)
-    rho_bal = (0.85 * beta1 * fc / fy) * (6120 / (6120 + fy))
-    rho_max = 0.75 * rho_bal
-    
-    logs.append(f"Rho min = {rho_min:.5f}, Rho max = {rho_max:.5f}")
-    
-    if rho_req > rho_max:
-        logs.append("<span style='color:red'>Fail: Rho > Rho_max (Brittle Failure)</span>")
-        status = "Over Reinforced"
-    else:
-        status = "OK"
 
-    # 6. Area of Steel
-    rho_design = max(rho_req, rho_min)
-    As_req = rho_design * b * d_est
-    logs.append(f"As required = {As_req:.2f} cm2")
+    rho_max = 0.75 * rho_bal 
+
+
+
+    rho = 999
+
+    Rn = 0
+
+    try:
+
+        Rn = M_design / (phi_b * b_c * d_c**2)
+
+        term = 1 - 2*Rn/(0.85*fc_c)
+
+        if term >= 0:
+
+            rho = (0.85 * fc_c / fy_c) * (1 - np.sqrt(term))
+
+    except: pass
+
+        
+
+    As_calc = rho * b_c * d_c
+
+    As_min = rho_min * b_c * d_c
+
     
-    # 7. Bar Selection
-    bar_size = params['main_bar']
-    area_one = get_rebar_area(bar_size)
-    num_bars = math.ceil(As_req / area_one)
-    num_bars = max(num_bars, 2) # Minimum 2 bars
+
+    status = "✅ OK"
+
+    control_As = As_calc
+
+    note = "(Calculated)"
+
     
-    As_prov = num_bars * area_one
-    logs.append(f"Selected: <b>{num_bars}-{bar_size}</b> (As={As_prov:.2f} cm2)")
+
+    if rho == 999 or rho > rho_max:
+
+        status = "❌ Over Reinforced"
+
+        note = "(Section too small)"
+
+        control_As = As_calc
+
+    elif rho < rho_min:
+
+        control_As = As_min
+
+        status = "⚠️ Min Steel"
+
+        note = "(Min Req)"
+
+
+
+    # Bar Selection
+
+    select_str = ""
+
+    As_provided = 0
+
+    if "Over" not in status:
+
+        unit_area = 3.1416 * (db_select/10)**2 / 4 if is_metric else 3.1416 * db_select**2 / 4
+
+        try:
+
+            num = math.ceil(control_As / unit_area)
+
+        except: num = 0
+
+        
+
+        select_str = f"{int(num)}-DB{db_select}"
+
+        As_provided = num * unit_area
+
+            
+
+    return_As = control_As if is_metric else control_As/100
+
+    u_len = "cm" if is_metric else "mm"
+
+    u_area = "cm²" if is_metric else "mm²"
+
     
-    return {
-        'Type': section_name,
-        'Mu': Mu_kgm,
-        'Bars': f"{num_bars}-{bar_size}",
-        'Status': status,
-        'Log': logs
+
+    # 🔴 FIX: Using safe casted variables (b, h, d) in f-string to prevent crash
+
+    calc_log = [
+
+        f"**Design Parameters ({type_str})**",
+
+        f"- Section: {b:.1f}x{h:.1f} {u_len}, d={d:.1f} {u_len}",
+
+        f"- $M_u = {abs(Mu):.2f}$",
+
+        f"---",
+
+        f"**Checks**",
+
+        f"- $\\rho_{{req}} = {rho:.4f}$",
+
+        f"- $\\rho_{{max}} = {rho_max:.4f}$",
+
+        f"---",
+
+        f"**Steel Area**",
+
+        f"- $A_{{s,req}} = {control_As:.2f}$ {u_area} {note}",
+
+        f"- Use: **{select_str}**"
+
+    ]
+
+
+
+    return { 
+
+        "Type": type_str, "Mu": abs(Mu), "As_req": return_As, 
+
+        "Status": status, "Bars": select_str, "Log": calc_log 
+
     }
 
-def calculate_shear_capacity(Vu_kg, b, h, cover, params):
-    """Design Stirrups"""
-    logs = []
-    logs.append(f"Vu = {Vu_kg:.2f} kg")
-    
-    phi = 0.85
-    fc = params['fc']
-    fy = 2400 # Assume SR24 for stirrups
-    d = h - cover - 2.0
-    
-    Vc = 0.53 * math.sqrt(fc) * b * d
-    phiVc = phi * Vc
-    logs.append(f"Capacity of Concrete (phi*Vc) = {phiVc:.2f} kg")
-    
-    stirrup_info = ""
-    
-    if Vu_kg <= phiVc / 2:
-        stirrup_info = "Theoretically None (Use Min)"
-        logs.append("Vu < 0.5*phiVc -> No shear steel required.")
-    elif Vu_kg <= phiVc:
-        stirrup_info = "Min Stirrups RB6 @ 20"
-        logs.append("Vu < phiVc -> Use minimum stirrups.")
-    else:
-        # Calculate Vs
-        Vs_req = (Vu_kg - phiVc) / phi
-        logs.append(f"Vs Required = {Vs_req:.2f} kg")
-        
-        # Check Section Size
-        if Vs_req > 2.1 * math.sqrt(fc) * b * d:
-             stirrup_info = "Section Too Small!"
-             logs.append("Error: Vs too high, increase concrete size.")
-        else:
-             # Spacing for RB6 (2 legs) -> Av = 0.56 cm2
-             Av = 0.56
-             s_calc = Av * fy * d / Vs_req
-             s_max = d/2
-             s_final = min(s_calc, s_max, 30) # Max 30 cm
-             # Round to nearest 2.5 cm
-             s_final = math.floor(s_final / 2.5) * 2.5
-             stirrup_info = f"RB6 @ {s_final:.1f} cm"
-             logs.append(f"Calculated spacing = {s_calc:.2f} cm -> Use {stirrup_info}")
 
-    return stirrup_info, logs
+
+def calculate_shear_capacity(Vu, b_in, h_in, cv_in, params):
+
+    # 🔴 Convert inputs
+
+    fc = safe_float(params['fc'])
+
+    fy_stir = safe_float(params['fys'])
+
+    b = safe_float(b_in)
+
+    h = safe_float(h_in)
+
+    d = h - safe_float(cv_in)
+
+    db_stir = int(params['db_stirrup'])
+
+    step = safe_float(params.get('s_step', 2.5))
+
+    vu_val = abs(safe_float(Vu))
+
+    
+
+    spacing_txt = ""
+
+    calc_log = []
+
+    
+
+    is_metric = 'Metric' in params['unit']
+
+    
+
+    if is_metric:
+
+        vc = 0.53 * np.sqrt(fc) * b * d 
+
+        phi_vc = 0.85 * vc 
+
+        
+
+        # 🔴 FIX: Format safe floats
+
+        calc_log.append(f"**Shear Check** ($d={d:.1f}$ cm)")
+
+        calc_log.append(f"- $V_u = {vu_val:.2f}$ kg")
+
+        calc_log.append(f"- $\phi V_c = {phi_vc:.2f}$ kg")
+
+        
+
+        av = 2 * (3.1416 * (db_stir/10)**2 / 4)
+
+        
+
+        if vu_val > phi_vc:
+
+            vs = (vu_val - phi_vc) / 0.85
+
+            try:
+
+                s_req = (av * fy_stir * d) / vs
+
+            except: s_req = 1.0
+
+            
+
+            s_max = d/2
+
+            s_use = min(s_req, s_max, 30.0)
+
+            try:
+
+                s_use = math.floor(s_use / step) * step
