@@ -8,31 +8,18 @@ import design_view
 from solver import BeamSolver
 import rc_design
 
-# --- Page Config ---
 st.set_page_config(page_title="Professional Beam Studio", layout="wide", page_icon="🏗️")
 
-# --- CSS Styling (Optional) ---
-st.markdown("""
-<style>
-    .stButton>button { width: 100%; border-radius: 5px; font-weight: bold; }
-    .reportview-container .main .block-container { max-width: 1200px; }
-</style>
-""", unsafe_allow_html=True)
-
 # ==========================================
-# 1. INPUT SECTION (via input_handler)
+# 1. INPUT SECTION
 # ==========================================
-# 1.1 Sidebar Config
 params = input_handler.render_sidebar()
 
 st.title("🏗️ Professional Beam Studio")
-st.caption("Advanced Structural Analysis & RC Design System")
+st.caption(f"Section: {params['b']*100:.0f} x {params['h']*100:.0f} cm | I = {params['I']:.2e} m⁴")
 st.markdown("---")
 
-# 1.2 Geometry Inputs
 n_spans, spans, sup_df, is_stable = input_handler.render_model_inputs(params)
-
-# 1.3 Load Inputs
 st.markdown("---")
 loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
 
@@ -40,39 +27,35 @@ loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
 # 2. ANALYSIS LOGIC
 # ==========================================
 st.markdown("### 🚀 Analysis Control")
-col_act, col_info = st.columns([1, 4])
-
-if col_act.button("RUN ANALYSIS", type="primary"):
+if st.button("RUN ANALYSIS", type="primary"):
     
-    # Validation
     if not is_stable:
-        st.error("🚨 Structure is Unstable! Please check supports.")
+        st.error("🚨 Structure is Unstable!")
         st.stop()
     
     if loads_df is None or loads_df.empty:
-        st.warning("⚠️ Please add at least one load.")
+        st.warning("⚠️ Please add loads.")
         st.stop()
 
-    # --- Step A: Load Factoring (DL/LL) ---
-    # เตรียมข้อมูลโหลดส่งให้ Solver โดยคูณ Load Factors
+    # --- Load Factoring ---
     raw_loads = loads_df.to_dict('records')
     factored_loads = []
     
     for l in raw_loads:
         factor = params['gamma_dead'] if l['case'] == 'DL' else params['gamma_live']
         f_load = l.copy()
-        f_load['mag'] = l['mag'] * factor # Apply Factor Here
+        f_load['mag'] = l['mag'] * factor
         factored_loads.append(f_load)
 
-    # --- Step B: Solve Structure ---
+    # --- Solver ---
     try:
-        with st.spinner("Solving Stiffness Matrix..."):
+        with st.spinner("Solving Structure..."):
             solver = BeamSolver(
                 spans=spans,
                 supports_input=sup_df.to_dict('records'),
                 loads_input=factored_loads,
                 E=params['E'],
-                I_custom=params['I']
+                I_custom=params['I'] # Uses Calculated I from Sidebar
             )
             
             df_res, reactions, status = solver.solve()
@@ -80,12 +63,10 @@ if col_act.button("RUN ANALYSIS", type="primary"):
             if df_res.empty:
                 st.error(f"Analysis Failed: {status.get('error')}")
             else:
-                # Save to Session State
                 st.session_state.results = {
                     'df': df_res,
                     'reac': reactions,
-                    'loads': raw_loads,
-                    'factored_loads': factored_loads
+                    'loads': raw_loads
                 }
                 st.success("Analysis Complete!")
                 
@@ -93,48 +74,55 @@ if col_act.button("RUN ANALYSIS", type="primary"):
         st.error(f"System Error: {str(e)}")
 
 # ==========================================
-# 3. DISPLAY RESULTS (via design_view)
+# 3. DISPLAY RESULTS
 # ==========================================
 if 'results' in st.session_state:
     res = st.session_state.results
     
-    st.markdown("---")
+    # 3.1 Deflection Check (Serviceability) - [IMPROVEMENT #3]
+    st.markdown("#### 📏 Serviceability Check (Deflection)")
+    cum_dist = [0] + list(np.cumsum(spans))
     
-    # 3.1 Reaction Table
-    st.subheader("📌 Support Reactions (Factored)")
-    
-    reac_data = []
-    for node_idx, val in res['reac'].items():
-        # Find support type name
-        s_type = "Support"
-        match = sup_df[sup_df['id'] == node_idx]
-        if not match.empty: s_type = match.iloc[0]['type']
+    cols_def = st.columns(n_spans)
+    for i in range(n_spans):
+        # Find Max Deflection in Span
+        mask = (res['df']['x'] >= cum_dist[i]) & (res['df']['x'] <= cum_dist[i+1])
+        span_data = res['df'][mask]
+        max_def_mm = span_data['deflection'].abs().max() * 1000 # convert to mm
         
-        # Unit conversion
-        val_show = val / 1000 if params['u_force'] == 'kN' else val
+        # Limit L/240
+        limit = (spans[i] * 1000) / 240
         
-        reac_data.append({
-            "Node": node_idx + 1,
-            "Type": s_type,
-            f"Ry ({params['u_force']})": f"{val_show:.2f}"
-        })
+        status_def = "✅ PASS" if max_def_mm <= limit else "❌ FAIL"
+        cols_def[i].metric(
+            label=f"Span {i+1} (Limit L/240 = {limit:.1f}mm)",
+            value=f"{max_def_mm:.2f} mm",
+            delta=status_def,
+            delta_color="normal" if "PASS" in status_def else "inverse"
+        )
     
-    st.table(pd.DataFrame(reac_data).set_index("Node"))
+    st.divider()
 
-    # 3.2 Diagrams (SFD, BMD, Deflection)
+    # 3.2 Diagrams
     design_view.draw_interactive_diagrams(
         df=res['df'],
         reac=res['reac'],
         spans=spans,
         sup_df=sup_df,
-        loads=res['loads'], # Show Raw loads in diagram annotation
+        loads=res['loads'],
         dl_factor=params['gamma_dead'],
         ll_factor=params['gamma_live']
     )
+    
+    # 3.3 Reaction Table
+    st.subheader("📌 Reactions")
+    reac_data = []
+    for node_idx, val in res['reac'].items():
+        val_show = val / 1000 if params['u_force'] == 'kN' else val
+        reac_data.append({"Node": node_idx+1, f"Ry ({params['u_force']})": f"{val_show:.2f}"})
+    st.table(pd.DataFrame(reac_data).set_index("Node").T)
 
-    # ==========================================
-    # 4. RC DESIGN MODULE (via rc_design)
-    # ==========================================
+    # 3.4 RC Design (Detailed) - [IMPROVEMENT #4]
     st.markdown("---")
     st.header("🏗️ Reinforced Concrete Design")
     
@@ -144,57 +132,37 @@ if 'results' in st.session_state:
         fy = c2.number_input("fy (MPa)", value=400.0)
         cover = c3.number_input("Cover (mm)", value=30.0)
         db = c4.selectbox("Main Bar (mm)", [12, 16, 20, 25, 28], index=2)
-        
-        c5, c6 = st.columns(2)
-        b_section = c5.number_input("Width b (cm)", value=25.0) / 100 # m
-        h_section = c6.number_input("Depth h (cm)", value=50.0) / 100 # m
 
     # Loop Design per Span
     df = res['df']
-    cum_dist = [0] + list(np.cumsum(spans))
     
     for i in range(n_spans):
-        st.markdown(f"#### Span {i+1} Design")
-        
-        # Filter forces in this span
+        st.markdown(f"#### Span {i+1}")
         mask = (df['x'] >= cum_dist[i]) & (df['x'] <= cum_dist[i+1])
         span_data = df[mask]
         
-        if span_data.empty: continue
+        m_max_pos = span_data['moment'].max() / 1000
+        m_max_neg = span_data['moment'].min() / 1000
+        v_max_abs = span_data['shear'].abs().max() / 1000
         
-        # Get Envelope Forces (Unit: N, Nm)
-        m_max_pos = span_data['moment'].max() # +Moment (Bottom Steel)
-        m_max_neg = span_data['moment'].min() # -Moment (Top Steel)
-        v_max_abs = span_data['shear'].abs().max()
-        
-        # Convert to kN, kNm for Design Function
+        # Call Improved RC Design Function
         design_res = rc_design.design_span_expert(
-            m_pos=m_max_pos / 1000,
-            m_neg=m_max_neg / 1000,
-            v_u=v_max_abs / 1000,
-            b=b_section, h=h_section,
+            m_pos=m_max_pos, m_neg=m_max_neg, v_u=v_max_abs,
+            b=params['b'], h=params['h'], # Use Sidebar Params
             fc=fc, fy=fy, cover=cover, db=db
         )
         
-        # Display Card
         with st.container(border=True):
-            col_res1, col_res2, col_res3 = st.columns([1, 1, 1])
-            
-            with col_res1:
-                st.caption("Positive Moment (Mid-Span)")
-                st.markdown(f"**Mu+ :** {m_max_pos/1000:.2f} kNm")
-                st.success(f"bot: **{design_res['pos']['n']} - DB{db}**")
-            
-            with col_res2:
-                st.caption("Negative Moment (Support)")
-                st.markdown(f"**Mu- :** {m_max_neg/1000:.2f} kNm")
-                st.error(f"top: **{design_res['neg']['n']} - DB{db}**")
-                
-            with col_res3:
-                st.caption("Shear Check")
-                st.markdown(f"**Vu :** {v_max_abs/1000:.2f} kN")
-                status = design_res['shear_status']
-                if "OK" in status:
-                    st.info(f"Shear: {status}")
-                else:
-                    st.warning(f"Shear: {status}")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.write("**Bottom Steel (+M)**")
+                st.info(f"{design_res['pos']['n']} - DB{db}")
+                st.caption(design_res['pos']['note']) # Spacing Check
+            with c2:
+                st.write("**Top Steel (-M)**")
+                st.warning(f"{design_res['neg']['n']} - DB{db}")
+                st.caption(design_res['neg']['note']) # Spacing Check
+            with c3:
+                st.write("**Stirrups (Shear)**")
+                st.success(design_res['shear_stirrups'])
+                st.caption(f"Status: {design_res['shear_status']}")
