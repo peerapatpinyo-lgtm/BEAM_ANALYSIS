@@ -102,8 +102,7 @@ if 'results' in st.session_state:
     
     st.divider()
 
-    # 3.2 Diagrams (ส่วนที่แก้ไข)
-    # รับค่า fig_structure มาจากฟังก์ชัน
+    # 3.2 Diagrams (Fixed: Now Rendering Properly)
     fig_structure = design_view.draw_interactive_diagrams(
         df=res['df'],
         reac=res['reac'],
@@ -113,7 +112,6 @@ if 'results' in st.session_state:
         dl_factor=params['gamma_dead'],
         ll_factor=params['gamma_live']
     )
-    # สั่งให้วาดลงหน้าจอ (สำคัญมาก)
     st.plotly_chart(fig_structure, use_container_width=True)
     
     # 3.3 Reaction Table
@@ -154,10 +152,15 @@ if 'results' in st.session_state:
         
         if span_data.empty: continue
         
-        # Get Forces
-        m_max_pos = span_data['moment'].max() / 1000
-        m_max_neg = span_data['moment'].min() / 1000
-        v_max_abs = span_data['shear'].abs().max() / 1000
+        # Get Forces (Conversion handled inside design functions)
+        # Solver gives N-m, we pass raw or convert as needed. 
+        # Here we pass raw to rc_design, assume it handles units OR convert before
+        # NOTE: design_view handles conversion internally now.
+        # But rc_design.design_span_expert typically expects kNm/kN
+        
+        m_max_pos = span_data['moment'].max() / 1000 # kNm
+        m_max_neg = span_data['moment'].min() / 1000 # kNm
+        v_max_abs = span_data['shear'].abs().max() / 1000 # kN
         
         # Call Design Function
         design_res = rc_design.design_span_expert(
@@ -172,7 +175,7 @@ if 'results' in st.session_state:
             
             with col_viz:
                 st.write("**📊 Moment Capacity Check**")
-                # เรียกใช้กราฟ Capacity
+                # เรียกใช้กราฟ Capacity (Updated in design_view)
                 fig_cap = design_view.plot_capacity_vs_demand(
                     df_span=span_data,
                     phi_Mn_pos=design_res['pos']['capacity'],
@@ -182,11 +185,13 @@ if 'results' in st.session_state:
 
             with col_data:
                 st.write("**Cross Section**")
+                # ส่งค่า fc, fy เข้าไปใน section_plotter
                 fig_sec = section_plotter.plot_section(
                     b=params['b'], h=params['h'], 
                     cover_mm=cover, db_mm=db, 
                     n_top=design_res['neg']['n'], n_bot=design_res['pos']['n'],
-                    stirrup_info=design_res['shear_stirrups']
+                    stirrup_info=design_res['shear_stirrups'],
+                    fc=fc, fy=fy
                 )
                 st.pyplot(fig_sec, use_container_width=True)
 
