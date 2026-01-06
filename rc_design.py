@@ -4,53 +4,52 @@ def calculate_advanced_rc(mu_pos, mu_neg, vu, b_m, h_m, fc, fy):
     phi_m, phi_v = 0.90, 0.75
     b, h = b_m * 1000, h_m * 1000  # mm
     d = h - 50  # mm
-    Es = 200000 # MPa
     report = []
+    optimize_msg = ""
 
-    def calc_as(mu_knm, label):
-        if abs(mu_knm) < 0.1: return 0, 0, 0, f"{label}: Minimal"
+    def calc_as(mu_knm):
+        if abs(mu_knm) < 0.1: return 0, 0, "OK"
         mu_n_mm = (abs(mu_knm) * 1e6) / phi_m
         rn = mu_n_mm / (b * d**2)
         m = fy / (0.85 * fc)
         
-        beta1 = max(0.65, 0.85 - 0.05 * (fc - 28) / 7) if fc > 28 else 0.85
-        rho_b = (0.85 * fc * beta1 / fy) * (611 / (611 + fy))
-        rho_max = 0.75 * rho_b
+        # Check for Section Size Optimization
+        # rho_ideal ควรอยู่ช่วง 0.5% - 1.2% สำหรับหน้าตัดที่ประหยัดและปลอดภัย
+        rho = (1/m) * (1 - np.sqrt(max(0, 1 - (2 * m * rn / fy))))
+        rho_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy)
+        rho_final = max(rho, rho_min)
         
-        check_val = 1 - (2 * m * rn / fy)
-        if check_val < 0: return 0, 0, 0, f"❌ {label}: Section too small!"
+        status = "OK"
+        if rn > (0.25 * fc): status = "TOO_SMALL"
+        elif rho_final < rho_min: status = "TOO_LARGE"
         
-        rho = (1/m) * (1 - np.sqrt(check_val))
-        rho_final = max(rho, max(0.25 * np.sqrt(fc) / fy, 1.4 / fy))
-        
-        # Serviceability: Crack Width Estimation (z-factor method)
-        fs = 0.6 * fy
-        dc = 50 # Cover
-        A = (2 * dc * b) / 1 # Effective area per bar (simplified)
-        z = fs * (dc * A)**(1/3)
-        crack_status = "✅ Crack Control: OK" if z < 30000 else "⚠️ Crack Risk: High"
-        
-        return rho_final * b * d, rho_final, z, f"✅ {label}: OK | {crack_status}"
+        return rho_final * b * d, rho_final, status
 
-    as_bot, rho_bot, z_bot, msg_bot = calc_as(mu_pos, "Bottom")
-    as_top, rho_top, z_top, msg_top = calc_as(mu_neg, "Top")
+    as_bot, rho_bot, stat_bot = calc_as(mu_pos)
+    as_top, rho_top, stat_top = calc_as(mu_neg)
 
-    # Shear & Stirrups
+    # --- Automatic Section Optimization Logic ---
+    if stat_bot == "TOO_SMALL" or stat_top == "TOO_SMALL":
+        new_h = np.sqrt((max(abs(mu_pos), abs(mu_neg)) * 1e6 / phi_m) / (0.15 * fc * b)) + 50
+        optimize_msg = f"⚠️ **หน้าตัดเล็กเกินไป:** แนะนำให้เพิ่มความหนา (h) เป็นอย่างน้อย {int(np.ceil(new_h/50)*50)} mm"
+    elif rho_bot < 0.003 and rho_top < 0.003:
+        optimize_msg = "💡 **หน้าตัดใหญ่เกินความจำเป็น:** สามารถลดขนาดหน้าตัดเพื่อประหยัดงบประมาณได้"
+    else:
+        optimize_msg = "✅ **หน้าตัดมีความเหมาะสม:** ปริมาณเหล็กเสริมอยู่ในช่วงที่ประหยัด (Economical Design)"
+
+    # Shear
     vc = (1/6) * np.sqrt(fc) * b * d / 1000
     vs_req = (vu / phi_v) - vc if vu > (phi_v * vc * 0.5) else 0
     spacing = min(200, d/2)
     if vs_req > 0:
         spacing = min((127 * fy * d) / (vs_req * 1000), d/2, 600)
 
-    # World Class Addition: Long-term Multiplier (λ)
-    # 5 years or more (Time-dependent factor ξ = 2.0)
-    rho_prime = 0 # No compression steel in simple model
-    lambda_inf = 2.0 / (1 + 50 * rho_prime)
-
-    report.append(f"**Structural Integrity Report**")
-    report.append(f"- {msg_bot}")
-    report.append(f"- {msg_top}")
-    report.append(f"- **Durability:** Estimated z-factor = {max(z_bot, z_top):.0f} (Limit < 30,000 N/mm)")
-    report.append(f"- **Serviceability:** Long-term Deflection Multiplier (λ) = {lambda_inf:.2f}")
+    report.append(f"**Section Analysis:**")
+    report.append(f"- Bottom Steel: {as_bot:.0f} mm² (ρ={rho_bot:.4f})")
+    report.append(f"- Top Steel: {as_top:.0f} mm² (ρ={rho_top:.4f})")
+    report.append(f"- Stirrup: RB9 @ {int(spacing)} mm")
     
-    return {'as_top': as_top, 'as_bot': as_bot, 'spacing': spacing, 'report': report}
+    return {
+        'as_top': as_top, 'as_bot': as_bot, 'spacing': spacing,
+        'report': report, 'optimize_msg': optimize_msg
+    }
