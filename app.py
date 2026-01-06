@@ -130,3 +130,38 @@ if st.button("🚀 EXECUTE ANALYSIS", type="primary", use_container_width=True):
         rc3.info(f"Suggested Steel:\n\n**{max(2, int(rc_res['as_mm2']/314.16+1))}xDB20**")
     else:
         st.error("Check your supports and loads. The beam might be unstable.")
+
+# --- ส่วนท้ายของ app.py ในปุ่ม EXECUTE ANALYSIS ---
+    if not df.empty:
+        # ... (Diagrams & Reactions code) ...
+
+        st.divider()
+        st.header("📋 Detailed Design Calculation")
+        
+        # ค้นหาค่า Mu+, Mu- และ Vu สูงสุด
+        mu_pos = df['moment'].max() / 1000
+        mu_neg = df['moment'].min() / 1000
+        vu_max = df['shear'].abs().max() / 1000
+
+        # คำนวณผ่าน Advanced Engine
+        rc = rc_design.calculate_advanced_rc(mu_pos, mu_neg, vu_max, b, h, fc)
+
+        # การแสดงผลแบบ Report Card
+        col_rep, col_viz = st.columns([1.5, 1])
+        
+        with col_rep:
+            st.subheader("Calculation Note")
+            for line in rc['report']:
+                st.write(line)
+        
+        with col_viz:
+            st.subheader("Reinforcement Summary")
+            # กล่องสรุปเหล็กเสริม
+            st.success(f"**Bottom Steel (Mid-span):**\n\n**{max(2, int(rc['as_bot']/314+1))} x DB20**")
+            st.error(f"**Top Steel (Supports):**\n\n**{max(2, int(rc['as_top']/314+1))} x DB20**")
+            
+            stirrup_text = f"RB9 @ {int(rc['spacing'])} mm" if rc['spacing'] > 0 else "RB9 @ 200 mm (Min)"
+            st.warning(f"**Stirrups:**\n\n**{stirrup_text}**")
+
+        # เพิ่มรูปหน้าตัดแบบ Real-time (ถ้ามีไฟล์ design_view)
+        # design_view.draw_advanced_section(b, h, rc['as_top'], rc['as_bot'])
