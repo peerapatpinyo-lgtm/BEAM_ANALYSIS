@@ -12,8 +12,8 @@ def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_m
         mu_n = (abs(mu_knm) * 1e6) / phi_m
         k = mu_n / (b * d**2)
         m = fy / (0.85 * fc)
-        
         check_val = 1 - (2 * m * k / fy)
+        
         if check_val < 0: 
             return {"status": "FAIL: OVER-REINFORCED", "n": 0, "as_req": 0, "a": 0, "et": 0, "k": k, "mu_val": mu_knm}
             
