@@ -3,17 +3,17 @@ import pandas as pd
 from solver import BeamSolver
 import design_view
 
-st.set_page_config(page_title="Expert Beam System", layout="wide")
+st.set_page_config(page_title="Advanced Structural Solver", layout="wide")
 
 if 'spans' not in st.session_state: st.session_state.spans = [5.0]
 if 'supports' not in st.session_state: st.session_state.supports = [{'id': 0, 'type': 'Pin'}, {'id': 1, 'type': 'Roller'}]
 if 'loads' not in st.session_state: st.session_state.loads = []
 
-st.sidebar.header("Section & Materials")
+st.sidebar.header("Section Properties")
 fc = st.sidebar.number_input("fc' (MPa)", 25.0)
 fy = st.sidebar.number_input("fy (MPa)", 400.0)
-b = st.sidebar.number_input("b (m)", 0.3)
-h = st.sidebar.number_input("h (m)", 0.5)
+b = st.sidebar.number_input("Width (m)", 0.3)
+h = st.sidebar.number_input("Height (m)", 0.5)
 use_custom_i = st.sidebar.checkbox("Custom I")
 I_val = st.sidebar.number_input("I (m4)", value=(b*h**3)/12, format="%.6e") if use_custom_i else (b*h**3)/12
 
@@ -46,7 +46,7 @@ with st.expander("Add Load", expanded=True):
 
 for i, ld in enumerate(st.session_state.loads):
     cc1, cc2 = st.columns([5, 1])
-    cc1.info(f"#{i+1}: Span {ld['span_index']+1} | {ld['type']} | {ld['mag']/1000} kN")
+    cc1.info(f"#{i+1}: Span {ld['span_index']+1} | {ld['type']} | {ld['mag']/1000} kN/kNm")
     if cc2.button("🗑️", key=f"del_{i}"):
         st.session_state.loads.pop(i); st.rerun()
 
@@ -55,13 +55,12 @@ if st.button("RUN ANALYSIS", type="primary", use_container_width=True):
     df, reac, eq = solver.solve()
     if not df.empty:
         design_view.draw_interactive_diagrams(df, None, st.session_state.spans, st.session_state.supports, st.session_state.loads)
-        st.subheader("Statics Check (Equation Check)")
+        st.subheader("Statics Check")
         k1, k2 = st.columns(2)
         k1.metric("Fy Error (N)", f"{abs(eq['load_fy']-eq['reac_fy']):.4f}")
         k2.metric("M0 Error (Nm)", f"{abs(eq['load_m0']-eq['reac_m0']):.4f}")
         st.subheader("Reactions")
         st.table(reac)
-        
         max_d = df['deflection'].abs().max() * 1000
-        st.subheader("Deflection (Timoshenko)")
+        st.subheader("Deflection (Timoshenko Shape Functions)")
         st.write(f"Max: {max_d:.2f} mm | Limit L/240: {(sum(st.session_state.spans)*1000/240):.2f} mm")
