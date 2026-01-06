@@ -21,7 +21,6 @@ def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
     ))
     
     # 2. Plot +PhiMn (Positive Capacity) - Dashed Green
-    # สร้างเส้น Capacity ตลอดช่วงคาน
     x_range = [df_span['x'].min(), df_span['x'].max()]
     fig.add_trace(go.Scatter(
         x=x_range, 
@@ -32,7 +31,6 @@ def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
     ))
     
     # 3. Plot -PhiMn (Negative Capacity) - Dashed Red
-    # ต้องเป็นค่าลบในกราฟ เพื่อเทียบกับ Moment ลบ
     neg_cap = -abs(phi_Mn_neg)
     fig.add_trace(go.Scatter(
         x=x_range, 
@@ -53,15 +51,9 @@ def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified"
     )
-    
-    # Add Shading for unsafe zones (Optional Logic)
-    # ถ้าเส้น Mu ทะลุเส้น Capacity (Unsafe)
-    
     return fig
 
 def draw_interactive_diagrams(df, reac, spans, sup_df, loads, dl_factor=1.4, ll_factor=1.7):
-    # (โค้ดเดิมส่วนใหญ่... แต่เพื่อความชัวร์ Copy ทั้งก้อนนี้ไปแทนที่ของเดิมครับ)
-    
     # Data Sanitization
     if isinstance(spans, (pd.DataFrame, pd.Series)): spans_val = spans.values.flatten().tolist()
     elif isinstance(spans, list): spans_val = spans
