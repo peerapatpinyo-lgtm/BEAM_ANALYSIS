@@ -27,12 +27,17 @@ def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_m
         et = ((d - c) / c) * 0.003 
         
         n_bars = max(2, int(np.ceil(as_req / (np.pi * (db_main**2) / 4))))
-        return {"n": n_bars, "as_req": as_req, "k": k, "a": a, "et": et, "status": "OK"}
+        return {"n": n_bars, "as_req": as_req, "k": k, "a": a, "et": et, "status": "OK", "mu_val": mu_knm}
 
+    # Shear Calculation
+    vc = (0.17 * np.sqrt(fc) * b * d) / 1000 # Concrete Shear Strength (kN)
+    phi_vc = phi_v * vc
+    vs_req = (vu / phi_v) - vc if vu > (phi_vc * 0.5) else 0
+    s_max = min(d/2, 300)
+    
     return {
         "pos": calc_flexure(mu_pos),
         "neg": calc_flexure(mu_neg),
-        "spacing": int(min(d/2, 300)), 
-        "d": d, "mu_pos": mu_pos, "mu_neg": mu_neg, "vu": vu, 
-        "vc": (0.17 * np.sqrt(fc) * b * d) / 1000
+        "spacing": int(s_max), 
+        "d": d, "vu": vu, "phi_vc": phi_vc
     }
