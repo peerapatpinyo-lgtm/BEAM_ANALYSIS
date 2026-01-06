@@ -4,107 +4,79 @@ import numpy as np
 from solver import BeamSolver
 import design_view
 
-st.set_page_config(page_title="Beam Pro Analysis & Design", layout="wide", page_icon="🏗️")
+st.set_page_config(page_title="Pro Beam Builder", layout="wide")
 
-if 'spans' not in st.session_state: st.session_state['spans'] = [5.0, 5.0]
-if 'supports' not in st.session_state: 
-    st.session_state['supports'] = [{'id': 0, 'type': 'Pin'}, {'id': 1, 'type': 'Roller'}, {'id': 2, 'type': 'Roller'}]
 if 'loads' not in st.session_state: st.session_state['loads'] = []
+if 'spans' not in st.session_state: st.session_state['spans'] = [5.0]
+if 'supports' not in st.session_state: st.session_state['supports'] = [{'id': 0, 'type': 'Pin'}, {'id': 1, 'type': 'Roller'}]
 
-st.sidebar.title("🏗️ Settings")
-st.sidebar.markdown("### 1. Section & Materials")
-fc_prime = st.sidebar.number_input("Concrete Strength (f'c) [MPa]", 20.0, 50.0, 25.0)
-fy = st.sidebar.number_input("Steel Strength (fy) [MPa]", 240.0, 500.0, 400.0)
-E = st.sidebar.number_input("E [Pa]", value=2e11, format="%.2e")
+# Sidebar
+st.sidebar.title("🏗️ Project Materials")
+fc = st.sidebar.number_input("Concrete f'c (MPa)", 20, 40, 25)
+fy = st.sidebar.number_input("Steel fy (MPa)", 240, 500, 400)
+b = st.sidebar.number_input("Beam Width (m)", 0.1, 0.5, 0.20)
+h = st.sidebar.number_input("Beam Depth (m)", 0.1, 1.0, 0.40)
 
-c1, c2 = st.sidebar.columns(2)
-b_in = c1.number_input("Width b [m]", 0.1, 1.0, 0.30)
-h_in = c2.number_input("Depth h [m]", 0.1, 2.0, 0.50)
-I = (b_in * h_in**3) / 12
-A_area = b_in * h_in
+# Tabs
+t1, t2, t3 = st.tabs(["📏 Geometry", "⚖️ Supports", "📥 Loading"])
 
-st.sidebar.markdown("### 2. Load Factors")
-dl_f = st.sidebar.number_input("DL Factor", 1.4)
-ll_f = st.sidebar.number_input("LL Factor", 1.7)
-
-st.title("🏗️ Beam Analysis & Design")
-tab1, tab2, tab3 = st.tabs(["1️⃣ Spans", "2️⃣ Supports", "3️⃣ Loads"])
-
-with tab1:
-    n = st.number_input("Number of Spans", 1, 10, len(st.session_state['spans']))
-    current = st.session_state['spans']
-    if len(current) < n: current.extend([5.0]*(n-len(current)))
-    else: current = current[:n]
+with t1:
+    n_spans = st.number_input("Spans", 1, 10, len(st.session_state['spans']))
+    cols = st.columns(4)
     new_spans = []
-    cols = st.columns(min(n, 4))
-    for i in range(n):
-        new_spans.append(cols[i%4].number_input(f"Span {i+1}", value=float(current[i]), key=f"s_{i}"))
+    for i in range(n_spans):
+        val = st.session_state['spans'][i] if i < len(st.session_state['spans']) else 5.0
+        new_spans.append(cols[i%4].number_input(f"Span {i+1} (m)", 0.5, 20.0, float(val), key=f"sp_{i}"))
     st.session_state['spans'] = new_spans
 
-with tab2:
-    sup_data = [{"Node ID": i+1, "Support Type": "None"} for i in range(len(st.session_state['spans'])+1)]
-    current_sups = {int(s['id']): s['type'] for s in st.session_state['supports']}
-    for d in sup_data: d["Support Type"] = current_sups.get(d["Node ID"]-1, "None")
-    edited = st.data_editor(pd.DataFrame(sup_data), hide_index=True, use_container_width=True)
-    st.session_state['supports'] = [{'id': r['Node ID']-1, 'type': r['Support Type']} for _, r in edited.iterrows() if r['Support Type'] != "None"]
+with t2:
+    sup_df = pd.DataFrame([{"Node": i+1, "Type": "None"} for i in range(len(new_spans)+1)])
+    curr = {int(s['id']): s['type'] for s in st.session_state['supports']}
+    sup_df['Type'] = sup_df['Node'].apply(lambda x: curr.get(x-1, "None"))
+    ed_sup = st.data_editor(sup_df, hide_index=True)
+    st.session_state['supports'] = [{'id': r['Node']-1, 'type': r['Type']} for _, r in ed_sup.iterrows() if r['Type'] != "None"]
 
-with tab3:
-    c1, c2, c3 = st.columns([1,1,2])
-    span_idx = c1.selectbox("Span", range(len(st.session_state['spans'])))
-    l_type = c2.selectbox("Type", ["Point Load (P)", "Uniform Load (U)"])
-    mag = c3.number_input("Mag (kg)", 1000.0)
-    if l_type == "Point Load (P)":
-        x_loc = st.number_input("x (m)", 0.0, float(st.session_state['spans'][span_idx]), 2.5)
-        dist = 0
-    else:
-        x_loc = 0; dist = st.session_state['spans'][span_idx]
-    if st.button("➕ Add"):
-        st.session_state['loads'].append({'span_index': span_idx, 'type': l_type[0], 'mag': mag, 'x': x_loc, 'dist': dist, 'case': 'DL'})
-        st.rerun()
-
-if st.button("🚀 Run Analysis & Design", type="primary", use_container_width=True):
-    g = 9.81
-    valid_loads = []
-    check_force_y = 0
-    for l in st.session_state['loads']:
-        factored = l['mag'] * dl_f * g
-        valid_loads.append({**l, 'mag': factored})
-        check_force_y += factored if l['type'] == 'P' else factored * l['dist']
+with t3:
+    c1, c2, c3, c4 = st.columns([1,1,1,1])
+    s_idx = c1.selectbox("Span", range(len(new_spans)))
+    l_type = c2.selectbox("Type", ["Point (P)", "UDL (U)", "Moment (M)"])
+    l_mag = c3.number_input("Load (kg or kg/m)", 0.0, 100000.0, 1000.0)
+    l_x = c4.number_input("Pos x (m)", 0.0, float(new_spans[s_idx]), 0.0)
+    l_dist = 0.0
+    if "UDL" in l_type:
+        l_dist = st.number_input("Length (m)", 0.0, float(new_spans[s_idx] - l_x), float(new_spans[s_idx] - l_x))
     
-    solver = BeamSolver(st.session_state['spans'], st.session_state['supports'], valid_loads, E, I, A_area, b=b_in, h=h_in)
+    if st.button("➕ Add Load"):
+        st.session_state['loads'].append({'span_index': s_idx, 'type': l_type[0], 'mag': l_mag, 'x': l_x, 'dist': l_dist, 'case': 'DL'})
+        st.rerun()
+    st.dataframe(st.session_state['loads'])
+    if st.button("🗑️ Clear All"): st.session_state['loads'] = []; st.rerun()
+
+# Run
+if st.button("🚀 EXECUTE ANALYSIS & DESIGN", type="primary", use_container_width=True):
+    solver = BeamSolver(st.session_state['spans'], st.session_state['supports'], 
+                        [{**l, 'mag': l['mag']*1.4*9.81} for l in st.session_state['loads']], 
+                        2e11, (b*h**3)/12, b*h, b=b, h=h)
     df, r, summ = solver.solve()
-    rc = solver.design_rc_section(fc_prime, fy)
-    sh = solver.design_shear(fc_prime, fy)
+    
+    # UI Results
+    design_view.draw_interactive_diagrams(df, r, st.session_state['spans'], st.session_state['supports'], st.session_state['loads'], 1.4, 1.7)
+    
+    st.subheader("📊 Engineering Summary")
+    c = st.columns(4)
+    c[0].metric("V_max", f"{summ['V_max']['value']/1000:.1f} kN")
+    c[1].metric("M_pos", f"{summ['M_pos']['value']/1000:.1f} kNm")
+    c[2].metric("M_neg", f"{abs(summ['M_neg']['value'])/1000:.1f} kNm")
+    c[3].metric("Deflection", f"{summ['D_max']['value']*1000:.2f} mm")
 
-    if not df.empty:
-        design_view.draw_interactive_diagrams(df, r, st.session_state['spans'], st.session_state['supports'], valid_loads, dl_f, ll_f)
-        
-        with st.expander("📊 1. Analysis Summary (ULS)", expanded=True):
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Max Shear", f"{summ['V_max']['value']/1000:.2f} kN", f"@ {summ['V_max']['x']:.2f} m")
-            c2.metric("Max Moment (+)", f"{summ['M_pos']['value']/1000:.2f} kNm", f"@ {summ['M_pos']['x']:.2f} m")
-            c3.metric("Max Moment (-)", f"{summ['M_neg']['value']/1000:.2f} kNm", f"@ {summ['M_neg']['x']:.2f} m")
-            c4.metric("Max Deflection", f"{summ['D_max']['value']*1000:.2f} mm")
-            
-            st.markdown("---")
-            st.markdown("#### Support Reactions")
-            total_r = 0
-            cols = st.columns(len(st.session_state['spans'])+1)
-            for i in range(len(cols)):
-                total_r += r[2*i]
-                cols[i].write(f"**Node {i+1}**\n\nFy: {r[2*i]/1000:.2f} kN")
-            
-            diff = total_r - check_force_y
-            if abs(diff) < 1.0: st.success(f"✅ Equilibrium Passed (Diff: {diff:.2f} N)")
-            else: st.error(f"❌ Equilibrium Error: {diff:.2f} N")
+    st.divider()
+    st.subheader("🏗️ Construction Detail (RC Design)")
+    bar_d = st.selectbox("Select Main Steel", [12, 16, 20, 25, 28], index=1, format_func=lambda x: f"DB{x}")
+    d_res = solver.pro_design(fc, fy, bar_d)
+    
+    
 
-        with st.expander("🏗️ 2. Reinforcement Design (SDM)", expanded=True):
-            
-            st.markdown(f"**Design for:** DB Size selection")
-            db_size = st.selectbox("Select Bar Size", [12, 16, 20, 25], index=1, format_func=lambda x: f"DB{x}")
-            as_bar = (np.pi * (db_size/10)**2) / 4
-            
-            d1, d2, d3 = st.columns(3)
-            d1.metric("Top Steel", f"{rc['as_neg']:.2f} cm²", f"{np.ceil(rc['as_neg']/as_bar):.0f}-DB{db_size}")
-            d2.metric("Bottom Steel", f"{rc['as_pos']:.2f} cm²", f"{np.ceil(rc['as_pos']/as_bar):.0f}-DB{db_size}")
-            d3.metric("Stirrups (RB9)", f"@{sh['spacing_mm']:.0f} mm", f"Vu={sh['vu_kn']:.1f} kN")
+    col1, col2, col3 = st.columns(3)
+    col1.warning(f"**Top Bar (Support)**\n\n{d_res['n_neg']:.0f} - DB{bar_d}\n\nArea: {d_res['as_neg']:.2f} cm²")
+    col2.success(f"**Bottom Bar (Span)**\n\n{d_res['n_pos']:.0f} - DB{bar_d}\n\nArea: {d_res['as_pos']:.2f} cm²")
+    col3.info(f"**Site Notes**\n\n- Dev. Length (Ld): {d_res['ld_mm']:.0f} mm\n- Spacing OK: {'✅' if d_res['spacing_ok'] else '❌ Too Tight'}")
