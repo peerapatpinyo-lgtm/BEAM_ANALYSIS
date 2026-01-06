@@ -8,7 +8,6 @@ class BeamSolver:
         self.E = float(E)
         self.b, self.h = b, h
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
-        # Timoshenko constants: G (Shear Modulus), As (Shear Area)
         self.G = self.E / (2 * (1 + 0.2)) 
         self.As = (5/6) * (b * h)        
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
@@ -32,7 +31,6 @@ class BeamSolver:
 
     def solve(self):
         try:
-            # Node identification
             pts = self.cum_spans.copy()
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
@@ -45,14 +43,12 @@ class BeamSolver:
 
             t_load_fy, t_load_m0 = 0.0, 0.0
 
-            # Assembly
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
                 if L > 1e-5:
                     idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
                     K[np.ix_(idx, idx)] += self._get_k_timoshenko(L)
 
-            # Forces & Statics Check
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
                 mag = float(l['mag'])
@@ -72,7 +68,6 @@ class BeamSolver:
                             F[2*i] -= (w * Le / 2); F[2*i+1] -= (w * Le**2 / 12)
                             F[2*(i+1)] -= (w * Le / 2); F[2*(i+1)+1] += (w * Le**2 / 12)
 
-            # Boundary Conditions
             free_d = np.full(dof, True)
             for _, s in self.supports_df.iterrows():
                 if s['type'] == "None": continue
@@ -88,11 +83,12 @@ class BeamSolver:
             t_reac_fy, t_reac_m0 = 0.0, 0.0
             for _, s in self.supports_df.iterrows():
                 if s['type'] == "None": continue
-                nid = np.argmin([abs(n - self.cum_spans[int(s['id'])]) for n in nodes])
-                t_reac_fy += R[2*nid]; t_reac_m0 += (R[2*nid]*self.cum_spans[int(s['id'])]) + R[2*nid+1]
-                reac_res.append({'Node': int(s['id']), 'Type': s['type'], 'Ry (kN)': round(R[2*nid]/1000, 2), 'M (kNm)': round(R[2*nid+1]/1000, 2)})
+                node_idx = int(s['id'])
+                nid = np.argmin([abs(n - self.cum_spans[node_idx]) for n in nodes])
+                t_reac_fy += R[2*nid]
+                t_reac_m0 += (R[2*nid] * self.cum_spans[node_idx]) + R[2*nid+1]
+                reac_res.append({'Node': node_idx, 'Type': s['type'], 'Ry (kN)': round(R[2*nid]/1000, 3), 'M (kNm)': round(R[2*nid+1]/1000, 3)})
 
-            # Results interpolation
             res = []
             for x in np.linspace(0, nodes[-1], 400):
                 v_sh, m_bm, d_defl = 0.0, 0.0, 0.0
