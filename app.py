@@ -81,7 +81,7 @@ if st.button("RUN ANALYSIS", type="primary"):
 if 'results' in st.session_state:
     res = st.session_state.results
     
-    # 3.1 Deflection
+    # 3.1 Deflection Check (Serviceability)
     st.markdown("#### 📏 Serviceability Check (Deflection)")
     cum_dist = [0] + list(np.cumsum(spans))
     
@@ -144,27 +144,41 @@ if 'results' in st.session_state:
     
     for i in range(n_spans):
         st.markdown(f"### 🌉 Span {i+1}")
+        
+        # Filter Data
         mask = (df['x'] >= cum_dist[i]) & (df['x'] <= cum_dist[i+1])
         span_data = df[mask]
         
         if span_data.empty: continue
         
+        # Get Forces
         m_max_pos = span_data['moment'].max() / 1000
         m_max_neg = span_data['moment'].min() / 1000
         v_max_abs = span_data['shear'].abs().max() / 1000
         
+        # Call Design Function
         design_res = rc_design.design_span_expert(
             m_pos=m_max_pos, m_neg=m_max_neg, v_u=v_max_abs,
             b=params['b'], h=params['h'],
             fc=fc, fy=fy, cover=cover, db=db
         )
         
+        # --- Visualization Section ---
         with st.container(border=True):
-            col_viz, col_data = st.columns([1, 2])
+            col_viz, col_data = st.columns([1, 1])
             
-            # --- Left: Visualization ---
             with col_viz:
-                st.write("**Section Preview**")
+                st.write("**📊 Moment Capacity Check**")
+                # เรียกใช้กราฟ Capacity ใหม่
+                fig_cap = design_view.plot_capacity_vs_demand(
+                    df_span=span_data,
+                    phi_Mn_pos=design_res['pos']['capacity'],
+                    phi_Mn_neg=design_res['neg']['capacity']
+                )
+                st.plotly_chart(fig_cap, use_container_width=True)
+
+            with col_data:
+                st.write("**Cross Section**")
                 fig_sec = section_plotter.plot_section(
                     b=params['b'], h=params['h'], 
                     cover_mm=cover, db_mm=db, 
@@ -173,49 +187,28 @@ if 'results' in st.session_state:
                 )
                 st.pyplot(fig_sec, use_container_width=True)
 
-            # --- Right: Technical Data (Tabs) ---
-            with col_data:
-                tab1, tab2, tab3 = st.tabs(["💪 Strength", "⚓ Detailing", "🔍 Serviceability"])
-                
-                with tab1:
-                    c_a, c_b = st.columns(2)
-                    with c_a:
-                        st.info(f"**Top Steel (-M):**\n\n{design_res['neg']['n']} - DB{db}")
-                        st.caption(f"Mu- = {abs(m_max_neg):.2f} kNm")
-                    with c_b:
-                        st.success(f"**Bot Steel (+M):**\n\n{design_res['pos']['n']} - DB{db}")
-                        st.caption(f"Mu+ = {m_max_pos:.2f} kNm")
-                    
-                    st.write("---")
-                    st.write(f"**Shear Reinforcement:** {design_res['shear_stirrups']}")
-                    st.caption(f"Vu max = {v_max_abs:.2f} kN | Status: {design_res['shear_status']}")
+        # --- Technical Data Tabs ---
+        tab1, tab2, tab3 = st.tabs(["💪 Strength", "⚓ Detailing", "🔍 Serviceability"])
+        
+        with tab1:
+            c1, c2 = st.columns(2)
+            with c1:
+                 st.info(f"**Top Steel (-M):**\n\n{design_res['neg']['n']} - DB{db}")
+                 st.caption(f"Capacity: {design_res['neg']['capacity']:.2f} kNm\nDemand: {abs(m_max_neg):.2f} kNm")
+            with c2:
+                 st.success(f"**Bot Steel (+M):**\n\n{design_res['pos']['n']} - DB{db}")
+                 st.caption(f"Capacity: {design_res['pos']['capacity']:.2f} kNm\nDemand: {m_max_pos:.2f} kNm")
+            
+            st.write("---")
+            st.write(f"**Shear Reinforcement:** {design_res['shear_stirrups']}")
+            st.caption(f"Status: {design_res['shear_status']}")
 
-                with tab2: # Detailing (Item #1)
-                    st.write("##### Development Length & Splices")
-                    
-                    st.write(f"**Top Bars (Zone -M):**")
-                    st.markdown(f"- $L_d$ (Embed): **{design_res['neg']['Ld']/1000:.2f} m**")
-                    st.markdown(f"- Lap Splice: **{design_res['neg']['Ls']/1000:.2f} m** (Splice at Mid-span)")
-                    
-                    st.divider()
-                    
-                    st.write(f"**Bottom Bars (Zone +M):**")
-                    st.markdown(f"- $L_d$ (Embed): **{design_res['pos']['Ld']/1000:.2f} m**")
-                    st.markdown(f"- Lap Splice: **{design_res['pos']['Ls']/1000:.2f} m** (Splice at Supports)")
+        with tab2:
+            st.write("##### Development Length & Splices")
+            st.write(f"**Top Bars (Zone -M):** $L_d$ = {design_res['neg']['Ld']/1000:.2f} m, Lap Splice = {design_res['neg']['Ls']/1000:.2f} m")
+            st.write(f"**Bot Bars (Zone +M):** $L_d$ = {design_res['pos']['Ld']/1000:.2f} m, Lap Splice = {design_res['pos']['Ls']/1000:.2f} m")
 
-                with tab3: # Crack Control (Item #3)
-                    st.write("##### Crack Width Control (ACI 318)")
-                    
-                    # Top Check
-                    status_top = "✅ OK" if design_res['neg']['crack_ok'] else "⚠️ Check Spacing"
-                    st.write(f"**Top Surface:** {status_top}")
-                    if not design_res['neg']['crack_ok']:
-                         st.caption(f"Calculated bar spacing exceeds limit ({design_res['neg']['s_limit']:.0f} mm)")
-
-                    # Bot Check
-                    status_bot = "✅ OK" if design_res['pos']['crack_ok'] else "⚠️ Check Spacing"
-                    st.write(f"**Bottom Surface:** {status_bot}")
-                    if not design_res['pos']['crack_ok']:
-                         st.caption(f"Calculated bar spacing exceeds limit ({design_res['pos']['s_limit']:.0f} mm)")
-                    
-                    st.info("ℹ️ Crack control is based on ACI 318 max bar spacing requirements.")
+        with tab3:
+            st.write("##### Crack Width Control (ACI 318)")
+            st.write(f"**Top Surface:** {'✅ OK' if design_res['neg']['crack_ok'] else '⚠️ Check Spacing'}")
+            st.write(f"**Bottom Surface:** {'✅ OK' if design_res['pos']['crack_ok'] else '⚠️ Check Spacing'}")
