@@ -17,7 +17,7 @@ st.header("1. Geometry & Advanced Loading")
 with st.container(border=True):
     col_g1, col_g2 = st.columns([1, 3])
     with col_g1:
-        n_spans = st.number_input("Spans", 1, 10, 1)
+        n_spans = st.number_input("Total Spans", 1, 10, 1)
         spans = [st.number_input(f"L{i+1} (m)", 0.1, 25.0, 5.0, key=f"L_{i}") for i in range(n_spans)]
         
     with col_g2:
@@ -25,9 +25,10 @@ with st.container(border=True):
         l_span = c1.selectbox("Span Index", range(n_spans))
         l_type = c2.selectbox("Load Category", ["Point (P)", "Uniform (U)", "Moment (M)"])
         l_mag = c3.number_input("Magnitude", 10.0)
-        l_x = c4.number_input("Start x (m)", 0.0, spans[l_span])
-        # Only show End X for Uniform loads
-        l_end = c5.number_input("End x (m)", spans[l_span]) if l_type == "Uniform (U)" else l_x
+        l_x = c4.number_input("Start x (m)", 0.0, float(spans[l_span]))
+        
+        # End X only active for Uniform loads
+        l_end = c5.number_input("End x (m)", float(spans[l_span])) if l_type == "Uniform (U)" else l_x
 
         if st.button("➕ Apply Load", use_container_width=True):
             st.session_state.loads.append({
@@ -35,6 +36,15 @@ with st.container(border=True):
                 'mag': l_mag*1000, 'x': l_x, 'dist': l_end - l_x if l_type == "Uniform (U)" else 0.0
             })
             st.rerun()
+
+# Display Active Loads
+if st.session_state.loads:
+    st.write("### Active Load List")
+    for idx, ld in enumerate(st.session_state.loads):
+        cols = st.columns([5, 1])
+        cols[0].info(f"Load #{idx+1}: Span {ld['span_index']+1} | {ld['type']} | {ld['mag']/1000} kN | x={ld['x']}m to x={ld['x']+ld['dist']}m")
+        if cols[1].button("🗑️", key=f"del_{idx}"):
+            st.session_state.loads.pop(idx); st.rerun()
 
 # --- 2. MATERIAL PROPERTIES ---
 with st.sidebar:
@@ -54,13 +64,9 @@ if st.button("🚀 EXECUTE ANALYSIS", type="primary", use_container_width=True):
     if not df.empty:
         st.header("📊 Internal Forces Analysis")
         design_view.draw_interactive_diagrams(df, reac, spans, pd.DataFrame(supports), st.session_state.loads)
-        
-
-[Image of shear force and bending moment diagrams for a continuous beam]
-
 
         st.header("📋 Technical Design Sheet (SDM)")
-        db_m = st.selectbox("Select Bar DB", [12, 16, 20, 25, 28])
+        db_m = st.selectbox("Select Bar Size (DB)", [12, 16, 20, 25, 28])
         
         cum_dist = [0] + list(np.cumsum(spans))
         for i in range(n_spans):
@@ -72,9 +78,9 @@ if st.button("🚀 EXECUTE ANALYSIS", type="primary", use_container_width=True):
                 c1, c2, c3 = st.columns([1.5, 1, 1.5])
                 with c1:
                     st.markdown("**Moment Capacity Check**")
-                    # Corrected LaTeX escaping
-                    st.latex(rf"M_u^{(+)} = {res['mu_pos']:.2f} \text{{ kNm}}")
-                    st.latex(rf"M_u^{{(-)}} = {res['mu_neg']:.2f} \text{{ kNm}}")
+                    # Corrected LaTeX escaping for Streamlit
+                    st.latex(rf"M_u^{(+)} = {res['pos']['mu_pos'] if 'pos' in res else 0:.2f} \text{{ kNm}}")
+                    st.latex(rf"M_u^{{(-)}} = {res['neg']['mu_neg'] if 'neg' in res else 0:.2f} \text{{ kNm}}")
                     st.write(f"Section Status: {res['pos']['status']}")
                 with c2:
                     st.markdown("**Ductility**")
