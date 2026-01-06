@@ -26,7 +26,6 @@ with st.sidebar:
     cover = st.number_input("Covering (mm)", 20.0, 75.0, 30.0)
     db_m = st.selectbox("Main Rebar DB (mm)", [12, 16, 20, 25, 28])
     
-    # Show I (Moment of Inertia)
     I_show = (b_m * h_m**3) / 12
     st.info(f"ℹ️ Moment of Inertia (I): {I_show:.6f} m⁴")
 
@@ -64,7 +63,7 @@ with st.container(border=True):
             st.rerun()
 
 # ==========================================
-# 🖼️ LOAD & SUPPORT PREVIEW (แก้ให้โชว์ Support ชัดเจน)
+# 🖼️ LOAD & SUPPORT PREVIEW
 # ==========================================
 if st.session_state.loads:
     st.markdown("### 👁️ Model Preview")
@@ -118,12 +117,10 @@ if st.button("🚀 RUN ANALYSIS", type="primary", use_container_width=True):
         st.error("Please add loads first.")
     else:
         try:
-            # กำหนด Support ให้ชัดเจน: ตัวแรก Pin, ที่เหลือ Roller
             supports = [{'id': i, 'type': 'Pin' if i==0 else 'Roller'} for i in range(n_spans+1)]
-            
             I_val = (b_m * h_m**3) / 12
             sol = BeamSolver(spans, supports, st.session_state.loads, 2e11, I_val)
-            st.session_state.results = sol.solve() # Returns (df, reac_list, equations)
+            st.session_state.results = sol.solve()
         except Exception as e:
             st.error(f"Solver Error: {str(e)}")
 
@@ -139,39 +136,41 @@ if st.session_state.results:
         x_col = 'x' if 'x' in df.columns else df.columns[0]
         st.success("Analysis Complete!")
 
-        # --- 1. Reactions (แก้บั๊ก TypeError ตรงนี้) ---
+        # --- 1. Reactions (Fixed) ---
         st.subheader("📌 Support Reactions")
         
-        # 🔥 FIX: แปลง List เป็น Numpy Array ก่อนหาร
-        reac_vals = np.array(reac) / 1000 
-        
-        # สร้างตารางระบุ Type ชัดเจน
+        # 🔥 FIX: Force convert to float list first
+        try:
+            safe_reac = [float(r) for r in reac] # แปลงทุกตัวเป็น float ก่อน
+            reac_vals = np.array(safe_reac) / 1000
+        except:
+            reac_vals = [0.0] * len(reac) # กันเหนียวกรณีพังจริงๆ
+            st.error("Warning: Could not process reaction values.")
+
         reac_data = []
         for i, r in enumerate(reac_vals):
             reac_data.append({
                 "Support": f"#{i+1}",
-                "Type": "Pin" if i==0 else "Roller", # ระบุ Type ให้เห็น
+                "Type": "Pin" if i==0 else "Roller",
                 "Reaction (kN)": f"{r:.2f}"
             })
         st.table(pd.DataFrame(reac_data))
 
-        # --- 2. Force Diagrams (Original Style) ---
-        
+        # --- 2. Force Diagrams (Classic Style) ---
         st.subheader("📈 Force Diagrams (SFD & BMD)")
         
         fig_res = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
                                 subplot_titles=("Shear Force (SFD)", "Bending Moment (BMD)"))
         
-        # SFD (Classic Green Fill)
+        # SFD
         fig_res.add_trace(go.Scatter(x=df[x_col], y=df['shear']/1000, mode='lines', 
                                      line=dict(color='green', width=2), fill='tozeroy', 
                                      fillcolor='rgba(0, 255, 0, 0.1)'), row=1, col=1)
-        # BMD (Classic Orange Fill + Inverted)
+        # BMD (Inverted Y)
         fig_res.add_trace(go.Scatter(x=df[x_col], y=df['moment']/1000, mode='lines', 
                                      line=dict(color='orange', width=2), fill='tozeroy', 
                                      fillcolor='rgba(255, 165, 0, 0.1)'), row=2, col=1)
         
-        # Span Lines
         cum_dist = [0] + list(np.cumsum(spans))
         for d in cum_dist:
             fig_res.add_vline(x=d, line_dash="dash", line_color="gray")
@@ -192,10 +191,8 @@ if st.session_state.results:
         for l in spans:
             fig_long.add_shape(type="rect", x0=cum_l, y0=0, x1=cum_l+l, y1=h_m, 
                                line=dict(color="black", width=2), fillcolor="#f9f9f9")
-            # Rebars
             fig_long.add_trace(go.Scatter(x=[cum_l, cum_l+l], y=[h_m-0.05, h_m-0.05], mode="lines", line=dict(color="red", width=2)))
             fig_long.add_trace(go.Scatter(x=[cum_l, cum_l+l], y=[0.05, 0.05], mode="lines", line=dict(color="blue", width=2)))
-            # Support Triangles
             fig_long.add_trace(go.Scatter(x=[cum_l], y=[-0.1], mode="markers", marker=dict(symbol="triangle-up", size=15, color="black")))
             cum_l += l
         fig_long.add_trace(go.Scatter(x=[cum_l], y=[-0.1], mode="markers", marker=dict(symbol="triangle-up", size=15, color="black")))
