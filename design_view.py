@@ -52,13 +52,13 @@ def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
     min_mu = mu_kNm.min()
     
     # Show Max Positive if significant
-    if max_mu > 1.0:
+    if max_mu > 0.1:
         fig.add_annotation(
             x=df_span.loc[mu_kNm.idxmax(), 'x'], y=max_mu,
-            text=f"Max+: {max_mu:.2f}", showarrow=True, arrowhead=1, ys=10
+            text=f"Max+: {max_mu:.2f}", showarrow=True, arrowhead=1, yshift=10 # <--- แก้ไขตรงนี้ครับ (ys -> yshift)
         )
     # Show Max Negative if significant
-    if min_mu < -1.0:
+    if min_mu < -0.1:
         fig.add_annotation(
             x=df_span.loc[mu_kNm.idxmin(), 'x'], y=min_mu,
             text=f"Max-: {min_mu:.2f}", showarrow=True, arrowhead=1, ay=30
@@ -168,6 +168,7 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads, dl_factor=1.4, ll_
     # Annotate Max/Min Shear
     v_max = df_plot['shear_kn'].max()
     v_min = df_plot['shear_kn'].min()
+    # ใช้ yshift แทน ys หรือใช้ yshift=10 ตรงๆ
     fig.add_annotation(x=df_plot.loc[df_plot['shear_kn'].idxmax(), 'x'], y=v_max, text=f"{v_max:.2f}", showarrow=False, yshift=10, font=dict(size=10), row=2, col=1)
     fig.add_annotation(x=df_plot.loc[df_plot['shear_kn'].idxmin(), 'x'], y=v_min, text=f"{v_min:.2f}", showarrow=False, yshift=-10, font=dict(size=10), row=2, col=1)
 
