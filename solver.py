@@ -8,7 +8,7 @@ class BeamSolver:
         self.E = float(E)
         self.b = b
         self.h = h
-        # ใช้ I_custom ถ้ามีค่าส่งมา ถ้าไม่มีให้คำนวณจาก b*h^3/12
+        # I (Moment of Inertia)
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
         
         # Shear Modulus (G) for Concrete (approx Poisson ratio = 0.2)
@@ -24,6 +24,7 @@ class BeamSolver:
 
     def _get_phi(self, L):
         """คำนวณค่า Phi สำหรับ Timoshenko Beam Element"""
+        if L == 0: return 0
         EI = self.E * self.I
         return (12 * EI) / (L**2 * self.G * self.As)
 
@@ -31,6 +32,9 @@ class BeamSolver:
         """สร้าง Element Stiffness Matrix (Timoshenko)"""
         EI = self.E * self.I
         Phi = self._get_phi(L)
+        
+        if L == 0: return np.zeros((4,4))
+
         coeff = EI / (L**3 * (1 + Phi))
         
         # Stiffness Matrix 4x4
@@ -43,19 +47,25 @@ class BeamSolver:
 
     def solve(self):
         try:
-            # --- 1. Generate Nodes ---
+            # --- 1. Generate Nodes (Recheck UDL Start/End) ---
             # สร้างจุด Nodes จาก Support และ Load locations
             pts = self.cum_spans.copy()
+            
             if not self.loads_df.empty:
                 for _, l in self.loads_df.iterrows():
-                    gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
-                    pts.append(gx)
+                    # Global X Start
+                    gx_start = self.cum_spans[int(l['span_index'])] + float(l['x'])
+                    pts.append(round(gx_start, 4))
+                    
+                    # Global X End (เฉพาะ Uniform Load)
                     if l['type'] == 'U': 
-                        pts.append(round(gx + float(l['dist']), 4))
+                        gx_end = gx_start + float(l['dist'])
+                        pts.append(round(gx_end, 4)) # <--- Add End Point Explicitly
             
+            # Sort และลบจุดซ้ำ (Unique)
             nodes = sorted(list(set([round(p, 4) for p in pts])))
             num_nodes = len(nodes)
-            dof = 2 * num_nodes # 2 DOF per node (Vertical Y, Rotation Theta)
+            dof = 2 * num_nodes # 2 DOF per node (Y, Theta)
             
             K = np.zeros((dof, dof))
             F = np.zeros(dof)
@@ -72,9 +82,10 @@ class BeamSolver:
             if not self.loads_df.empty:
                 for _, l in self.loads_df.iterrows():
                     gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
-                    mag = float(l['mag']) # Value in Newtons or Nm
+                    mag = float(l['mag']) 
                     
                     if l['type'] == 'P': # Point Load
+                        # หา Node ที่ตรงกับตำแหน่ง Load
                         nid = np.argmin([abs(n - gx) for n in nodes])
                         F[2*nid] -= mag
                         
@@ -84,13 +95,33 @@ class BeamSolver:
                         
                     elif l['type'] == 'U': # UDL
                         dist = float(l['dist'])
+                        w = mag # N/m
+                        
+                        # Loop หาทุก Element ที่อยู่ใต้ UDL
+                        # (เพราะ UDL อาจจะคลุมหลาย Node ที่เราซอยไว้)
                         for i in range(num_nodes - 1):
-                            # หาช่วงที่ UDL ทับซ้อนกับ Element
-                            overlap = min(gx+dist, nodes[i+1]) - max(gx, nodes[i])
-                            if overlap > 1e-5:
-                                w = mag # N/m
-                                Le = nodes[i+1] - nodes[i]
-                                # Equivalent Nodal Forces (Euler-Bernoulli approx for UDL)
+                            x_i = nodes[i]
+                            x_j = nodes[i+1]
+                            
+                            # เช็คช่วงซ้อนทับ (Overlap) ระหว่าง Element กับ Load
+                            load_start = gx
+                            load_end = gx + dist
+                            
+                            start_overlap = max(x_i, load_start)
+                            end_overlap = min(x_j, load_end)
+                            
+                            overlap_len = end_overlap - start_overlap
+                            
+                            if overlap_len > 1e-5:
+                                # กรณีนี้ Load ทับ Element เต็มๆ หรือบางส่วน
+                                # เพื่อความง่ายและแม่นยำใน FEA แบบ 1D 
+                                # เราจะกระจายแรงเข้า Node (Work Equivalent Load)
+                                # *สมมติว่า Node ตรงกับช่วง Load พอดีจากการ generate node*
+                                
+                                Le = x_j - x_i
+                                # Fixed End Forces สำหรับ UDL เต็มช่วง Element
+                                # Fy = wL/2, M = wL^2/12
+                                
                                 F[2*i] -= (w * Le / 2)
                                 F[2*i+1] -= (w * Le**2 / 12)
                                 F[2*(i+1)] -= (w * Le / 2)
@@ -101,6 +132,7 @@ class BeamSolver:
             if not self.supports_df.empty:
                 for _, s in self.supports_df.iterrows():
                     if s['type'] == "None": continue
+                    # Find closest node
                     nid = np.argmin([abs(n - self.cum_spans[int(s['id'])]) for n in nodes])
                     
                     # Lock Vertical (Y)
@@ -111,35 +143,34 @@ class BeamSolver:
                     if s['type'] == 'Fixed': 
                         free_d[2*nid+1] = False
 
-            # --- 5. Solve for Displacements (U) ---
+            # --- 5. Solve ---
             U = np.zeros(dof)
             if np.any(free_d):
                 U[free_d] = solve(K[np.ix_(free_d, free_d)], F[free_d])
             
-            # --- 6. Calculate Reactions (R = K*U - F) ---
+            # --- 6. Calculate Reactions ---
             R = K @ U - F
 
-            # Format Reactions for app.py
-            # Return as Dict {Support_Index: Force_Value_Newtons}
             reac_res = {}
             if not self.supports_df.empty:
                 for _, s in self.supports_df.iterrows():
                     if s['type'] == "None": continue
                     nid = np.argmin([abs(n - self.cum_spans[int(s['id'])]) for n in nodes])
-                    # ส่งค่าดิบ (Newtons) กลับไป ให้ app.py จัดการหาร 1000 เอง
                     reac_res[int(s['id'])] = R[2*nid] 
 
-            # --- 7. Post-Processing (Shear / Moment Diagrams) ---
-            # Using Method of Sections (Summing forces from left) for exact diagrams
+            # --- 7. Post-Processing (High-Res Diagrams) ---
+            # ใช้ Method of Sections เพื่อให้ได้กราฟที่ถูกต้องตาม Theory เป๊ะๆ
             res = []
-            plot_points = np.linspace(0, nodes[-1], 500)
             
-            # รวมจุดสำคัญเข้าไปใน plot_points เพื่อกราฟที่คมชัด
-            critical_points = nodes.copy()
-            plot_points = sorted(list(set(np.concatenate((plot_points, critical_points)))))
-
-            for x in plot_points:
-                v_sh, m_bm, d_defl = 0, 0, 0
+            # สร้างจุด Plot จำนวนมาก + จุด Critical ทั้งหมด
+            num_plot = 500
+            base_points = np.linspace(0, nodes[-1], num_plot)
+            # รวมจุด Nodes เข้าไปเพื่อให้กราฟหักมุมตรงจุดต่อพอดี
+            all_points = sorted(list(set(np.concatenate((base_points, nodes)))))
+            
+            for x in all_points:
+                v_sh, m_bm = 0.0, 0.0
+                d_defl = 0.0
                 
                 # A. Sum Reactions (Left of x)
                 for i, np_x in enumerate(nodes):
@@ -155,40 +186,49 @@ class BeamSolver:
                         if l['type'] == 'P' and gx <= x + 1e-5:
                             v_sh -= l['mag']
                             m_bm -= l['mag']*(x - gx)
+                            
                         elif l['type'] == 'M' and gx <= x + 1e-5:
-                            m_bm -= l['mag']
-                        elif l['type'] == 'U' and gx < x:
-                            d_overlap = min(x, gx + l['dist']) - gx
-                            if d_overlap > 0:
-                                force = l['mag'] * d_overlap
-                                centroid_dist = x - (gx + d_overlap/2)
-                                v_sh -= force
-                                m_bm -= force * centroid_dist
+                            m_bm -= l['mag'] # Clockwise Moment defined as positive input
+                            
+                        elif l['type'] == 'U':
+                            # Start: gx, End: gx+dist
+                            l_start = gx
+                            l_end = gx + float(l['dist'])
+                            
+                            # ส่วนของ Load ที่อยู่ทางซ้ายของ x
+                            if l_start < x:
+                                overlap_end = min(x, l_end)
+                                overlap_len = overlap_end - l_start
+                                
+                                if overlap_len > 0:
+                                    force = l['mag'] * overlap_len
+                                    # ระยะจาก centroid ของแรง ถึง x
+                                    centroid_dist = x - (l_start + overlap_len/2)
+                                    
+                                    v_sh -= force
+                                    m_bm -= force * centroid_dist
                 
-                # C. Calculate Deflection (Interpolation using Shape Functions)
+                # C. Deflection Interpolation
                 for i in range(num_nodes - 1):
                     if nodes[i] <= x <= nodes[i+1] + 1e-5:
                         Le = nodes[i+1] - nodes[i]
-                        xi = (x - nodes[i]) / Le
-                        Phi = self._get_phi(Le)
-                        
-                        # Timoshenko Shape Functions
-                        N1 = (1/(1+Phi))*(1 - 3*xi**2 + 2*xi**3 + Phi*(1-xi))
-                        N2 = (Le/(1+Phi))*(xi - 2*xi**2 + xi**3 + 0.5*Phi*(xi-xi**2))
-                        N3 = (1/(1+Phi))*(3*xi**2 - 2*xi**3 + Phi*xi)
-                        N4 = (Le/(1+Phi))*(-xi**2 + xi**3 - 0.5*Phi*(xi-xi**2))
-                        
-                        d_defl = N1*U[2*i] + N2*U[2*i+1] + N3*U[2*i+2] + N4*U[2*i+3]
+                        if Le > 1e-6:
+                            xi = (x - nodes[i]) / Le
+                            Phi = self._get_phi(Le)
+                            
+                            # Shape Functions
+                            N1 = (1/(1+Phi))*(1 - 3*xi**2 + 2*xi**3 + Phi*(1-xi))
+                            N2 = (Le/(1+Phi))*(xi - 2*xi**2 + xi**3 + 0.5*Phi*(xi-xi**2))
+                            N3 = (1/(1+Phi))*(3*xi**2 - 2*xi**3 + Phi*xi)
+                            N4 = (Le/(1+Phi))*(-xi**2 + xi**3 - 0.5*Phi*(xi-xi**2))
+                            
+                            d_defl = N1*U[2*i] + N2*U[2*i+1] + N3*U[2*i+2] + N4*U[2*i+3]
                         break
                 
                 res.append({'x': x, 'shear': v_sh, 'moment': m_bm, 'deflection': d_defl})
 
-            # Check Equilibrium (Optional Info)
-            eq_check = {'status': 'OK'} # Placeholder
-
-            return pd.DataFrame(res), reac_res, eq_check
+            return pd.DataFrame(res), reac_res, {'status': 'OK'}
             
         except Exception as e:
-            # Return empty if failed
             print(f"Solver Error: {e}")
             return pd.DataFrame(), {}, {"error": str(e)}
