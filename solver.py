@@ -38,7 +38,6 @@ class BeamSolver:
             nodes = sorted(list(set([round(p, 4) for p in pts])))
             num_nodes, dof = len(nodes), 2 * len(nodes)
             K, F = np.zeros((dof, dof)), np.zeros(dof)
-
             t_load_fy, t_load_m0 = 0.0, 0.0
 
             for i in range(num_nodes - 1):
