@@ -14,9 +14,9 @@ def design_span_detailed(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db
         m = fy / (0.85 * fc)
         check_val = 1 - (2 * m * k / fy)
         
-        if check_val < 0: return {"status": "FAIL: SECTION TOO SMALL"}
+        if check_val < 0: return {"status": "FAIL: SECTION TOO SMALL", "n": 0}
             
-        rho = (1/m) * (1 - np.sqrt(check_val))
+        rho = (1/m) * (1 - np.sqrt(max(0, check_val)))
         rho_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy)
         rho_final = max(rho, rho_min)
         as_req = rho_final * b * d
@@ -25,7 +25,7 @@ def design_span_detailed(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db
         a = (as_req * fy) / (0.85 * fc * b)
         beta1 = max(0.65, 0.85 - 0.05 * (fc - 28) / 7)
         c = a / beta1
-        et = ((d - c) / c) * 0.003 # Tension strain
+        et = ((d - c) / c) * 0.003 # Tension strain check
         
         n_bars = max(2, int(np.ceil(as_req / (np.pi * (db_main**2) / 4))))
         return {"n": n_bars, "as_req": as_req, "k": k, "rho": rho_final, "a": a, "c": c, "et": et, "status": "OK"}
