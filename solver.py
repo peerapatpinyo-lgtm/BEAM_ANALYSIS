@@ -7,10 +7,9 @@ class BeamSolver:
         self.spans = [float(s) for s in spans]
         self.E = float(E)
         self.I = float(I)
+        self.b = b
+        self.h = h
         self.A = float(A) if A is not None else (b * h)
-        self.G = float(G) if G is not None else 7.7e10
-        self.b = b 
-        self.h = h 
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
         self.loads_df = self._sanitize_loads(loads_input)
         self.supports_df = self._sanitize_supports(supports_input)
@@ -34,7 +33,7 @@ class BeamSolver:
         if not loads_input: return pd.DataFrame(columns=['span_index', 'type', 'mag', 'x', 'dist'])
         df = pd.DataFrame(loads_input)
         def get_global_x(row):
-            s_idx = int(row.get('span_index', row.get('span_idx', 0)))
+            s_idx = int(row.get('span_index', 0))
             lx = float(row.get('x', 0))
             return round(self.cum_spans[s_idx] + lx, 4)
         df['x'] = df.apply(get_global_x, axis=1)
@@ -53,8 +52,7 @@ class BeamSolver:
         
         num_nodes = len(nodes)
         dof = 2 * num_nodes
-        K = np.zeros((dof, dof))
-        F = np.zeros(dof)
+        K, F = np.zeros((dof, dof)), np.zeros(dof)
 
         for i in range(num_nodes - 1):
             L = nodes[i+1] - nodes[i]
@@ -85,25 +83,22 @@ class BeamSolver:
 
         U = np.zeros(dof)
         if not np.all(free_dof):
-            K_sub = K[np.ix_(free_dof, free_dof)]
-            F_sub = F[free_dof]
-            if K_sub.size > 0: U[free_dof] = solve(K_sub, F_sub)
+            U[free_dof] = solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
 
         R_full = K @ U - F
         r_mapped = np.zeros(2 * (len(self.spans) + 1))
-        for i, target_x in enumerate(self.cum_spans):
-            nid = np.argmin([abs(n - target_x) for n in nodes])
-            r_mapped[2*i] = R_full[2*nid]
-            r_mapped[2*i+1] = R_full[2*nid+1]
+        for i, tx in enumerate(self.cum_spans):
+            nid = np.argmin([abs(n - tx) for n in nodes])
+            r_mapped[2*i], r_mapped[2*i+1] = R_full[2*nid], R_full[2*nid+1]
 
         results = []
         plot_x = np.unique(np.sort(np.concatenate([np.linspace(0, nodes[-1], 350), nodes])))
         for x in plot_x:
             V, M, defl = 0.0, 0.0, 0.0
-            for i, n_p in enumerate(nodes):
-                if n_p <= x + 1e-5:
+            for i, np_pt in enumerate(nodes):
+                if np_pt <= x + 1e-5:
                     V += R_full[2*i]
-                    M += R_full[2*i]*(x - n_p) + R_full[2*i+1]
+                    M += R_full[2*i]*(x - np_pt) + R_full[2*i+1]
             for _, l in self.loads_df.iterrows():
                 if l['type'] == 'P' and l['x'] <= x + 1e-5:
                     V -= l['mag']; M -= l['mag']*(x - l['x'])
@@ -111,8 +106,7 @@ class BeamSolver:
                     M -= l['mag']
                 elif l['type'] == 'U' and l['x'] < x:
                     d = min(x, l['x'] + l['dist']) - l['x']
-                    if d > 0:
-                        V -= l['mag']*d; M -= l['mag']*d*(x - (l['x'] + d/2))
+                    if d > 0: V -= l['mag']*d; M -= l['mag']*d*(x - (l['x'] + d/2))
             
             for i in range(num_nodes - 1):
                 if nodes[i] <= x <= nodes[i+1] + 1e-5:
@@ -127,13 +121,9 @@ class BeamSolver:
 
     def _get_k(self, L):
         EI = self.E * self.I
-        return (EI / L**3) * np.array([
-            [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
-            [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
-        ])
+        return (EI / L**3) * np.array([[12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2], [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]])
 
     def _create_summary(self, df):
-        if df.empty: return {}
         return {
             'V_max': {'value': df['shear'].abs().max(), 'x': df.iloc[df['shear'].abs().idxmax()]['x']},
             'M_pos': {'value': df['moment'].max(), 'x': df.iloc[df['moment'].idxmax()]['x']},
@@ -141,38 +131,30 @@ class BeamSolver:
             'D_max': {'value': df['deflection'].abs().max(), 'x': df.iloc[df['deflection'].abs().idxmax()]['x']}
         }
 
-    def design_rc_section(self, fc_prime_mpa, fy_mpa, d_prime=0.05):
-        df, _, summary = self.solve()
-        mu_pos = summary['M_pos']['value']
-        mu_neg = abs(summary['M_neg']['value'])
-        phi = 0.90
-        d = self.h - d_prime
-        b = self.b
+    def pro_design(self, fc_mpa, fy_mpa, bar_dia_mm):
+        _, _, sum_val = self.solve()
+        phi, d = 0.90, self.h - 0.05
         
-        def calculate_as(mu):
-            if mu <= 0.1: return 0.0
-            a_quad = (fy_mpa**2) / (1.7 * fc_prime_mpa * b)
-            b_quad = -fy_mpa * d
-            c_quad = mu / (phi * 1e6) 
-            discriminant = b_quad**2 - 4 * a_quad * c_quad
-            if discriminant < 0: return -1 
-            as_m2 = (-b_quad - np.sqrt(discriminant)) / (2 * a_quad)
-            as_cm2 = as_m2 * 10000
-            as_min = (max(0.25 * np.sqrt(fc_prime_mpa), 1.4) / fy_mpa) * b * d * 10000
-            return max(as_cm2, as_min)
+        def get_as(mu_nm):
+            mu = abs(mu_nm)
+            if mu < 100: return 0.0
+            rn = mu / (phi * self.b * d**2 * 1e6)
+            m = fy_mpa / (0.85 * fc_mpa)
+            rho = (1/m) * (1 - np.sqrt(max(0, 1 - 2*m*rn)))
+            rho_min = max(0.25 * np.sqrt(fc_mpa)/fy_mpa, 1.4/fy_mpa)
+            return max(rho, rho_min) * self.b * d * 10000
 
-        return {'as_pos': calculate_as(mu_pos), 'as_neg': calculate_as(mu_neg)}
-
-    def design_shear(self, fc_prime_mpa, fy_mpa, d_prime=0.05):
-        df, _, summary = self.solve()
-        vu = summary['V_max']['value']
-        phi_v = 0.85
-        d = self.h - d_prime
-        b = self.b
-        vc = (1/6) * np.sqrt(fc_prime_mpa) * b * d * 1e6 
-        vs = max(0, (vu / phi_v) - vc)
-        av = 2 * 0.636 / 10000 # RB9 stirrups 2-legs
-        if vs <= 0: s = d / 2
-        else: s = (av * (fy_mpa * 1e6) * d) / vs
-        s = min(s, d / 2, 0.30)
-        return {"vu_kn": vu/1000, "vc_kn": vc/1000, "spacing_mm": s*1000}
+        as_pos = get_as(sum_val['M_pos']['value'])
+        as_neg = get_as(sum_val['M_neg']['value'])
+        
+        # Bar spacing check (Clear spacing > 2.5cm)
+        bar_area = (np.pi * (bar_dia_mm/10)**2) / 4
+        n_pos = np.ceil(as_pos / bar_area)
+        spacing = (self.b*1000 - 80 - (n_pos*bar_dia_mm)) / max(1, n_pos-1)
+        
+        return {
+            'as_pos': as_pos, 'as_neg': as_neg,
+            'n_pos': n_pos, 'n_neg': np.ceil(as_neg / bar_area),
+            'spacing_ok': spacing > 25,
+            'ld_mm': (fy_mpa * bar_dia_mm) / (1.1 * np.sqrt(fc_mpa) * 1.3) # simplified Ld
+        }
