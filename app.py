@@ -1,215 +1,200 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-# Import โมดูลที่แยกไว้
+
+# --- Import Custom Modules ---
+import input_handler
+import design_view
 from solver import BeamSolver
 import rc_design
 
-st.set_page_config(page_title="Professional Beam Design", layout="wide")
+# --- Page Config ---
+st.set_page_config(page_title="Professional Beam Studio", layout="wide", page_icon="🏗️")
 
-# --- Session State ---
-if 'loads' not in st.session_state: st.session_state.loads = []
-if 'results' not in st.session_state: st.session_state.results = None
+# --- CSS Styling (Optional) ---
+st.markdown("""
+<style>
+    .stButton>button { width: 100%; border-radius: 5px; font-weight: bold; }
+    .reportview-container .main .block-container { max-width: 1200px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================
+# 1. INPUT SECTION (via input_handler)
+# ==========================================
+# 1.1 Sidebar Config
+params = input_handler.render_sidebar()
 
 st.title("🏗️ Professional Beam Studio")
+st.caption("Advanced Structural Analysis & RC Design System")
+st.markdown("---")
+
+# 1.2 Geometry Inputs
+n_spans, spans, sup_df, is_stable = input_handler.render_model_inputs(params)
+
+# 1.3 Load Inputs
+st.markdown("---")
+loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
 
 # ==========================================
-# 1. SIDEBAR & INPUTS
+# 2. ANALYSIS LOGIC
 # ==========================================
-with st.sidebar:
-    st.header("1. Material Properties")
-    fc = st.number_input("Concrete f'c (MPa)", 18.0, 50.0, 24.0)
-    fy = st.number_input("Rebar fy (MPa)", 240.0, 500.0, 400.0)
-    b_m = st.number_input("Beam Width b (m)", 0.15, 1.0, 0.25)
-    h_m = st.number_input("Beam Depth h (m)", 0.3, 2.0, 0.50)
-    cover = st.number_input("Covering (mm)", 20.0, 75.0, 30.0)
-    db_m = st.selectbox("Main Rebar DB (mm)", [12, 16, 20, 25, 28])
-    
-    I_show = (b_m * h_m**3) / 12
-    st.info(f"ℹ️ Moment of Inertia (I): {I_show:.6f} m⁴")
+st.markdown("### 🚀 Analysis Control")
+col_act, col_info = st.columns([1, 4])
 
-with st.container(border=True):
-    col_geo, col_load = st.columns([1, 2])
+if col_act.button("RUN ANALYSIS", type="primary"):
     
-    # --- Geometry ---
-    with col_geo:
-        st.subheader("2. Geometry")
-        n_spans = st.number_input("Number of Spans", 1, 10, 2)
-        spans = []
-        for i in range(n_spans):
-            val = st.number_input(f"Length Span {i+1} (m)", 1.0, 20.0, 5.0, key=f"span_len_{i}")
-            spans.append(val)
+    # Validation
+    if not is_stable:
+        st.error("🚨 Structure is Unstable! Please check supports.")
+        st.stop()
+    
+    if loads_df is None or loads_df.empty:
+        st.warning("⚠️ Please add at least one load.")
+        st.stop()
 
-    # --- Load Input ---
-    with col_load:
-        st.subheader("3. Loads")
-        lc1, lc2, lc3, lc4 = st.columns(4)
-        l_idx = lc1.selectbox("On Span", range(n_spans))
-        l_type = lc2.selectbox("Type", ["Uniform", "Point", "Moment"])
-        l_mag = lc3.number_input("Value (kN or kNm)", 10.0)
-        l_x = lc4.number_input("Dist x (m)", 0.0, float(spans[l_idx]))
+    # --- Step A: Load Factoring (DL/LL) ---
+    # เตรียมข้อมูลโหลดส่งให้ Solver โดยคูณ Load Factors
+    raw_loads = loads_df.to_dict('records')
+    factored_loads = []
+    
+    for l in raw_loads:
+        factor = params['gamma_dead'] if l['case'] == 'DL' else params['gamma_live']
+        f_load = l.copy()
+        f_load['mag'] = l['mag'] * factor # Apply Factor Here
+        factored_loads.append(f_load)
+
+    # --- Step B: Solve Structure ---
+    try:
+        with st.spinner("Solving Stiffness Matrix..."):
+            solver = BeamSolver(
+                spans=spans,
+                supports_input=sup_df.to_dict('records'),
+                loads_input=factored_loads,
+                E=params['E'],
+                I_custom=params['I']
+            )
+            
+            df_res, reactions, status = solver.solve()
+            
+            if df_res.empty:
+                st.error(f"Analysis Failed: {status.get('error')}")
+            else:
+                # Save to Session State
+                st.session_state.results = {
+                    'df': df_res,
+                    'reac': reactions,
+                    'loads': raw_loads,
+                    'factored_loads': factored_loads
+                }
+                st.success("Analysis Complete!")
+                
+    except Exception as e:
+        st.error(f"System Error: {str(e)}")
+
+# ==========================================
+# 3. DISPLAY RESULTS (via design_view)
+# ==========================================
+if 'results' in st.session_state:
+    res = st.session_state.results
+    
+    st.markdown("---")
+    
+    # 3.1 Reaction Table
+    st.subheader("📌 Support Reactions (Factored)")
+    
+    reac_data = []
+    for node_idx, val in res['reac'].items():
+        # Find support type name
+        s_type = "Support"
+        match = sup_df[sup_df['id'] == node_idx]
+        if not match.empty: s_type = match.iloc[0]['type']
         
-        if st.button("➕ Add Load", use_container_width=True):
-            safe_x = min(l_x, spans[l_idx] - 0.01)
-            safe_x = max(safe_x, 0.01)
-            st.session_state.loads.append({
-                'span_index': l_idx,
-                'type': l_type[0], 
-                'mag': l_mag * 1000, 
-                'x': safe_x,
-                'dist': spans[l_idx] if l_type[0] == "U" else 0.0
-            })
-            st.rerun()
+        # Unit conversion
+        val_show = val / 1000 if params['u_force'] == 'kN' else val
+        
+        reac_data.append({
+            "Node": node_idx + 1,
+            "Type": s_type,
+            f"Ry ({params['u_force']})": f"{val_show:.2f}"
+        })
+    
+    st.table(pd.DataFrame(reac_data).set_index("Node"))
 
-# ==========================================
-# 2. PREVIEW
-# ==========================================
-if st.session_state.loads:
-    st.markdown("### 👁️ Model Preview")
-    fig_struct = go.Figure()
+    # 3.2 Diagrams (SFD, BMD, Deflection)
+    design_view.draw_interactive_diagrams(
+        df=res['df'],
+        reac=res['reac'],
+        spans=spans,
+        sup_df=sup_df,
+        loads=res['loads'], # Show Raw loads in diagram annotation
+        dl_factor=params['gamma_dead'],
+        ll_factor=params['gamma_live']
+    )
+
+    # ==========================================
+    # 4. RC DESIGN MODULE (via rc_design)
+    # ==========================================
+    st.markdown("---")
+    st.header("🏗️ Reinforced Concrete Design")
+    
+    with st.expander("🛠️ RC Parameters", expanded=True):
+        c1, c2, c3, c4 = st.columns(4)
+        fc = c1.number_input("f'c (MPa)", value=24.0)
+        fy = c2.number_input("fy (MPa)", value=400.0)
+        cover = c3.number_input("Cover (mm)", value=30.0)
+        db = c4.selectbox("Main Bar (mm)", [12, 16, 20, 25, 28], index=2)
+        
+        c5, c6 = st.columns(2)
+        b_section = c5.number_input("Width b (cm)", value=25.0) / 100 # m
+        h_section = c6.number_input("Depth h (cm)", value=50.0) / 100 # m
+
+    # Loop Design per Span
+    df = res['df']
     cum_dist = [0] + list(np.cumsum(spans))
-    total_len = cum_dist[-1]
     
-    # Beam
-    fig_struct.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], mode="lines", 
-                                    line=dict(color="black", width=4), name="Beam"))
-    
-    # Supports
-    for i, x_sup in enumerate(cum_dist):
-        sup_type = "Pin" if i == 0 else "Roller"
-        fig_struct.add_trace(go.Scatter(x=[x_sup], y=[-0.2], mode="markers+text", 
-                                        marker=dict(symbol="triangle-up", size=15, color="black"), 
-                                        text=sup_type, textposition="bottom center",
-                                        name=f"Sup {i+1}", showlegend=False))
-
-    # Loads
-    for l in st.session_state.loads:
-        start_x = cum_dist[l['span_index']]
-        abs_x = start_x + l['x']
-        if l['type'] == 'P':
-            fig_struct.add_annotation(x=abs_x, y=0, ax=0, ay=-40, arrowhead=2, arrowcolor="red", text=f"{l['mag']/1000}kN")
-        elif l['type'] == 'U':
-            end_x = start_x + l['dist']
-            fig_struct.add_shape(type="rect", x0=start_x, y0=0, x1=end_x, y1=0.5, 
-                                 fillcolor="rgba(255, 0, 0, 0.2)", line=dict(width=0))
-            fig_struct.add_annotation(x=(start_x+end_x)/2, y=0.5, text=f"UDL {l['mag']/1000} kN/m", showarrow=False)
-        elif l['type'] == 'M':
-            fig_struct.add_annotation(x=abs_x, y=0, text=f"M {l['mag']/1000}", showarrow=True, arrowhead=1)
-
-    fig_struct.update_layout(height=250, showlegend=False, xaxis=dict(visible=True), yaxis=dict(visible=False, range=[-1, 2]))
-    st.plotly_chart(fig_struct, use_container_width=True)
-    
-    if st.button("🗑️ Reset All Loads"):
-        st.session_state.loads = []
-        st.session_state.results = None
-        st.rerun()
-
-# ==========================================
-# 3. RUN SOLVER
-# ==========================================
-if st.button("🚀 RUN ANALYSIS", type="primary", use_container_width=True):
-    if not st.session_state.loads:
-        st.error("Please add loads first.")
-    else:
-        try:
-            supports = [{'id': i, 'type': 'Pin' if i==0 else 'Roller'} for i in range(n_spans+1)]
-            I_val = (b_m * h_m**3) / 12
-            # เรียกใช้ Class จากไฟล์ solver.py
-            sol = BeamSolver(spans, supports, st.session_state.loads, 2e11, I_val)
-            st.session_state.results = sol.solve()
-        except Exception as e:
-            st.error(f"Solver Error: {str(e)}")
-
-# ==========================================
-# 4. RESULTS
-# ==========================================
-if st.session_state.results:
-    df, reac, eq = st.session_state.results
-    
-    if df is None or df.empty:
-        st.error("Calculation Error.")
-    else:
-        x_col = 'x' if 'x' in df.columns else df.columns[0]
-        st.success("Analysis Complete!")
-
-        # --- A. Reaction Table (Fixed Logic) ---
-        st.subheader("📌 Support Reactions")
-        try:
-            # ดึงค่าออกมาไม่ว่าจะเป็น Dict หรือ List
-            raw_values = list(reac.values()) if isinstance(reac, dict) else reac
-            clean_values = [float(v) for v in raw_values] # แปลงเป็น float
-            reac_vals = np.array(clean_values) / 1000
-            
-            reac_data = []
-            for i, r in enumerate(reac_vals):
-                reac_data.append({
-                    "Support ID": f"#{i+1}",
-                    "Type": "Pin" if i==0 else "Roller",
-                    "Reaction (kN)": f"{r:.2f}"
-                })
-            st.table(pd.DataFrame(reac_data))
-        except Exception as e:
-            st.error(f"Error displaying reactions: {e}")
-
-        # --- B. Diagrams (Detailed) ---
-        st.subheader("📈 Force Diagrams")
-        fig_res = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
-                                subplot_titles=("Shear Force (SFD)", "Bending Moment (BMD)"))
+    for i in range(n_spans):
+        st.markdown(f"#### Span {i+1} Design")
         
-        # Helper to find peaks
-        def add_peak_labels(fig, x_data, y_data, row_idx, color, name, invert=False):
-            y_scale = -1 if invert else 1
-            fig.add_trace(go.Scatter(x=x_data, y=y_data, mode='lines', line=dict(color=color, width=2), 
-                                     fill='tozeroy', fillcolor=f"rgba{color[3:-1]}, 0.1)", name=name), row=row_idx, col=1)
-            # Max/Min Labels
-            mx, mn = y_data.max(), y_data.min()
-            mx_idx, mn_idx = y_data.idxmax(), y_data.idxmin()
-            
-            fig.add_annotation(x=x_data[mx_idx], y=mx, text=f"{mx:.2f}", showarrow=True, row=row_idx, col=1)
-            fig.add_annotation(x=x_data[mn_idx], y=mn, text=f"{mn:.2f}", showarrow=True, row=row_idx, col=1)
-
-        add_peak_labels(fig_res, df[x_col], df['shear']/1000, 1, 'rgb(46, 125, 50)', "Shear")
-        add_peak_labels(fig_res, df[x_col], df['moment']/1000, 2, 'rgb(239, 108, 0)', "Moment", invert=True)
-
-        # Draw Supports on Graph
-        cum_dist = [0] + list(np.cumsum(spans))
-        for d in cum_dist:
-            fig_res.add_vline(x=d, line_dash="dash", line_color="gray")
-            fig_res.add_trace(go.Scatter(x=[d], y=[0], mode="markers", marker=dict(symbol="triangle-up", color="black", size=10), showlegend=False), row=1, col=1)
-            fig_res.add_trace(go.Scatter(x=[d], y=[0], mode="markers", marker=dict(symbol="triangle-up", color="black", size=10), showlegend=False), row=2, col=1)
-
-        fig_res.update_layout(height=600, showlegend=False)
-        fig_res.update_yaxes(title="V (kN)", row=1, col=1, zeroline=True, zerolinecolor='black')
-        fig_res.update_yaxes(title="M (kNm)", row=2, col=1, autorange="reversed", zeroline=True, zerolinecolor='black')
-        st.plotly_chart(fig_res, use_container_width=True)
-
-        # --- C. Design Section ---
-        st.divider()
-        st.header("🏗️ Reinforcement Design")
+        # Filter forces in this span
+        mask = (df['x'] >= cum_dist[i]) & (df['x'] <= cum_dist[i+1])
+        span_data = df[mask]
         
-        # เรียกใช้ฟังก์ชันจากไฟล์ rc_design.py
-        for i in range(n_spans):
-            with st.container(border=True):
-                mask = (df[x_col] >= cum_dist[i]) & (df[x_col] <= cum_dist[i+1])
-                span_data = df[mask]
-                if span_data.empty: continue
-
-                m_max = span_data['moment'].max() / 1000 
-                m_min = span_data['moment'].min() / 1000 
-                v_max = span_data['shear'].abs().max() / 1000 
+        if span_data.empty: continue
+        
+        # Get Envelope Forces (Unit: N, Nm)
+        m_max_pos = span_data['moment'].max() # +Moment (Bottom Steel)
+        m_max_neg = span_data['moment'].min() # -Moment (Top Steel)
+        v_max_abs = span_data['shear'].abs().max()
+        
+        # Convert to kN, kNm for Design Function
+        design_res = rc_design.design_span_expert(
+            m_pos=m_max_pos / 1000,
+            m_neg=m_max_neg / 1000,
+            v_u=v_max_abs / 1000,
+            b=b_section, h=h_section,
+            fc=fc, fy=fy, cover=cover, db=db
+        )
+        
+        # Display Card
+        with st.container(border=True):
+            col_res1, col_res2, col_res3 = st.columns([1, 1, 1])
+            
+            with col_res1:
+                st.caption("Positive Moment (Mid-Span)")
+                st.markdown(f"**Mu+ :** {m_max_pos/1000:.2f} kNm")
+                st.success(f"bot: **{design_res['pos']['n']} - DB{db}**")
+            
+            with col_res2:
+                st.caption("Negative Moment (Support)")
+                st.markdown(f"**Mu- :** {m_max_neg/1000:.2f} kNm")
+                st.error(f"top: **{design_res['neg']['n']} - DB{db}**")
                 
-                # Design Function Call
-                res = rc_design.design_span_expert(m_max, m_min, v_max, b_m, h_m, fc, fy, cover, db_m)
-                
-                c1, c2 = st.columns([1, 1])
-                with c1:
-                    st.subheader(f"Span {i+1}")
-                    st.write(f"**Forces:** M+ {m_max:.2f}, M- {m_min:.2f}, V {v_max:.2f}")
-                    st.markdown(f"🔴 Top: **{res['neg']['n']}** - DB{db_m}")
-                    st.markdown(f"🔵 Bot: **{res['pos']['n']}** - DB{db_m}")
-                
-                with c2:
-                     # (Cross section drawing code omitted for brevity but same as before)
-                     st.info("Cross section details available")
+            with col_res3:
+                st.caption("Shear Check")
+                st.markdown(f"**Vu :** {v_max_abs/1000:.2f} kN")
+                status = design_res['shear_status']
+                if "OK" in status:
+                    st.info(f"Shear: {status}")
+                else:
+                    st.warning(f"Shear: {status}")
