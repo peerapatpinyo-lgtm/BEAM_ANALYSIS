@@ -19,6 +19,15 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Custom CSS for Textbook look
+st.markdown("""
+<style>
+    .block-container { max-width: 1200px; padding-top: 2rem; }
+    h1, h2, h3, h4 { font-family: 'Helvetica', sans-serif; color: #2C3E50; }
+    .stAlert { padding: 0.5rem; }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("🏗️ Professional RC Beam Studio")
 st.markdown("---")
 
@@ -27,22 +36,17 @@ st.markdown("---")
 # ==========================================
 params = input_handler.render_sidebar()
 
-# Auto-calc fc from E if not present (Simple estimation)
 if 'fc' not in params:
     est_fc = (params['E'] / 4700)**2
-    if est_fc < 15: est_fc = 20
-    if est_fc > 50: est_fc = 35
-    params['fc'] = float(int(est_fc))
+    params['fc'] = float(np.clip(est_fc, 20, 35)) # Clip to normal range
 
 with st.sidebar:
     st.markdown("---")
     st.subheader("4. Rebar Strength")
     params['fy'] = st.number_input("Yield Strength (fy)", value=400.0, step=10.0, format="%.1f")
-    st.caption(f"Using fc' ≈ {params['fc']:.1f} MPa")
     params['cover'] = st.slider("Cover (mm)", 20, 75, 25)
     params['db_main'] = st.selectbox("Main Bar DB (mm)", [12, 16, 20, 25, 28, 32], index=1)
 
-# Render Geometry & Loads
 n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
 loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
 
@@ -50,11 +54,11 @@ loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
 # 3. MAIN EXECUTION
 # ==========================================
 if not stable:
-    st.error("⚠️ Structure is Unstable! Please add supports.")
+    st.warning("⚠️ Structure Unstable. Please add at least 2 supports (or 1 Fixed).")
 else:
-    if st.button("🚀 Run Analysis", type="primary"):
-        with st.spinner("Analyzing..."):
-            # Prepare Solver Data
+    if st.button("🚀 Run Analysis & Design", type="primary"):
+        with st.spinner("Processing..."):
+            # Prepare & Solve
             sup_list = sup_df.to_dict('records') if not sup_df.empty else []
             load_list = loads_df.to_dict('records') if loads_df is not None else []
             
@@ -66,7 +70,6 @@ else:
                 new_l['mag'] = l['mag'] * f
                 factored_loads.append(new_l)
 
-            # Solve
             beam_solver = solver.BeamSolver(spans, sup_list, factored_loads, params['E'], params['b'], params['h'], params['I'])
             df_res, reac, eq_check = beam_solver.solve()
             
@@ -74,24 +77,26 @@ else:
                 st.error("Solver Error.")
                 st.stop()
 
-        st.success("✅ Analysis Complete!")
+        st.success("Analysis Complete!")
         
         # --- TABS ---
-        tab1, tab2 = st.tabs(["📊 Analysis Diagrams", "🏗️ RC Design & Detailing"])
+        tab1, tab2 = st.tabs(["📊 Analysis Results", "🏗️ RC Design Detailing"])
         
+        # --- TAB 1: Analysis ---
         with tab1:
-            st.subheader("Shear, Moment & Deflection")
+            st.markdown("#### Internal Forces Diagrams")
             fig_diagram = design_view.draw_interactive_diagrams(df_res, reac, spans, sup_df, load_list)
             st.plotly_chart(fig_diagram, use_container_width=True)
             
-            st.markdown("#### Support Reactions (Factored)")
-            reac_data = [{"Node": k, "R (kN)": v/1000.0} for k, v in reac.items()]
+            st.markdown("#### Support Reactions")
+            reac_data = [{"Node": k, "Rx (kN)": 0, "Ry (kN)": v/1000.0, "Mz (kNm)": 0} for k, v in reac.items()]
             st.dataframe(pd.DataFrame(reac_data).set_index("Node").T)
 
+        # --- TAB 2: Design ---
         with tab2:
-            st.subheader("Reinforced Concrete Design (ACI 318)")
+            st.markdown("### Reinforced Concrete Design (ACI 318 / EIT)")
             
-            # --- 1. COLLECT DESIGN DATA FOR LONGITUDINAL PLOT ---
+            # 1. Collect Data
             cum_dist = [0] + list(np.cumsum(spans))
             all_span_designs = []
             
@@ -110,38 +115,49 @@ else:
                     params['b'], params['h'], params['fc'], params['fy'], 
                     params['cover'], params['db_main']
                 )
-                design_res['db'] = params['db_main'] # Add DB info for plotter
+                design_res['db'] = params['db_main']
                 all_span_designs.append(design_res)
 
-            # --- 2. DRAW LONGITUDINAL SECTION (TOP) ---
-            st.markdown("### 📐 Overall Beam Reinforcement")
+            # 2. LONGITUDINAL SECTION (Full Width)
+            st.markdown("#### 📐 Longitudinal Elevation")
             fig_long = section_plotter.plot_longitudinal_section(
                 spans, sup_df, all_span_designs, params['h'], params['cover']
             )
             st.pyplot(fig_long)
+            
             st.markdown("---")
-
-            # --- 3. DRAW CROSS SECTIONS PER SPAN ---
+            
+            # 3. CROSS SECTIONS (Span by Span)
+            st.markdown("#### 🔍 Span Details")
+            
             for i in range(n_spans):
-                d_res = all_span_designs[i]
-                
-                col_info, col_plot = st.columns([1, 1])
-                
-                with col_info:
-                    st.markdown(f"#### Span {i+1} Detail")
-                    st.info(f"**Positive Zone (Midspan)**\n- Moment: {d_res['pos']['capacity']:.2f} kNm\n- Rebar: {d_res['pos']['n']} - DB{params['db_main']}")
-                    st.warning(f"**Negative Zone (Support)**\n- Moment: {d_res['neg']['capacity']:.2f} kNm\n- Rebar: {d_res['neg']['n']} - DB{params['db_main']}")
-                    st.error(f"**Shear Stirrups**\n- {d_res['shear_stirrups']}")
+                d = all_span_designs[i]
+                with st.container():
+                    col_info, col_img = st.columns([1.2, 1])
+                    
+                    with col_info:
+                        st.markdown(f"**SPAN {i+1}** (L={spans[i]}m)")
+                        
+                        # Data Table
+                        res_data = {
+                            "Location": ["Midspan (+)", "Support (-)"],
+                            "Design Moment": [f"{d['pos']['capacity']:.1f} kNm", f"{d['neg']['capacity']:.1f} kNm"],
+                            "Rebar": [f"{d['pos']['n']}-DB{params['db_main']}", f"{d['neg']['n']}-DB{params['db_main']}"],
+                            "Status": ["✅ OK" if "OK" in d['pos']['note'] else "⚠️ Check", "✅ OK" if "OK" in d['neg']['note'] else "⚠️ Check"]
+                        }
+                        st.table(pd.DataFrame(res_data))
+                        st.info(f"🧱 Shear Design: **{d['shear_stirrups']}**")
 
-                with col_plot:
-                    # Plot Section
-                    fig_sec = section_plotter.plot_section(
-                        params['b'], params['h'], params['cover'], params['db_main'],
-                        n_top=d_res['neg']['n'], # Show Max Top Bars
-                        n_bot=d_res['pos']['n'], # Show Max Bot Bars
-                        stirrup_info=d_res['shear_stirrups'],
-                        fc=params['fc'], fy=params['fy']
-                    )
-                    st.pyplot(fig_sec)
+                    with col_img:
+                        # Cross Section
+                        fig_sec = section_plotter.plot_section(
+                            params['b'], params['h'], params['cover'], params['db_main'],
+                            n_top=d['neg']['n'], # Representative Top
+                            n_bot=d['pos']['n'], # Representative Bot
+                            stirrup_info=d['shear_stirrups'],
+                            fc=params['fc'], fy=params['fy']
+                        )
+                        # จัดกลางและไม่ขยายจนแตก
+                        st.pyplot(fig_sec, use_container_width=False)
                 
                 st.divider()
