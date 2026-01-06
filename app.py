@@ -189,7 +189,7 @@ else:
                         db_mm=params['db_main'],
                         n_top=design_res['pos']['n'] if design_res['pos']['n'] > 0 else 2, # Show dummy top bars (hangers) if 0
                         n_bot=design_res['pos']['n'],
-                        stirrup_info=design_res['shear_stirrups'], # <--- FIXED: using string directly
+                        stirrup_info=design_res['shear_stirrups'], 
                         fc=params['fc'],
                         fy=params['fy']
                     )
@@ -215,22 +215,5 @@ else:
                     st.dataframe(pd.DataFrame(res_summary))
                     
                     st.info(f"🛡️ Shear Design (Vu = {v_max_abs:.2f} kN): **{design_res['shear_stirrups']}**")
-
-                # 4. Capacity Plot (Interaction)
-                with st.expander(f"📉 View Capacity vs Demand Diagram (Span {i+1})"):
-                    # Get Capacity Limits
-                    phi_mn_pos = design_res['pos']['capacity']
-                    phi_mn_neg = design_res['neg']['capacity']
-                    
-                    # Create Local Span Coordinate for plotting
-                    df_span_local = span_res.copy()
-                    df_span_local['x'] = df_span_local['x'] - start_x
-                    
-                    fig_cap = design_view.plot_capacity_vs_demand(
-                        df_span_local, 
-                        phi_mn_pos, 
-                        -abs(phi_mn_neg) # Ensure negative is plotted negatively
-                    )
-                    st.plotly_chart(fig_cap, use_container_width=True)
                 
                 st.markdown("---")
