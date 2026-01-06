@@ -19,201 +19,129 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for better look
-st.markdown("""
-<style>
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; }
-    .reportview-container .main .block-container{ max-width: 1000px; }
-    h1, h2, h3 { color: #2C3E50; }
-    .highlight { background-color: #F4F6F7; padding: 15px; border-radius: 10px; border-left: 5px solid #3498DB; }
-</style>
-""", unsafe_allow_html=True)
-
 st.title("🏗️ Professional RC Beam Studio")
 st.markdown("---")
 
 # ==========================================
-# 2. SIDEBAR & INPUTS (Connect to input_handler)
+# 2. SIDEBAR & INPUTS
 # ==========================================
-# เรียกใช้ input_handler เพื่อจัดการ Sidebar และ Load File
 params = input_handler.render_sidebar()
 
-# เพื่อความสมบูรณ์ เราต้องกำหนดค่า fc และ fy ที่ input_handler อาจจะไม่ได้ส่งออกมาโดยตรง
-# (คำนวณย้อนกลับจาก E หรือกำหนดค่า Default)
+# Auto-calc fc from E if not present (Simple estimation)
 if 'fc' not in params:
-    # Estimate fc from E approx (E = 4700 sqrt(fc)) -> fc = (E/4700)^2
     est_fc = (params['E'] / 4700)**2
-    # Clamp value to standard range
     if est_fc < 15: est_fc = 20
     if est_fc > 50: est_fc = 35
     params['fc'] = float(int(est_fc))
 
-# เพิ่ม Input สำหรับ Strength เหล็กเสริม (fy) ใน Sidebar เพิ่มเติม
 with st.sidebar:
     st.markdown("---")
     st.subheader("4. Rebar Strength")
     params['fy'] = st.number_input("Yield Strength (fy)", value=400.0, step=10.0, format="%.1f")
     st.caption(f"Using fc' ≈ {params['fc']:.1f} MPa")
-    
-    # Concrete Cover
     params['cover'] = st.slider("Cover (mm)", 20, 75, 25)
-    # Rebar Diameter Main
     params['db_main'] = st.selectbox("Main Bar DB (mm)", [12, 16, 20, 25, 28, 32], index=1)
 
-# Render Model Geometry Inputs
+# Render Geometry & Loads
 n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
-
-# Render Loads Input
 loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
 
 # ==========================================
-# 3. MAIN EXECUTION & ANALYSIS
+# 3. MAIN EXECUTION
 # ==========================================
-
-# Check Stability before enabling run button
 if not stable:
-    st.error("⚠️ Structure is Unstable! Please check supports (Must have at least 2 supports or 1 Fixed).")
+    st.error("⚠️ Structure is Unstable! Please add supports.")
 else:
-    col_run, col_status = st.columns([1, 4])
-    with col_run:
-        run_btn = st.button("🚀 Run Analysis", type="primary")
-    
-    if run_btn:
-        with st.spinner("Solving Finite Element Model..."):
-            # A. PREPARE DATA FOR SOLVER
-            # Convert DataFrames to List of Dicts for Solver
+    if st.button("🚀 Run Analysis", type="primary"):
+        with st.spinner("Analyzing..."):
+            # Prepare Solver Data
             sup_list = sup_df.to_dict('records') if not sup_df.empty else []
             load_list = loads_df.to_dict('records') if loads_df is not None else []
             
-            # B. CALL SOLVER
-            # Load Factors
-            gamma_D = params['gamma_dead']
-            gamma_L = params['gamma_live']
-            
-            # Apply Load Factors to Solver Loads
+            # Factored Loads
             factored_loads = []
             for l in load_list:
-                f = gamma_D if l['case'] == 'DL' else gamma_L
+                f = params['gamma_dead'] if l['case'] == 'DL' else params['gamma_live']
                 new_l = l.copy()
                 new_l['mag'] = l['mag'] * f
                 factored_loads.append(new_l)
 
-            # Instantiate Solver
-            beam_solver = solver.BeamSolver(
-                spans=spans,
-                supports_input=sup_list,
-                loads_input=factored_loads, # Send Factored Loads
-                E=params['E'],
-                b=params['b'],
-                h=params['h'],
-                I_custom=params['I']
-            )
-            
-            # Solve!
+            # Solve
+            beam_solver = solver.BeamSolver(spans, sup_list, factored_loads, params['E'], params['b'], params['h'], params['I'])
             df_res, reac, eq_check = beam_solver.solve()
             
             if df_res.empty:
-                st.error("Solver returned no result. Please check inputs.")
+                st.error("Solver Error.")
                 st.stop()
 
-        # ==========================================
-        # 4. DISPLAY RESULTS
-        # ==========================================
         st.success("✅ Analysis Complete!")
         
-        # --- TAB 1: DIAGRAMS ---
+        # --- TABS ---
         tab1, tab2 = st.tabs(["📊 Analysis Diagrams", "🏗️ RC Design & Detailing"])
         
         with tab1:
-            st.subheader("Shear, Moment & Deflection Diagrams")
-            # Call design_view to draw interactive plots
+            st.subheader("Shear, Moment & Deflection")
             fig_diagram = design_view.draw_interactive_diagrams(df_res, reac, spans, sup_df, load_list)
             st.plotly_chart(fig_diagram, use_container_width=True)
             
-            # Show Reaction Table
             st.markdown("#### Support Reactions (Factored)")
-            reac_data = [{"Node": k, "Reaction (kN)": v/1000.0} for k, v in reac.items()]
+            reac_data = [{"Node": k, "R (kN)": v/1000.0} for k, v in reac.items()]
             st.dataframe(pd.DataFrame(reac_data).set_index("Node").T)
 
-        # --- TAB 2: RC DESIGN ---
         with tab2:
             st.subheader("Reinforced Concrete Design (ACI 318)")
             
-            # Loop through each span to design
+            # --- 1. COLLECT DESIGN DATA FOR LONGITUDINAL PLOT ---
             cum_dist = [0] + list(np.cumsum(spans))
+            all_span_designs = []
             
             for i in range(n_spans):
-                st.markdown(f"### Span {i+1} (L = {spans[i]} m)")
-                
-                # 1. Extract Forces for this span
                 start_x = cum_dist[i]
                 end_x = cum_dist[i+1]
-                
-                # Filter results for this span
                 mask = (df_res['x'] >= start_x) & (df_res['x'] <= end_x)
                 span_res = df_res[mask]
                 
-                # Get Critical Moments & Shear
-                # Convert N-m to kNm and N to kN
-                m_max_pos = span_res['moment'].max() / 1000.0
-                m_max_neg = span_res['moment'].min() / 1000.0
-                v_max_abs = span_res['shear'].abs().max() / 1000.0
+                m_pos = max(0, span_res['moment'].max() / 1000.0)
+                m_neg = span_res['moment'].min() / 1000.0
+                v_u = span_res['shear'].abs().max() / 1000.0
                 
-                if m_max_pos < 0: m_max_pos = 0 # Ignore if no positive moment
-                
-                # 2. Call RC Design Logic
                 design_res = rc_design.design_span_expert(
-                    m_pos=m_max_pos,
-                    m_neg=m_max_neg,
-                    v_u=v_max_abs,
-                    b=params['b'],
-                    h=params['h'],
-                    fc=params['fc'],
-                    fy=params['fy'],
-                    cover=params['cover'],
-                    db=params['db_main']
+                    m_pos, m_neg, v_u, 
+                    params['b'], params['h'], params['fc'], params['fy'], 
+                    params['cover'], params['db_main']
                 )
+                design_res['db'] = params['db_main'] # Add DB info for plotter
+                all_span_designs.append(design_res)
+
+            # --- 2. DRAW LONGITUDINAL SECTION (TOP) ---
+            st.markdown("### 📐 Overall Beam Reinforcement")
+            fig_long = section_plotter.plot_longitudinal_section(
+                spans, sup_df, all_span_designs, params['h'], params['cover']
+            )
+            st.pyplot(fig_long)
+            st.markdown("---")
+
+            # --- 3. DRAW CROSS SECTIONS PER SPAN ---
+            for i in range(n_spans):
+                d_res = all_span_designs[i]
                 
-                # 3. Layout: Graphics vs Data
-                c1, c2 = st.columns([1.5, 1])
+                col_info, col_plot = st.columns([1, 1])
                 
-                with c1:
-                    # Draw Cross Section
-                    # We create a composite plot logic or just plot the critical section (e.g., Midspan)
-                    # For simplicity, let's plot the Positive Moment Section (Midspan-ish)
-                    st.markdown("**SECTION DETAIL (Midspan / Positive Region)**")
+                with col_info:
+                    st.markdown(f"#### Span {i+1} Detail")
+                    st.info(f"**Positive Zone (Midspan)**\n- Moment: {d_res['pos']['capacity']:.2f} kNm\n- Rebar: {d_res['pos']['n']} - DB{params['db_main']}")
+                    st.warning(f"**Negative Zone (Support)**\n- Moment: {d_res['neg']['capacity']:.2f} kNm\n- Rebar: {d_res['neg']['n']} - DB{params['db_main']}")
+                    st.error(f"**Shear Stirrups**\n- {d_res['shear_stirrups']}")
+
+                with col_plot:
+                    # Plot Section
                     fig_sec = section_plotter.plot_section(
-                        b=params['b'],
-                        h=params['h'],
-                        cover_mm=params['cover'],
-                        db_mm=params['db_main'],
-                        n_top=design_res['pos']['n'] if design_res['pos']['n'] > 0 else 2, # Show dummy top bars (hangers) if 0
-                        n_bot=design_res['pos']['n'],
-                        stirrup_info=design_res['shear_stirrups'], 
-                        fc=params['fc'],
-                        fy=params['fy']
+                        params['b'], params['h'], params['cover'], params['db_main'],
+                        n_top=d_res['neg']['n'], # Show Max Top Bars
+                        n_bot=d_res['pos']['n'], # Show Max Bot Bars
+                        stirrup_info=d_res['shear_stirrups'],
+                        fc=params['fc'], fy=params['fy']
                     )
                     st.pyplot(fig_sec)
-
-                with c2:
-                    st.markdown("**DESIGN CHECK LIST**")
-                    
-                    # Create Summary Dataframe
-                    res_summary = {
-                        "Zone": ["Positive (Mid)", "Negative (Sup)"],
-                        "Mu (kNm)": [f"{m_max_pos:.2f}", f"{m_max_neg:.2f}"],
-                        "Rebar Qty": [
-                            f"{design_res['pos']['n']} - DB{params['db_main']}",
-                            f"{design_res['neg']['n']} - DB{params['db_main']}"
-                        ],
-                        "Note": [design_res['pos']['note'], design_res['neg']['note']],
-                        "Capacity (kNm)": [
-                            f"{design_res['pos']['capacity']:.2f}",
-                            f"{design_res['neg']['capacity']:.2f}"
-                        ]
-                    }
-                    st.dataframe(pd.DataFrame(res_summary))
-                    
-                    st.info(f"🛡️ Shear Design (Vu = {v_max_abs:.2f} kN): **{design_res['shear_stirrups']}**")
                 
-                st.markdown("---")
+                st.divider()
