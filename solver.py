@@ -9,13 +9,9 @@ class BeamSolver:
         self.I = float(I)
         self.A = float(A) if A is not None else (b * h)
         self.G = float(G) if G is not None else 7.7e10
-        self.b = b # Width (m)
-        self.h = h # Depth (m)
-        
-        # 1. พิกัดของโหนดหลัก
+        self.b = b 
+        self.h = h 
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
-        
-        # 2. จัดการข้อมูล Input
         self.loads_df = self._sanitize_loads(loads_input)
         self.supports_df = self._sanitize_supports(supports_input)
 
@@ -146,42 +142,37 @@ class BeamSolver:
         }
 
     def design_rc_section(self, fc_prime_mpa, fy_mpa, d_prime=0.05):
-        """
-        ออกแบบปริมาณเหล็กเสริมตามมาตรฐาน SDM (ACI 318)
-        fc_prime_mpa: MPa, fy_mpa: MPa
-        """
         df, _, summary = self.solve()
-        mu_pos = summary['M_pos']['value'] # N-m
-        mu_neg = abs(summary['M_neg']['value']) # N-m
-        
+        mu_pos = summary['M_pos']['value']
+        mu_neg = abs(summary['M_neg']['value'])
         phi = 0.90
         d = self.h - d_prime
         b = self.b
         
         def calculate_as(mu):
-            if mu <= 0: return 0.0
-            # Mu = phi * As * fy * (d - a/2)
-            # a = (As * fy) / (0.85 * fc' * b)
-            # แก้สมการ Quadratic หา As
+            if mu <= 0.1: return 0.0
             a_quad = (fy_mpa**2) / (1.7 * fc_prime_mpa * b)
             b_quad = -fy_mpa * d
-            c_quad = mu / (phi * 1e6) # แปลง mu เป็น MN-m
-            
-            # As = (-b - sqrt(b^2 - 4ac)) / 2a
+            c_quad = mu / (phi * 1e6) 
             discriminant = b_quad**2 - 4 * a_quad * c_quad
-            if discriminant < 0: return -1 # หน้าตัดเล็กเกินไป
-            
+            if discriminant < 0: return -1 
             as_m2 = (-b_quad - np.sqrt(discriminant)) / (2 * a_quad)
             as_cm2 = as_m2 * 10000
-            
-            # Check As_min (ACI 318)
             as_min = (max(0.25 * np.sqrt(fc_prime_mpa), 1.4) / fy_mpa) * b * d * 10000
             return max(as_cm2, as_min)
 
-        return {
-            'as_pos': calculate_as(mu_pos),
-            'as_neg': calculate_as(mu_neg),
-            'b_mm': b * 1000,
-            'h_mm': self.h * 1000,
-            'phi': phi
-        }
+        return {'as_pos': calculate_as(mu_pos), 'as_neg': calculate_as(mu_neg)}
+
+    def design_shear(self, fc_prime_mpa, fy_mpa, d_prime=0.05):
+        df, _, summary = self.solve()
+        vu = summary['V_max']['value']
+        phi_v = 0.85
+        d = self.h - d_prime
+        b = self.b
+        vc = (1/6) * np.sqrt(fc_prime_mpa) * b * d * 1e6 
+        vs = max(0, (vu / phi_v) - vc)
+        av = 2 * 0.636 / 10000 # RB9 stirrups 2-legs
+        if vs <= 0: s = d / 2
+        else: s = (av * (fy_mpa * 1e6) * d) / vs
+        s = min(s, d / 2, 0.30)
+        return {"vu_kn": vu/1000, "vc_kn": vc/1000, "spacing_mm": s*1000}
