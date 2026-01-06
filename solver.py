@@ -7,19 +7,14 @@ class BeamSolver:
         self.spans = [float(s) for s in spans]
         self.E = float(E)
         self.I = float(I)
-        self.b = b  # สำหรับใช้ใน RC Design
-        self.h = h  # สำหรับใช้ใน RC Design
+        self.b = b
+        self.h = h
         self.A = float(A) if A is not None else (b * h)
         self.G = float(G) if G is not None else 7.7e10
         
-        # 1. กำหนดพิกัดของโหนดหลัก (จุดเริ่มต้น/สิ้นสุดของ Span)
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
-        
-        # 2. ทำความสะอาดข้อมูล Input
         self.loads_df = self._sanitize_loads(loads_input)
         self.supports_df = self._sanitize_supports(supports_input)
-        
-        # สำหรับเก็บผลลัพธ์เพื่อส่งต่อให้ไฟล์อื่น
         self.last_summ = None
 
     def _sanitize_supports(self, supports_input):
@@ -28,12 +23,9 @@ class BeamSolver:
         for s in data:
             stype = str(s.get('type', s.get('Support Type', 'None')))
             if stype == "None": continue
-            
             raw_id = s.get('id', s.get('Node ID'))
             try:
                 idx = int(raw_id)
-                # หมายเหตุ: ใน app.py ลบ 1 มาแล้ว (0-based) 
-                # แต่ใส่เช็คไว้อีกชั้นเพื่อความปลอดภัย
                 if 0 <= idx < len(self.cum_spans):
                     sanitized.append({'x': self.cum_spans[idx], 'type': stype})
             except: continue
@@ -50,7 +42,6 @@ class BeamSolver:
         return df
 
     def solve(self):
-        # --- [STEP 1: สร้างพิกัดโหนดทั้งหมดในระบบ FEM] ---
         pts = self.cum_spans.copy()
         for _, l in self.loads_df.iterrows():
             pts.append(l['x'])
@@ -66,7 +57,6 @@ class BeamSolver:
         K = np.zeros((dof, dof))
         F = np.zeros(dof)
 
-        # --- [STEP 2: ประกอบ Stiffness Matrix] ---
         for i in range(num_nodes - 1):
             L = nodes[i+1] - nodes[i]
             if L > 1e-5:
@@ -74,7 +64,6 @@ class BeamSolver:
                 idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
                 K[np.ix_(idx, idx)] += k_el
 
-        # --- [STEP 3: ใส่แรง (Force Vector) พร้อม Fixed End Moments] ---
         for _, l in self.loads_df.iterrows():
             if l['type'] == 'P':
                 nid = np.argmin([abs(n - l['x']) for n in nodes])
@@ -90,13 +79,11 @@ class BeamSolver:
                     overlap = min(e_g, n2) - max(s_g, n1)
                     if overlap > 1e-5:
                         w = l['mag']
-                        # ปรับปรุงเป็น FEM ที่ถูกต้อง (Exact Beam Theory)
                         F[2*i] -= (w * L_el / 2)
                         F[2*i+1] -= (w * L_el**2 / 12)
                         F[2*(i+1)] -= (w * L_el / 2)
                         F[2*(i+1)+1] += (w * L_el**2 / 12)
 
-        # --- [STEP 4: ใส่เงื่อนไขขอบเขต (Boundary Conditions)] ---
         free_dof = np.full(dof, True)
         for _, sup in self.supports_df.iterrows():
             nid = np.argmin([abs(n - sup['x']) for n in nodes])
@@ -106,7 +93,6 @@ class BeamSolver:
                 if sup['type'] == 'Fixed':
                     free_dof[2*nid+1] = False
 
-        # --- [STEP 5: คำนวณ Displacement และ Reactions] ---
         U = np.zeros(dof)
         if not np.all(free_dof):
             K_sub = K[np.ix_(free_dof, free_dof)]
@@ -116,14 +102,12 @@ class BeamSolver:
 
         R_full = K @ U - F
 
-        # --- [STEP 6: Mapping Reactions กลับไปที่ Node หลัก] ---
         r_mapped = np.zeros(2 * (len(self.spans) + 1))
         for i, target_x in enumerate(self.cum_spans):
             nid = np.argmin([abs(n - target_x) for n in nodes])
             r_mapped[2*i] = R_full[2*nid]
             r_mapped[2*i+1] = R_full[2*nid+1]
 
-        # --- [STEP 7: คำนวณค่าแรงภายในเพื่อวาดกราฟ] ---
         results = []
         plot_x = np.unique(np.sort(np.concatenate([np.linspace(0, nodes[-1], 400), nodes])))
         for x in plot_x:
@@ -151,7 +135,7 @@ class BeamSolver:
             results.append({'x': x, 'deflection': defl, 'shear': V, 'moment': M})
 
         df_res = pd.DataFrame(results)
-        self.last_summ = self._create_summary(df_res) # เก็บไว้ให้ RC Design
+        self.last_summ = self._create_summary(df_res)
         return df_res, r_mapped, self.last_summ
 
     def _get_k(self, L):
@@ -171,10 +155,10 @@ class BeamSolver:
         }
 
     def design_rc_section(self, fc, fy):
-        """เรียกใช้ rc_design.py เพื่อคำนวณเหล็กเสริม"""
         try:
-            import rc_design
-            return rc_design.calculate_reinforcement(self.last_summ, self.b, self.h, fc, fy)
-        except ImportError:
-            # Fallback หากไฟล์ rc_design.py ยังไม่พร้อม
-            return {'as_pos': 0.0, 'as_neg': 0.0, 'b_mm': self.b*1000, 'h_mm': self.h*1000}
+            import rc_design 
+            # แก้ไขบั๊ก Name Shadowing โดยใช้ชื่อตัวแปรอื่นรับค่า
+            output = rc_design.calculate_reinforcement(self.last_summ, self.b, self.h, fc, fy)
+            return output
+        except Exception as e:
+            return {'as_pos': 0.0, 'as_neg': 0.0, 'b_mm': self.b*1000, 'h_mm': self.h*1000, 'error': str(e)}
