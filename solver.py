@@ -3,15 +3,19 @@ import pandas as pd
 from scipy.linalg import solve
 
 class BeamSolver:
-    def __init__(self, spans, supports_input, loads_input, E, I, A=None, G=None):
+    def __init__(self, spans, supports_input, loads_input, E, I, A=None, G=None, b=0.3, h=0.5):
         self.spans = [float(s) for s in spans]
         self.E = float(E)
         self.I = float(I)
-        # ฟื้นฟูค่า A และ G สำหรับ Timoshenko Beam หรือการคิด Shear Deformation
-        self.A = float(A) if A is not None else 0.1 
+        self.A = float(A) if A is not None else (b * h)
         self.G = float(G) if G is not None else 7.7e10
+        self.b = b # Width (m)
+        self.h = h # Depth (m)
         
+        # 1. พิกัดของโหนดหลัก
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
+        
+        # 2. จัดการข้อมูล Input
         self.loads_df = self._sanitize_loads(loads_input)
         self.supports_df = self._sanitize_supports(supports_input)
 
@@ -24,7 +28,6 @@ class BeamSolver:
             raw_id = s.get('id', s.get('Node ID'))
             try:
                 idx = int(raw_id)
-                # ฟื้นฟู Logic: ถ้ามาจากตาราง Node ID (1-based) ให้ลบ 1
                 if 'Node ID' in s: idx -= 1 
                 if 0 <= idx < len(self.cum_spans):
                     sanitized.append({'x': self.cum_spans[idx], 'type': stype})
@@ -35,7 +38,6 @@ class BeamSolver:
         if not loads_input: return pd.DataFrame(columns=['span_index', 'type', 'mag', 'x', 'dist'])
         df = pd.DataFrame(loads_input)
         def get_global_x(row):
-            # รองรับทั้ง span_index และ span_idx
             s_idx = int(row.get('span_index', row.get('span_idx', 0)))
             lx = float(row.get('x', 0))
             return round(self.cum_spans[s_idx] + lx, 4)
@@ -43,7 +45,6 @@ class BeamSolver:
         return df
 
     def solve(self):
-        # STEP 1: Node Generation (Support + Load Points)
         pts = self.cum_spans.copy()
         for _, l in self.loads_df.iterrows():
             pts.append(l['x'])
@@ -59,7 +60,6 @@ class BeamSolver:
         K = np.zeros((dof, dof))
         F = np.zeros(dof)
 
-        # STEP 2: Matrix Assembly
         for i in range(num_nodes - 1):
             L = nodes[i+1] - nodes[i]
             if L > 1e-5:
@@ -67,56 +67,41 @@ class BeamSolver:
                 idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
                 K[np.ix_(idx, idx)] += k_el
 
-        # STEP 3: Force Vector with Fixed End Moments (FEM)
         for _, l in self.loads_df.iterrows():
-            if l['type'] == 'P':
-                nid = np.argmin([abs(n - l['x']) for n in nodes])
-                F[2*nid] -= l['mag']
-            elif l['type'] == 'M':
-                nid = np.argmin([abs(n - l['x']) for n in nodes])
-                F[2*nid+1] += l['mag']
+            nid = np.argmin([abs(n - l['x']) for n in nodes])
+            if l['type'] == 'P': F[2*nid] -= l['mag']
+            elif l['type'] == 'M': F[2*nid+1] += l['mag']
             elif l['type'] == 'U':
                 s_g, e_g = l['x'], round(l['x'] + l['dist'], 4)
                 for i in range(num_nodes - 1):
                     n1, n2 = nodes[i], nodes[i+1]
-                    L_el = n2 - n1
                     overlap = min(e_g, n2) - max(s_g, n1)
                     if overlap > 1e-5:
-                        w = l['mag']
-                        # ปรับปรุง: ใช้ Exact Fixed End Forces สำหรับคาน (สมบูรณ์กว่าเดิม)
-                        F[2*i] -= (w * L_el / 2)
-                        F[2*i+1] -= (w * L_el**2 / 12)
-                        F[2*(i+1)] -= (w * L_el / 2)
-                        F[2*(i+1)+1] += (w * L_el**2 / 12)
+                        F[2*i] -= l['mag'] * overlap * 0.5
+                        F[2*(i+1)] -= l['mag'] * overlap * 0.5
 
-        # STEP 4: Boundary Conditions (ฟื้นฟู Logic เดิม)
         free_dof = np.full(dof, True)
         for _, sup in self.supports_df.iterrows():
             nid = np.argmin([abs(n - sup['x']) for n in nodes])
             if abs(nodes[nid] - sup['x']) < 1e-4:
-                if sup['type'] in ['Pin', 'Roller', 'Fixed']:
-                    free_dof[2*nid] = False
-                if sup['type'] == 'Fixed':
-                    free_dof[2*nid+1] = False
+                if sup['type'] in ['Pin', 'Roller', 'Fixed']: free_dof[2*nid] = False
+                if sup['type'] == 'Fixed': free_dof[2*nid+1] = False
 
-        # STEP 5: Solve Displacement
         U = np.zeros(dof)
         if not np.all(free_dof):
-            U[free_dof] = solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
+            K_sub = K[np.ix_(free_dof, free_dof)]
+            F_sub = F[free_dof]
+            if K_sub.size > 0: U[free_dof] = solve(K_sub, F_sub)
 
-        # R_full คือแรงปฏิกิริยา (Equilibrium หัวใจหลักที่คุณต้องการเช็ค)
         R_full = K @ U - F
-
-        # STEP 6: Mapping Reactions กลับไปโหนดหลัก
         r_mapped = np.zeros(2 * (len(self.spans) + 1))
         for i, target_x in enumerate(self.cum_spans):
             nid = np.argmin([abs(n - target_x) for n in nodes])
             r_mapped[2*i] = R_full[2*nid]
             r_mapped[2*i+1] = R_full[2*nid+1]
 
-        # STEP 7: Internal Forces for Plotting
         results = []
-        plot_x = np.unique(np.sort(np.concatenate([np.linspace(0, nodes[-1], 400), nodes])))
+        plot_x = np.unique(np.sort(np.concatenate([np.linspace(0, nodes[-1], 350), nodes])))
         for x in plot_x:
             V, M, defl = 0.0, 0.0, 0.0
             for i, n_p in enumerate(nodes):
@@ -130,7 +115,8 @@ class BeamSolver:
                     M -= l['mag']
                 elif l['type'] == 'U' and l['x'] < x:
                     d = min(x, l['x'] + l['dist']) - l['x']
-                    V -= l['mag']*d; M -= l['mag']*d*(x - (l['x'] + d/2))
+                    if d > 0:
+                        V -= l['mag']*d; M -= l['mag']*d*(x - (l['x'] + d/2))
             
             for i in range(num_nodes - 1):
                 if nodes[i] <= x <= nodes[i+1] + 1e-5:
@@ -140,22 +126,62 @@ class BeamSolver:
                     break
             results.append({'x': x, 'deflection': defl, 'shear': V, 'moment': M})
 
-        return pd.DataFrame(results), r_mapped, self._create_summary(pd.DataFrame(results))
+        df_res = pd.DataFrame(results)
+        return df_res, r_mapped, self._create_summary(df_res)
 
     def _get_k(self, L):
-        # สามารถปรับเป็น Timoshenko Stiffness ได้หากต้องการความแม่นยำสูงในคานลึก
         EI = self.E * self.I
         return (EI / L**3) * np.array([
-            [12, 6*L, -12, 6*L],
-            [6*L, 4*L**2, -6*L, 2*L**2],
-            [-12, -6*L, 12, -6*L],
-            [6*L, 2*L**2, -6*L, 4*L**2]
+            [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
+            [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
         ])
 
     def _create_summary(self, df):
+        if df.empty: return {}
         return {
             'V_max': {'value': df['shear'].abs().max(), 'x': df.iloc[df['shear'].abs().idxmax()]['x']},
             'M_pos': {'value': df['moment'].max(), 'x': df.iloc[df['moment'].idxmax()]['x']},
             'M_neg': {'value': df['moment'].min(), 'x': df.iloc[df['moment'].idxmin()]['x']},
             'D_max': {'value': df['deflection'].abs().max(), 'x': df.iloc[df['deflection'].abs().idxmax()]['x']}
+        }
+
+    def design_rc_section(self, fc_prime_mpa, fy_mpa, d_prime=0.05):
+        """
+        ออกแบบปริมาณเหล็กเสริมตามมาตรฐาน SDM (ACI 318)
+        fc_prime_mpa: MPa, fy_mpa: MPa
+        """
+        df, _, summary = self.solve()
+        mu_pos = summary['M_pos']['value'] # N-m
+        mu_neg = abs(summary['M_neg']['value']) # N-m
+        
+        phi = 0.90
+        d = self.h - d_prime
+        b = self.b
+        
+        def calculate_as(mu):
+            if mu <= 0: return 0.0
+            # Mu = phi * As * fy * (d - a/2)
+            # a = (As * fy) / (0.85 * fc' * b)
+            # แก้สมการ Quadratic หา As
+            a_quad = (fy_mpa**2) / (1.7 * fc_prime_mpa * b)
+            b_quad = -fy_mpa * d
+            c_quad = mu / (phi * 1e6) # แปลง mu เป็น MN-m
+            
+            # As = (-b - sqrt(b^2 - 4ac)) / 2a
+            discriminant = b_quad**2 - 4 * a_quad * c_quad
+            if discriminant < 0: return -1 # หน้าตัดเล็กเกินไป
+            
+            as_m2 = (-b_quad - np.sqrt(discriminant)) / (2 * a_quad)
+            as_cm2 = as_m2 * 10000
+            
+            # Check As_min (ACI 318)
+            as_min = (max(0.25 * np.sqrt(fc_prime_mpa), 1.4) / fy_mpa) * b * d * 10000
+            return max(as_cm2, as_min)
+
+        return {
+            'as_pos': calculate_as(mu_pos),
+            'as_neg': calculate_as(mu_neg),
+            'b_mm': b * 1000,
+            'h_mm': self.h * 1000,
+            'phi': phi
         }
