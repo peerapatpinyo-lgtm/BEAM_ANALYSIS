@@ -6,7 +6,7 @@ from solver import BeamSolver
 import rc_design
 import design_view
 
-st.set_page_config(page_title="Professional Structural Suite", layout="wide")
+st.set_page_config(page_title="Pro Structural Suite", layout="wide")
 
 if 'loads' not in st.session_state: st.session_state.loads = []
 
@@ -18,7 +18,7 @@ with st.container(border=True):
     col_g1, col_g2 = st.columns([1, 3])
     with col_g1:
         n_spans = st.number_input("Number of Spans", 1, 10, 1)
-        spans = [st.number_input(f"Span {i+1} Length (m)", 0.1, 25.0, 5.0, key=f"L_{i}") for i in range(n_spans)]
+        spans = [st.number_input("L{} (m)".format(i+1), 0.1, 25.0, 5.0, key="L_{}".format(i)) for i in range(n_spans)]
         
     with col_g2:
         c1, c2, c3, c4, c5 = st.columns([1, 1.2, 1, 1, 1])
@@ -35,9 +35,9 @@ with st.container(border=True):
             })
             st.rerun()
 
-# --- 2. MATERIAL PROPERTIES ---
+# --- 2. MATERIAL & SECTION ---
 with st.sidebar:
-    st.header("🧱 Material & Section")
+    st.header("🧱 Material Properties")
     fc = st.number_input("f'c (MPa)", 28.0)
     fy = st.number_input("fy (MPa)", 400.0)
     b_m = st.number_input("Width b (m)", 0.30)
@@ -51,39 +51,39 @@ if st.button("🚀 EXECUTE ANALYSIS", type="primary", use_container_width=True):
     df, reac, eq = sol.solve()
 
     if not df.empty:
-        st.header("📊 PART I: Internal Forces")
+        st.header("📊 PART I: Analysis Results")
         design_view.draw_interactive_diagrams(df, reac, spans, pd.DataFrame(supports), st.session_state.loads)
+        
 
-        st.header("📋 PART II: Engineering Calculation Sheet")
+[Image of shear force and bending moment diagrams for a continuous beam]
+
+
+        st.header("📋 PART II: Technical Calculation Sheet")
         db_m = st.selectbox("Main Rebar DB", [12, 16, 20, 25, 28])
         
         cum_dist = [0] + list(np.cumsum(spans))
         for i in range(n_spans):
-            with st.expander(f"SPAN {i+1} CALCULATION DETAILS", expanded=True):
+            with st.expander("SPAN {} CALCULATION DETAILS".format(i+1), expanded=True):
                 s_df = df[(df['x'] >= cum_dist[i]) & (df['x'] <= cum_dist[i+1])]
                 res = rc_design.design_span_expert(s_df['moment'].max()/1000, s_df['moment'].min()/1000, 
                                                    s_df['shear'].abs().max()/1000, b_m, h_m, fc, fy, 240, cover, db_m, 9)
                 
                 c1, c2, c3 = st.columns([1.5, 1, 1.5])
                 with c1:
-                    st.markdown("**1. Design Forces**")
-                    # FIX: Separate variables to avoid LaTeX/f-string curly brace conflict
-                    txt_mu_pos = f"M_u^{(+)} = {res['pos']['mu_val']:.2f} \\text{{ kNm}}"
-                    txt_mu_neg = f"M_u^{{(-)}} = {res['neg']['mu_val']:.2f} \\text{{ kNm}}"
-                    st.latex(txt_mu_pos)
-                    st.latex(txt_mu_neg)
+                    st.markdown("**1. Design Moments**")
+                    # SAFE METHOD: Use % formatting to avoid f-string curly brace conflict
+                    st.latex(r"M_u^{(+)} = %.2f \text{ kNm}" % res['pos']['mu_val'])
+                    st.latex(r"M_u^{(-)} = %.2f \text{ kNm}" % res['neg']['mu_val'])
                     
                 with c2:
                     st.markdown("**2. Section Property**")
-                    txt_et = f"\\epsilon_t = {res['pos']['et']:.5f}"
-                    txt_a = f"a = {res['pos']['a']:.2f} \\text{{ mm}}"
-                    st.latex(txt_et)
-                    st.latex(txt_a)
+                    st.latex(r"\epsilon_t = %.5f" % res['pos']['et'])
+                    st.latex(r"a = %.2f \text{ mm}" % res['pos']['a'])
 
                 with c3:
-                    st.markdown("**3. Rebar Tuning**")
-                    n_top = st.number_input(f"Top DB{db_m} (S{i+1})", 2, 12, int(res['neg']['n']))
-                    n_bot = st.number_input(f"Bot DB{db_m} (S{i+1})", 2, 12, int(res['pos']['n']))
+                    st.markdown("**3. Rebar Adjustment**")
+                    n_top = st.number_input("Top DB{} (S{})".format(db_m, i+1), 2, 12, int(res['neg']['n']))
+                    n_bot = st.number_input("Bot DB{} (S{})".format(db_m, i+1), 2, 12, int(res['pos']['n']))
                     
                     fig_cs = go.Figure()
                     fig_cs.add_shape(type="rect", x0=0, y0=0, x1=b_m, y1=h_m, fillcolor="rgba(0,0,0,0.05)", line=dict(color="Black", width=3))
@@ -93,8 +93,8 @@ if st.button("🚀 EXECUTE ANALYSIS", type="primary", use_container_width=True):
                         fig_cs.add_trace(go.Scatter(x=[(b_m/(n_bot+1))*(j+1)], y=[cover/1000], mode='markers', marker=dict(color='Blue', size=db_m)))
                     fig_cs.update_layout(width=200, height=220, showlegend=False, xaxis=dict(visible=False), yaxis=dict(visible=False), margin=dict(l=5,r=5,t=5,b=5))
                     st.plotly_chart(fig_cs)
+                    
 
                 st.divider()
                 st.markdown("**4. Shear Verification**")
-                txt_shear = f"V_u = {res['vu']:.2f} \\text{{ kN}}, \\quad \\phi V_c = {res['phi_vc']:.2f} \\text{{ kN}}"
-                st.latex(txt_shear)
+                st.latex(r"V_u = %.2f \text{ kN}, \quad \phi V_c = %.2f \text{ kN}" % (res['vu'], res['phi_vc']))
