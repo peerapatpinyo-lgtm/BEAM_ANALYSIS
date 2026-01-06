@@ -1,134 +1,164 @@
-import streamlit as st
-import pandas as pd
 import numpy as np
-from solver import BeamSolver
-import design_view
+import pandas as pd
+from scipy.linalg import solve
 
-# --- Page Config ---
-st.set_page_config(page_title="Beam Analysis & Design Pro", layout="wide", page_icon="🏗️")
-
-# --- Session State ---
-if 'spans' not in st.session_state: st.session_state['spans'] = [5.0, 5.0]
-if 'supports' not in st.session_state: 
-    st.session_state['supports'] = [{'id': 0, 'type': 'Pin'}, {'id': 1, 'type': 'Roller'}, {'id': 2, 'type': 'Roller'}]
-if 'loads' not in st.session_state: st.session_state['loads'] = []
-
-# --- Sidebar ---
-st.sidebar.title("🏗️ Beam & Design Settings")
-st.sidebar.markdown("---")
-
-st.sidebar.markdown("### 1. Section & Materials")
-fc_prime_input = st.sidebar.number_input("Concrete Strength (f'c) [MPa]", 20.0, 50.0, 25.0)
-fy_input = st.sidebar.number_input("Steel Strength (fy) [MPa]", 240.0, 500.0, 400.0)
-
-E = st.sidebar.number_input("Elastic Modulus (E) [Pa]", value=2e11, format="%.2e")
-
-input_method = st.sidebar.radio("Input Method", ["Rectangular Size (b x h)", "Custom Properties"])
-if input_method == "Rectangular Size (b x h)":
-    c1, c2 = st.sidebar.columns(2)
-    b_val = c1.number_input("Width (b) [m]", 0.1, 1.0, 0.30)
-    h_val = c2.number_input("Depth (h) [m]", 0.1, 2.0, 0.50)
-    I = (b_val * h_val**3) / 12
-    A = b_val * h_val
-    st.sidebar.info(f"I = {I:.2e} m⁴ | A = {A:.2f} m²")
-else:
-    I = st.sidebar.number_input("Inertia (I) [m^4]", 5e-5, format="%.2e")
-    A = st.sidebar.number_input("Area (A) [m^2]", 0.01, format="%.4f")
-    b_val, h_val = 0.3, 0.5 # Default for design logic
-
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 2. Load Factors (ULS)")
-dl_factor = st.sidebar.number_input("Dead Load Factor", 1.4)
-ll_factor = st.sidebar.number_input("Live Load Factor", 1.7)
-
-# --- Main Interface ---
-st.title("🏗️ Structural Beam Analysis & RC Design")
-
-tab1, tab2, tab3 = st.tabs(["1️⃣ Spans", "2️⃣ Supports", "3️⃣ Loads"])
-
-with tab1:
-    col_s1, _ = st.columns([2, 1])
-    with col_s1:
-        n = st.number_input("Number of Spans", 1, 10, len(st.session_state['spans']))
-        current = st.session_state['spans']
-        if len(current) < n: current.extend([5.0]*(n-len(current)))
-        else: current = current[:n]
-        new_spans = []
-        cols = st.columns(min(n, 4))
-        for i in range(n):
-            new_spans.append(cols[i%4].number_input(f"Span {i+1} (m)", value=float(current[i]), min_value=0.1, key=f"s_{i}"))
-        st.session_state['spans'] = new_spans
-
-with tab2:
-    sup_data = []
-    nodes_count = len(st.session_state['spans']) + 1
-    current_sups = {int(s.get('id', -1)): s.get('type') for s in st.session_state['supports'] if 'id' in s}
-    for i in range(nodes_count):
-        stype = current_sups.get(i, "None")
-        sup_data.append({"Node ID": i+1, "Support Type": stype}) 
-    edited = st.data_editor(pd.DataFrame(sup_data), column_config={
-        "Node ID": st.column_config.NumberColumn(format="%d", disabled=True), 
-        "Support Type": st.column_config.SelectboxColumn(options=["None","Pin","Roller","Fixed"], required=True)
-    }, hide_index=True, use_container_width=True)
-    st.session_state['supports'] = [{'id': r['Node ID']-1, 'type': r['Support Type']} for _, r in edited.iterrows() if r['Support Type'] != "None"]
-
-with tab3:
-    c1, c2, c3 = st.columns([1,1,2])
-    span_idx = c1.selectbox("Select Span", range(len(st.session_state['spans'])), format_func=lambda x: f"Span {x+1}")
-    l_type = c2.selectbox("Load Type", ["Point Load (P)", "Uniform Load (U)", "Moment (M)"])
-    l_case = c2.selectbox("Case", ["DL", "LL"])
-    mag = c3.number_input("Magnitude (kg, kg/m)", value=1000.0)
-    sl = st.session_state['spans'][span_idx]
-    if "Uniform" in l_type:
-        cp = st.columns(2); x1 = cp[0].number_input("Start (m)", 0.0, float(sl), 0.0)
-        x2 = cp[1].number_input("End (m)", 0.0, float(sl), float(sl)); x_loc, dist = x1, x2-x1
-    else:
-        x_loc = st.number_input("Position x (m)", 0.0, float(sl), float(sl)/2); dist = 0
-    if st.button("➕ Add Load", type="primary"):
-        code = 'P' if 'Point' in l_type else ('U' if 'Uniform' in l_type else 'M')
-        st.session_state['loads'].append({'span_index': span_idx, 'type': code, 'mag': mag, 'x': x_loc, 'dist': dist, 'case': l_case})
-        st.rerun()
-    if st.session_state['loads']:
-        st.dataframe(st.session_state['loads'], use_container_width=True)
-        if st.button("Clear Last Load"): st.session_state['loads'].pop(); st.rerun()
-
-# --- RUN ANALYSIS & DESIGN ---
-st.markdown("---")
-if st.button("🚀 Run Analysis & Design", type="primary", use_container_width=True):
-    if len(st.session_state['supports']) < 2:
-        st.error("Error: Unstable Structure.")
-    else:
-        g = 9.81
-        valid_loads = []
-        for l in st.session_state['loads']:
-            if int(l['span_index']) < len(st.session_state['spans']):
-                new_l = l.copy()
-                new_l['mag'] *= (dl_factor if l['case']=='DL' else ll_factor) * g
-                valid_loads.append(new_l)
+class BeamSolver:
+    def __init__(self, spans, supports_input, loads_input, E, I, A=None, G=None, b=0.3, h=0.5):
+        self.spans = [float(s) for s in spans]
+        self.E = float(E)
+        self.I = float(I)
+        self.b = b
+        self.h = h
+        self.A = float(A) if A is not None else (b * h)
+        self.G = float(G) if G is not None else 7.7e10
         
-        solver = BeamSolver(st.session_state['spans'], st.session_state['supports'], valid_loads, E, I, A, b=b_val, h=h_val)
-        df, r, summ = solver.solve()
-        rc_design = solver.design_rc_section(fc_prime_input, fy_input)
+        self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
+        self.loads_df = self._sanitize_loads(loads_input)
+        self.supports_df = self._sanitize_supports(supports_input)
+        self.last_summ = None
 
-        if not df.empty:
-            design_view.draw_interactive_diagrams(df, r, st.session_state['spans'], st.session_state['supports'], valid_loads, dl_factor, ll_factor)
+    def _sanitize_supports(self, supports_input):
+        sanitized = []
+        data = supports_input.to_dict('records') if hasattr(supports_input, 'to_dict') else supports_input
+        for s in data:
+            stype = str(s.get('type', s.get('Support Type', 'None')))
+            if stype == "None": continue
+            raw_id = s.get('id', s.get('Node ID'))
+            try:
+                idx = int(raw_id)
+                if 0 <= idx < len(self.cum_spans):
+                    sanitized.append({'x': self.cum_spans[idx], 'type': stype})
+            except: continue
+        return pd.DataFrame(sanitized)
+
+    def _sanitize_loads(self, loads_input):
+        if not loads_input: return pd.DataFrame(columns=['span_index', 'type', 'mag', 'x', 'dist'])
+        df = pd.DataFrame(loads_input)
+        def get_global_x(row):
+            s_idx = int(row.get('span_index', row.get('span_idx', 0)))
+            lx = float(row.get('x', 0))
+            return round(self.cum_spans[s_idx] + lx, 4)
+        df['x'] = df.apply(get_global_x, axis=1)
+        return df
+
+    def solve(self):
+        pts = self.cum_spans.copy()
+        for _, l in self.loads_df.iterrows():
+            pts.append(l['x'])
+            if l['type'] == 'U': pts.append(round(l['x'] + l['dist'], 4))
+        
+        nodes = []
+        for p in sorted(pts):
+            if not any(abs(p - n) < 1e-4 for n in nodes):
+                nodes.append(p)
+        
+        num_nodes = len(nodes)
+        dof = 2 * num_nodes
+        K = np.zeros((dof, dof))
+        F = np.zeros(dof)
+
+        for i in range(num_nodes - 1):
+            L = nodes[i+1] - nodes[i]
+            if L > 1e-5:
+                k_el = self._get_k(L)
+                idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
+                K[np.ix_(idx, idx)] += k_el
+
+        for _, l in self.loads_df.iterrows():
+            if l['type'] == 'P':
+                nid = np.argmin([abs(n - l['x']) for n in nodes])
+                F[2*nid] -= l['mag']
+            elif l['type'] == 'M':
+                nid = np.argmin([abs(n - l['x']) for n in nodes])
+                F[2*nid+1] += l['mag']
+            elif l['type'] == 'U':
+                s_g, e_g = l['x'], round(l['x'] + l['dist'], 4)
+                for i in range(num_nodes - 1):
+                    n1, n2 = nodes[i], nodes[i+1]
+                    L_el = n2 - n1
+                    overlap = min(e_g, n2) - max(s_g, n1)
+                    if overlap > 1e-5:
+                        w = l['mag']
+                        F[2*i] -= (w * L_el / 2)
+                        F[2*i+1] -= (w * L_el**2 / 12)
+                        F[2*(i+1)] -= (w * L_el / 2)
+                        F[2*(i+1)+1] += (w * L_el**2 / 12)
+
+        free_dof = np.full(dof, True)
+        for _, sup in self.supports_df.iterrows():
+            nid = np.argmin([abs(n - sup['x']) for n in nodes])
+            if abs(nodes[nid] - sup['x']) < 1e-4:
+                if sup['type'] in ['Pin', 'Roller', 'Fixed']:
+                    free_dof[2*nid] = False
+                if sup['type'] == 'Fixed':
+                    free_dof[2*nid+1] = False
+
+        U = np.zeros(dof)
+        if not np.all(free_dof):
+            K_sub = K[np.ix_(free_dof, free_dof)]
+            F_sub = F[free_dof]
+            if K_sub.size > 0:
+                U[free_dof] = solve(K_sub, F_sub)
+
+        R_full = K @ U - F
+
+        r_mapped = np.zeros(2 * (len(self.spans) + 1))
+        for i, target_x in enumerate(self.cum_spans):
+            nid = np.argmin([abs(n - target_x) for n in nodes])
+            r_mapped[2*i] = R_full[2*nid]
+            r_mapped[2*i+1] = R_full[2*nid+1]
+
+        results = []
+        plot_x = np.unique(np.sort(np.concatenate([np.linspace(0, nodes[-1], 400), nodes])))
+        for x in plot_x:
+            V, M, defl = 0.0, 0.0, 0.0
+            for i, n_p in enumerate(nodes):
+                if n_p <= x + 1e-5:
+                    V += R_full[2*i]
+                    M += R_full[2*i]*(x - n_p) + R_full[2*i+1]
+            for _, l in self.loads_df.iterrows():
+                if l['type'] == 'P' and l['x'] <= x + 1e-5:
+                    V -= l['mag']; M -= l['mag']*(x - l['x'])
+                elif l['type'] == 'M' and l['x'] <= x + 1e-5:
+                    M -= l['mag']
+                elif l['type'] == 'U' and l['x'] < x:
+                    d = min(x, l['x'] + l['dist']) - l['x']
+                    if d > 0:
+                        V -= l['mag']*d; M -= l['mag']*d*(x - (l['x'] + d/2))
             
-            with st.expander("📊 Analysis & RC Design Results", expanded=True):
-                # Analysis Summary
-                st.markdown("#### 1. Analysis Summary (ULS)")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Max Shear", f"{summ['V_max']['value']/1000:.2f} kN")
-                c2.metric("Max Moment (+)", f"{summ['M_pos']['value']/1000:.2f} kNm")
-                c3.metric("Max Moment (-)", f"{summ['M_neg']['value']/1000:.2f} kNm")
-                
-                # RC Design Summary
-                st.markdown("---")
-                st.markdown("#### 2. Reinforcement Design (SDM)")
-                
-                d1, d2, d3 = st.columns(3)
-                d1.metric("Top Steel (As_neg)", f"{rc_design['as_neg']:.2f} cm²")
-                d2.metric("Bottom Steel (As_pos)", f"{rc_design['as_pos']:.2f} cm²")
-                d3.info(f"Section: {rc_design['b_mm']:.0f}x{rc_design['h_mm']:.0f} mm\nf'c: {fc_prime_input} MPa")
-                
-                if rc_design['as_pos'] == -1 or rc_design['as_neg'] == -1:
-                    st.error("❌ Section size is too small for the applied moment. Please increase b or h.")
+            for i in range(num_nodes - 1):
+                if nodes[i] <= x <= nodes[i+1] + 1e-5:
+                    s = (x - nodes[i]) / (nodes[i+1] - nodes[i])
+                    H = np.array([1-3*s**2+2*s**3, (x-nodes[i])*(1-s)**2, 3*s**2-2*s**3, (x-nodes[i])*(s**2-s)])
+                    defl = np.dot(H, U[2*i:2*i+4])
+                    break
+            results.append({'x': x, 'deflection': defl, 'shear': V, 'moment': M})
+
+        df_res = pd.DataFrame(results)
+        self.last_summ = self._create_summary(df_res)
+        return df_res, r_mapped, self.last_summ
+
+    def _get_k(self, L):
+        EI = self.E * self.I
+        return (EI / L**3) * np.array([
+            [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
+            [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
+        ])
+
+    def _create_summary(self, df):
+        if df.empty: return {}
+        return {
+            'V_max': {'value': df['shear'].abs().max(), 'x': df.iloc[df['shear'].abs().idxmax()]['x']},
+            'M_pos': {'value': df['moment'].max(), 'x': df.iloc[df['moment'].idxmax()]['x']},
+            'M_neg': {'value': df['moment'].min(), 'x': df.iloc[df['moment'].idxmin()]['x']},
+            'D_max': {'value': df['deflection'].abs().max(), 'x': df.iloc[df['deflection'].abs().idxmax()]['x']}
+        }
+
+    def design_rc_section(self, fc, fy):
+        try:
+            import rc_design 
+            # แก้ไขบั๊ก Name Shadowing โดยใช้ชื่อตัวแปรอื่นรับค่า
+            output = rc_design.calculate_reinforcement(self.last_summ, self.b, self.h, fc, fy)
+            return output
+        except Exception as e:
+            return {'as_pos': 0.0, 'as_neg': 0.0, 'b_mm': self.b*1000, 'h_mm': self.h*1000, 'error': str(e)}
