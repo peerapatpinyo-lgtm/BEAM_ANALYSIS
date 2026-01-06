@@ -3,20 +3,33 @@ import pandas as pd
 from scipy.linalg import solve
 
 class BeamSolver:
-    def __init__(self, spans, supports_input, loads_input, E, b=0.3, h=0.5, I_custom=None):
+    def __init__(self, spans, supports_input, loads_input, E, b=0.3, h=0.5, I_custom=None, fc=25):
         self.spans = [float(s) for s in spans]
         self.E = float(E)
-        self.b = b
-        self.h = h
-        # 1. จัดการค่า I (Auto/Custom)
+        self.b, self.h = b, h
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
+        # --- Timoshenko Factor ---
+        self.G = self.E / (2 * (1 + 0.2)) # Shear Modulus (nu=0.2 for concrete)
+        self.As = (5/6) * (b * h)        # Effective Shear Area
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
         self.loads_df = pd.DataFrame(loads_input)
         self.supports_df = pd.DataFrame(supports_input)
 
+    def _get_k_timoshenko(self, L):
+        EI = self.E * self.I
+        # Phi คือตัวแปรที่บ่งบอกอิทธิพลของ Shear (ถ้า Phi=0 จะกลายเป็น Euler-Bernoulli)
+        Phi = (12 * EI) / (L**2 * self.G * self.As)
+        coeff = EI / (L**3 * (1 + Phi))
+        
+        return coeff * np.array([
+            [12, 6*L, -12, 6*L],
+            [6*L, (4+Phi)*L**2, -6*L, (2-Phi)*L**2],
+            [-12, -6*L, 12, -6*L],
+            [6*L, (2-Phi)*L**2, -6*L, (4+Phi)*L**2]
+        ])
+
     def solve(self):
         try:
-            # --- Node Generation ---
             pts = self.cum_spans.copy()
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
@@ -31,19 +44,11 @@ class BeamSolver:
             total_load_fy = 0.0
             total_load_moment_at_0 = 0.0
 
-            # Stiffness Matrix Assembly
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
                 if L > 1e-5:
-                    EI = self.E * self.I
-                    k_el = (EI / L**3) * np.array([
-                        [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
-                        [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
-                    ])
-                    idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
-                    K[np.ix_(idx, idx)] += k_el
+                    K[np.ix_([2*i, 2*i+1, 2*(i+1), 2*(i+1)+1], [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1])] += self._get_k_timoshenko(L)
 
-            # --- 2. Load Application (P, U, M) & Equation Check Logic ---
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
                 mag = float(l['mag'])
@@ -52,23 +57,21 @@ class BeamSolver:
                     F[2*nid] -= mag
                     total_load_fy += mag
                     total_load_moment_at_0 += mag * gx
-                elif l['type'] == 'M': # Moment Load
+                elif l['type'] == 'M':
                     nid = np.argmin([abs(n - gx) for n in nodes])
                     F[2*nid+1] += mag
-                    total_load_moment_at_0 -= mag 
+                    total_load_moment_at_0 -= mag
                 elif l['type'] == 'U':
                     dist = float(l['dist'])
-                    s_g, e_g = gx, round(gx + dist, 4)
                     total_load_fy += mag * dist
                     total_load_moment_at_0 += (mag * dist) * (gx + dist/2)
                     for i in range(num_nodes - 1):
-                        overlap = min(e_g, nodes[i+1]) - max(s_g, nodes[i])
+                        overlap = min(gx+dist, nodes[i+1]) - max(gx, nodes[i])
                         if overlap > 1e-5:
                             w, L_el = mag, nodes[i+1] - nodes[i]
                             F[2*i] -= (w * L_el / 2); F[2*i+1] -= (w * L_el**2 / 12)
                             F[2*(i+1)] -= (w * L_el / 2); F[2*(i+1)+1] += (w * L_el**2 / 12)
 
-            # Boundary Conditions
             free_dof = np.full(dof, True)
             for _, sup in self.supports_df.iterrows():
                 if sup['type'] == "None": continue
@@ -80,7 +83,7 @@ class BeamSolver:
             U[free_dof] = solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
             R_full = K @ U - F
 
-            # --- Reaction & Equation Check Calculation ---
+            # Reactions & Eq Check
             reac_list = []
             total_reac_fy = 0.0
             total_reac_moment_at_0 = 0.0
@@ -88,15 +91,11 @@ class BeamSolver:
                 if sup['type'] == "None": continue
                 node_idx = int(sup['id'])
                 nid = np.argmin([abs(n - self.cum_spans[node_idx]) for n in nodes])
-                ry, rm = R_full[2*nid], R_full[2*nid+1]
-                reac_list.append({
-                    'Node': node_idx, 'Type': sup['type'], 
-                    'Ry (kN)': round(ry/1000, 3), 'M (kNm)': round(rm/1000, 3)
-                })
-                total_reac_fy += ry
-                total_reac_moment_at_0 += (ry * self.cum_spans[node_idx]) + rm
+                total_reac_fy += R_full[2*nid]
+                total_reac_moment_at_0 += (R_full[2*nid] * self.cum_spans[node_idx]) + R_full[2*nid+1]
+                reac_list.append({'Node': node_idx, 'Type': sup['type'], 'Ry (kN)': round(R_full[2*nid]/1000, 2), 'M (kNm)': round(R_full[2*nid+1]/1000, 2)})
 
-            # Diagram Results
+            # Results
             res_data = []
             for x in np.linspace(0, nodes[-1], 400):
                 V, M, defl = 0.0, 0.0, 0.0
@@ -105,13 +104,13 @@ class BeamSolver:
                         V += R_full[2*i]; M += R_full[2*i]*(x - n_p) + R_full[2*i+1]
                 for _, l in self.loads_df.iterrows():
                     gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
-                    if l['type'] == 'P' and gx <= x + 1e-5:
-                        V -= l['mag']; M -= l['mag']*(x - gx)
+                    if l['type'] == 'P' and gx <= x + 1e-5: V -= l['mag']; M -= l['mag']*(x - gx)
                     elif l['type'] == 'M' and gx <= x + 1e-5: M -= l['mag']
                     elif l['type'] == 'U' and gx < x:
                         d = min(x, gx + l['dist']) - gx
                         V -= l['mag']*d; M -= l['mag']*d*(x - (gx + d/2))
                 
+                # Deflection calculation (Timoshenko Shape Functions are complex, using Elastic Curve integration)
                 for i in range(num_nodes - 1):
                     if nodes[i] <= x <= nodes[i+1] + 1e-5:
                         L_el, s = nodes[i+1] - nodes[i], (x - nodes[i]) / (nodes[i+1] - nodes[i])
@@ -120,11 +119,8 @@ class BeamSolver:
                         break
                 res_data.append({'x': x, 'shear': V, 'moment': M, 'deflection': defl})
 
-            df_res = pd.DataFrame(res_data)
-            eq_check = {
+            return pd.DataFrame(res_data), pd.DataFrame(reac_list), {
                 'sum_fy_load': total_load_fy, 'sum_fy_reac': total_reac_fy,
                 'sum_m0_load': total_load_moment_at_0, 'sum_m0_reac': total_reac_moment_at_0
             }
-            return df_res, pd.DataFrame(reac_list), eq_check
-        except Exception as e:
-            return pd.DataFrame(), pd.DataFrame(), {"error": str(e)}
+        except Exception as e: return pd.DataFrame(), pd.DataFrame(), {"error": str(e)}
