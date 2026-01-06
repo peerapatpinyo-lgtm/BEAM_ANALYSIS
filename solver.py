@@ -3,24 +3,22 @@ import pandas as pd
 from scipy.linalg import solve
 
 class BeamSolver:
-    def __init__(self, spans, supports_input, loads_input, E, b=0.3, h=0.5, I_custom=None, fc=25):
+    def __init__(self, spans, supports_input, loads_input, E, b=0.3, h=0.5, I_custom=None):
         self.spans = [float(s) for s in spans]
         self.E = float(E)
         self.b, self.h = b, h
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
-        # --- Timoshenko Factor ---
-        self.G = self.E / (2 * (1 + 0.2)) # Shear Modulus (nu=0.2 for concrete)
-        self.As = (5/6) * (b * h)        # Effective Shear Area
+        # Timoshenko Constants
+        self.G = self.E / (2 * (1 + 0.2)) 
+        self.As = (5/6) * (b * h)        
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
         self.loads_df = pd.DataFrame(loads_input)
         self.supports_df = pd.DataFrame(supports_input)
 
     def _get_k_timoshenko(self, L):
         EI = self.E * self.I
-        # Phi คือตัวแปรที่บ่งบอกอิทธิพลของ Shear (ถ้า Phi=0 จะกลายเป็น Euler-Bernoulli)
         Phi = (12 * EI) / (L**2 * self.G * self.As)
         coeff = EI / (L**3 * (1 + Phi))
-        
         return coeff * np.array([
             [12, 6*L, -12, 6*L],
             [6*L, (4+Phi)*L**2, -6*L, (2-Phi)*L**2],
@@ -40,7 +38,6 @@ class BeamSolver:
             dof = 2 * num_nodes
             K, F = np.zeros((dof, dof)), np.zeros(dof)
 
-            # Equation Check Accumulators
             total_load_fy = 0.0
             total_load_moment_at_0 = 0.0
 
@@ -83,10 +80,8 @@ class BeamSolver:
             U[free_dof] = solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
             R_full = K @ U - F
 
-            # Reactions & Eq Check
             reac_list = []
-            total_reac_fy = 0.0
-            total_reac_moment_at_0 = 0.0
+            total_reac_fy, total_reac_moment_at_0 = 0.0, 0.0
             for _, sup in self.supports_df.iterrows():
                 if sup['type'] == "None": continue
                 node_idx = int(sup['id'])
@@ -95,7 +90,6 @@ class BeamSolver:
                 total_reac_moment_at_0 += (R_full[2*nid] * self.cum_spans[node_idx]) + R_full[2*nid+1]
                 reac_list.append({'Node': node_idx, 'Type': sup['type'], 'Ry (kN)': round(R_full[2*nid]/1000, 2), 'M (kNm)': round(R_full[2*nid+1]/1000, 2)})
 
-            # Results
             res_data = []
             for x in np.linspace(0, nodes[-1], 400):
                 V, M, defl = 0.0, 0.0, 0.0
@@ -109,8 +103,6 @@ class BeamSolver:
                     elif l['type'] == 'U' and gx < x:
                         d = min(x, gx + l['dist']) - gx
                         V -= l['mag']*d; M -= l['mag']*d*(x - (gx + d/2))
-                
-                # Deflection calculation (Timoshenko Shape Functions are complex, using Elastic Curve integration)
                 for i in range(num_nodes - 1):
                     if nodes[i] <= x <= nodes[i+1] + 1e-5:
                         L_el, s = nodes[i+1] - nodes[i], (x - nodes[i]) / (nodes[i+1] - nodes[i])
