@@ -1,36 +1,28 @@
 import numpy as np
 
-def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, cover_mm, db_main):
-    phi_m, phi_v = 0.90, 0.75
-    b, h = b_m * 1000, h_m * 1000 # แปลงเป็น mm
-    db_stirrup = 9 
-    d = h - cover_mm - db_stirrup - (db_main / 2)
+def design_section(mu_knm, b_m, h_m, fc, fy, cover_mm, db_main):
+    # พารามิเตอร์พื้นฐาน
+    phi = 0.9
+    b = b_m * 1000  # mm
+    h = h_m * 1000  # mm
+    d = h - cover_mm - 9 - (db_main/2) # d = h - cover - stirrup - db/2
     
-    def calc_flexure(mu_knm):
-        abs_mu = abs(mu_knm)
-        if abs_mu < 0.1:
-            as_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy) * b * d
-            return {"n": 2, "as_req": as_min, "status": "Min Steel"}
-        
-        mu_n = (abs_mu * 1e6) / phi_m
-        rn = mu_n / (b * d**2)
-        m = fy / (0.85 * fc)
-        
-        # ตรวจสอบหน้าตัด Over-reinforced
-        if rn > (0.85 * fc * 0.35): 
-            return {"n": 0, "status": "FAIL: SECTION TOO SMALL"}
-            
-        rho = (1/m) * (1 - np.sqrt(max(0, 1 - (2 * m * rn / fy))))
-        rho_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy)
-        as_req = max(rho, rho_min) * b * d
-        n_bars = max(2, int(np.ceil(as_req / (np.pi * (db_main**2) / 4))))
-        return {"n": n_bars, "as_req": as_req, "status": "OK"}
+    if abs(mu_knm) < 1.0: # กรณีโมเมนต์น้อยมาก ให้ใส่เหล็กขั้นต่ำ
+        as_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy) * b * d
+        n_bars = max(2, int(np.ceil(as_min / (np.pi * (db_main**2) / 4))))
+        return n_bars, "Min Steel"
 
-    res_pos = calc_flexure(mu_pos)
-    res_neg = calc_flexure(mu_neg)
-    phi_vc = (phi_v * 0.17 * np.sqrt(fc) * b * d) / 1000
+    # คำนวณเนื้อที่เหล็กเสริม
+    rn = (abs(mu_knm) * 1e6) / (phi * b * d**2)
+    m = fy / (0.85 * fc)
+    rho = (1/m) * (1 - np.sqrt(max(0, 1 - (2 * m * rn / fy))))
     
-    return {
-        "pos": res_pos, "neg": res_neg, "vu": vu, "phi_vc": phi_vc,
-        "mu_pos": mu_pos, "mu_neg": mu_neg, "b_m": b_m, "h_m": h_m
-    }
+    # ตรวจสอบ rho min/max
+    rho_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy)
+    rho_final = max(rho, rho_min)
+    
+    as_req = rho_final * b * d
+    n_bars = max(2, int(np.ceil(as_req / (np.pi * (db_main**2) / 4))))
+    
+    status = "OK" if rho <= 0.75 * (0.85 * fc * 0.85 / fy * (600/(600+fy))) else "Section too small"
+    return n_bars, status
