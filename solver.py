@@ -8,8 +8,8 @@ class BeamSolver:
         self.E = float(E)
         self.b, self.h = b, h
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
-        self.G = self.E / (2 * (1 + 0.2)) 
-        self.As = (5/6) * (b * h)        
+        self.G = self.E / (2 * (1 + 0.2)) # Concrete Nu = 0.2
+        self.As = (5/6) * (b * h)        # Shear Area for Rectangular
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
         self.loads_df = pd.DataFrame(loads_input)
         self.supports_df = pd.DataFrame(supports_input)
@@ -43,11 +43,13 @@ class BeamSolver:
 
             total_load_fy, total_load_m0 = 0.0, 0.0
 
+            # Stiffness Assembly
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
                 if L > 1e-5:
                     K[np.ix_([2*i, 2*i+1, 2*(i+1), 2*(i+1)+1], [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1])] += self._get_k_timoshenko(L)
 
+            # Load Application
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
                 mag = float(l['mag'])
@@ -74,22 +76,25 @@ class BeamSolver:
                 if sup['type'] in ['Pin', 'Roller', 'Fixed']: free_dof[2*nid] = False
                 if sup['type'] == 'Fixed': free_dof[2*nid+1] = False
 
-            U = np.zeros(dof)
-            U[free_dof] = solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
-            R_full = K @ U - F
+            U = solve(K[np.ix_(free_dof, free_dof)], F[free_dof])
+            U_full = np.zeros(dof)
+            U_full[free_dof] = U
+            R_full = K @ U_full - F
 
+            # Reactions
             reac_list = []
             total_reac_fy, total_reac_m0 = 0.0, 0.0
             for _, sup in self.supports_df.iterrows():
                 if sup['type'] == "None": continue
-                idx_n = int(sup['id'])
-                nid = np.argmin([abs(n - self.cum_spans[idx_n]) for n in nodes])
-                total_reac_fy += R_full[2*nid]
-                total_reac_m0 += (R_full[2*nid] * self.cum_spans[idx_n]) + R_full[2*nid+1]
-                reac_list.append({'Node': idx_n, 'Ry (kN)': round(R_full[2*nid]/1000, 2), 'M (kNm)': round(R_full[2*nid+1]/1000, 2)})
+                nid = np.argmin([abs(n - self.cum_spans[int(sup['id'])]) for n in nodes])
+                ry, rm = R_full[2*nid], R_full[2*nid+1]
+                total_reac_fy += ry
+                total_reac_m0 += (ry * self.cum_spans[int(sup['id'])]) + rm
+                reac_list.append({'Node': int(sup['id']), 'Type': sup['type'], 'Ry (kN)': round(ry/1000, 2), 'M (kNm)': round(rm/1000, 2)})
 
+            # Plot Data
             res_data = []
-            for x in np.linspace(0, nodes[-1], 400):
+            for x in np.linspace(0, nodes[-1], 500):
                 V, M, defl = 0.0, 0.0, 0.0
                 for i, n_p in enumerate(nodes):
                     if n_p <= x + 1e-5:
@@ -102,19 +107,17 @@ class BeamSolver:
                         d = min(x, gx + l['dist']) - gx
                         V -= l['mag']*d; M -= l['mag']*d*(x - (gx + d/2))
                 
-                # --- Advanced Timoshenko Shape Functions (Modified for Deep Beams) ---
                 for i in range(num_nodes - 1):
                     if nodes[i] <= x <= nodes[i+1] + 1e-5:
                         L_e, xi = nodes[i+1] - nodes[i], (x - nodes[i]) / (nodes[i+1] - nodes[i])
                         Phi = self._get_phi(L_e)
-                        # Timoshenko Shape Functions (N1-N4)
                         N1 = (1 / (1 + Phi)) * (1 - 3*xi**2 + 2*xi**3 + Phi*(1 - xi))
                         N2 = (L_e / (1 + Phi)) * (xi - 2*xi**2 + xi**3 + 0.5*Phi*(xi - xi**2))
                         N3 = (1 / (1 + Phi)) * (3*xi**2 - 2*xi**3 + Phi*xi)
                         N4 = (L_e / (1 + Phi)) * (-xi**2 + xi**3 - 0.5*Phi*(xi - xi**2))
-                        
-                        defl = N1*U[2*i] + N2*U[2*i+1] + N3*U[2*i+2] + N4*U[2*i+3]
+                        defl = N1*U_full[2*i] + N2*U_full[2*i+1] + N3*U_full[2*i+2] + N4*U_full[2*i+3]
                         break
                 res_data.append({'x': x, 'shear': V, 'moment': M, 'deflection': defl})
+
             return pd.DataFrame(res_data), pd.DataFrame(reac_list), {'load_fy': total_load_fy, 'reac_fy': total_reac_fy, 'load_m0': total_load_m0, 'reac_m0': total_reac_m0}
         except Exception as e: return pd.DataFrame(), pd.DataFrame(), {"error": str(e)}
