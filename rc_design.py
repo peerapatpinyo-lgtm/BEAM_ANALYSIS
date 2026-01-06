@@ -5,51 +5,63 @@ def calculate_advanced_rc(mu_pos, mu_neg, vu, b_m, h_m, fc, fy):
     b, h = b_m * 1000, h_m * 1000  # mm
     d = h - 50  # mm
     report = []
-    optimize_msg = ""
-
-    def calc_as(mu_knm):
-        if abs(mu_knm) < 0.1: return 0, 0, "OK"
+    
+    # --- Optimization Parameters ---
+    # ค่า k_max สำหรับ Tension Controlled (โดยประมาณ)
+    k_max = 0.20 * fc  # ขีดจำกัดที่คานยังประหยัดและปลอดภัย
+    k_min = 0.05 * fc  # ขีดจำกัดที่คานเริ่มใหญ่เกินไป
+    
+    def calc_steel(mu_knm, label):
+        if abs(mu_knm) < 0.1: return 0, 0, 0, "Minimal"
         mu_n_mm = (abs(mu_knm) * 1e6) / phi_m
-        rn = mu_n_mm / (b * d**2)
+        k = mu_n_mm / (b * d**2)
         m = fy / (0.85 * fc)
         
-        # Check for Section Size Optimization
-        # rho_ideal ควรอยู่ช่วง 0.5% - 1.2% สำหรับหน้าตัดที่ประหยัดและปลอดภัย
-        rho = (1/m) * (1 - np.sqrt(max(0, 1 - (2 * m * rn / fy))))
+        check_val = 1 - (2 * m * k / fy)
+        if check_val < 0: return 0, k, 0, "CRITICAL"
+        
+        rho = (1/m) * (1 - np.sqrt(check_val))
         rho_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy)
         rho_final = max(rho, rho_min)
+        as_req = rho_final * b * d
         
-        status = "OK"
-        if rn > (0.25 * fc): status = "TOO_SMALL"
-        elif rho_final < rho_min: status = "TOO_LARGE"
-        
-        return rho_final * b * d, rho_final, status
+        # คำนวณจำนวนเส้น (ใช้ DB20 พื้นที่ 314 mm2)
+        n_bars = max(2, int(np.ceil(as_req / 314)))
+        return as_req, k, n_bars, "OK"
 
-    as_bot, rho_bot, stat_bot = calc_as(mu_pos)
-    as_top, rho_top, stat_top = calc_as(mu_neg)
+    as_bot, k_bot, n_bot, stat_bot = calc_steel(mu_pos, "Bottom")
+    as_top, k_top, n_top, stat_top = calc_steel(mu_neg, "Top")
 
-    # --- Automatic Section Optimization Logic ---
-    if stat_bot == "TOO_SMALL" or stat_top == "TOO_SMALL":
-        new_h = np.sqrt((max(abs(mu_pos), abs(mu_neg)) * 1e6 / phi_m) / (0.15 * fc * b)) + 50
-        optimize_msg = f"⚠️ **หน้าตัดเล็กเกินไป:** แนะนำให้เพิ่มความหนา (h) เป็นอย่างน้อย {int(np.ceil(new_h/50)*50)} mm"
-    elif rho_bot < 0.003 and rho_top < 0.003:
-        optimize_msg = "💡 **หน้าตัดใหญ่เกินความจำเป็น:** สามารถลดขนาดหน้าตัดเพื่อประหยัดงบประมาณได้"
+    # --- Optimization Report ---
+    max_k = max(k_bot, k_top)
+    if stat_bot == "CRITICAL" or stat_top == "CRITICAL":
+        opt_status = "🔴 OVER-REINFORCED"
+        opt_desc = f"หน้าตัดเล็กเกินไป (k = {max_k:.2f} > {k_max:.2f}). คอนกรีตจะระเบิดก่อนเหล็กสละตัว"
+        suggestion = f"เพิ่มความหนาคาน (h) เป็น {int(h+100)} mm"
+    elif max_k > k_max:
+        opt_status = "🟡 UNECONOMICAL"
+        opt_desc = f"หน้าตัดค่อนข้างเล็ก (k = {max_k:.2f}). ต้องใช้เหล็กเสริมจำนวนมาก"
+        suggestion = "ควรเพิ่มหน้าตัดเล็กน้อยเพื่อลดปริมาณเหล็ก"
+    elif max_k < k_min:
+        opt_status = "🔵 OVER-SIZED"
+        opt_desc = f"หน้าตัดใหญ่เกินไป (k = {max_k:.2f} < {k_min:.2f}). สิ้นเปลืองคอนกรีต"
+        suggestion = "สามารถลดขนาดหน้าตัดเพื่อประหยัดต้นทุน"
     else:
-        optimize_msg = "✅ **หน้าตัดมีความเหมาะสม:** ปริมาณเหล็กเสริมอยู่ในช่วงที่ประหยัด (Economical Design)"
+        opt_status = "🟢 OPTIMIZED"
+        opt_desc = "หน้าตัดมีความสมดุลระหว่างคอนกรีตและเหล็กเสริม"
+        suggestion = "คงขนาดหน้าตัดนี้ไว้"
 
-    # Shear
+    # Shear Stirrups
     vc = (1/6) * np.sqrt(fc) * b * d / 1000
     vs_req = (vu / phi_v) - vc if vu > (phi_v * vc * 0.5) else 0
     spacing = min(200, d/2)
     if vs_req > 0:
         spacing = min((127 * fy * d) / (vs_req * 1000), d/2, 600)
 
-    report.append(f"**Section Analysis:**")
-    report.append(f"- Bottom Steel: {as_bot:.0f} mm² (ρ={rho_bot:.4f})")
-    report.append(f"- Top Steel: {as_top:.0f} mm² (ρ={rho_top:.4f})")
-    report.append(f"- Stirrup: RB9 @ {int(spacing)} mm")
-    
     return {
-        'as_top': as_top, 'as_bot': as_bot, 'spacing': spacing,
-        'report': report, 'optimize_msg': optimize_msg
+        'as_bot': as_bot, 'n_bot': n_bot,
+        'as_top': as_top, 'n_top': n_top,
+        'spacing': spacing,
+        'opt_status': opt_status, 'opt_desc': opt_desc, 'suggestion': suggestion,
+        'b': b, 'h': h
     }
