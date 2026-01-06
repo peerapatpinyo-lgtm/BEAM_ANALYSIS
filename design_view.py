@@ -4,13 +4,13 @@ import numpy as np
 import pandas as pd
 
 # ==========================================
-# 1. CAPACITY CHECK (Standard Style - Clean & Clear)
+# 1. CAPACITY CHECK (Standard Engineering Style)
 # ==========================================
 def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
     """
-    Standard Engineering Plot:
-    - Dashed Lines = Limits (Capacity)
-    - Solid Line = Applied Load (Demand)
+    Standard Plot: 
+    - Dashed Lines = Capacity Limits (+/-)
+    - Solid Line = Demand (Mu)
     """
     mu_kNm = df_span['moment'] / 1000.0
     x = df_span['x']
@@ -18,18 +18,18 @@ def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
     
     fig = go.Figure()
 
-    # 1. Limits (Capacity) - เส้นประแนวนอนชัดๆ
+    # 1. Limits (Capacity) - เส้นประ
     # Positive Limit (Green)
     fig.add_trace(go.Scatter(
         x=[x_min, x_max], y=[phi_Mn_pos, phi_Mn_pos],
-        mode='lines', name=f'+φMn (Limit) = {phi_Mn_pos:.2f}',
+        mode='lines', name=f'+φMn (Cap) = {phi_Mn_pos:.2f}',
         line=dict(color='green', width=2, dash='dash')
     ))
     # Negative Limit (Red)
     neg_cap = -abs(phi_Mn_neg)
     fig.add_trace(go.Scatter(
         x=[x_min, x_max], y=[neg_cap, neg_cap],
-        mode='lines', name=f'-φMn (Limit) = {abs(neg_cap):.2f}',
+        mode='lines', name=f'-φMn (Cap) = {abs(neg_cap):.2f}',
         line=dict(color='red', width=2, dash='dash')
     ))
 
@@ -51,7 +51,7 @@ def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
         fig.add_annotation(x=df_span.loc[mu_kNm.idxmin(), 'x'], y=min_mu, text=f"{min_mu:.2f}", showarrow=True, arrowhead=1, ay=30)
 
     fig.update_layout(
-        title="<b>Capacity Check:</b> Ensure Blue Line stays between Dashed Lines",
+        title="<b>Capacity Check:</b> Blue Line MUST be inside Dashed Lines",
         xaxis_title="Distance (m)",
         yaxis_title="Moment (kNm)",
         height=350,
@@ -62,7 +62,7 @@ def plot_capacity_vs_demand(df_span, phi_Mn_pos, phi_Mn_neg):
     return fig
 
 # ==========================================
-# 2. ANALYSIS DIAGRAMS (Forced Vertical Lines)
+# 2. ANALYSIS DIAGRAMS (Vertical Lines Fixed)
 # ==========================================
 def draw_interactive_diagrams(df, reac, spans, sup_df, loads):
     # --- Data Prep ---
@@ -86,27 +86,27 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads):
                 clean_loads.append({'mag': float(l['mag']), 'global_x': abs_x, 'type': l.get('type','P'), 'case': l.get('case','DL'), 'dist': float(l.get('dist',0))})
             except: continue
 
-    # --- Subplots ---
+    # --- Create Subplots ---
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.05,
+        vertical_spacing=0.06,
         subplot_titles=("Structure Model", "Shear Force (V)", "Bending Moment (M)", "Deflection (δ)"),
         row_heights=[0.15, 0.25, 0.30, 0.30]
     )
 
-    # === 1. FORCED VERTICAL GRID LINES (แก้ปัญหาเส้นประไม่มา) ===
-    # วนลูปวาดเส้นใส่ทีละกราฟ (Row 1-4) เพื่อความชัวร์ 100%
+    # === 1. FORCED VERTICAL GRID LINES (ใช้วิธีที่เสถียรที่สุด) ===
+    # ใช้คำสั่ง add_vline วนลูปใส่ทุก Row
     for x_pos in cum_spans:
         for r in [1, 2, 3, 4]:
-            fig.add_shape(
-                type="line",
-                x0=x_pos, x1=x_pos,
-                y0=0, y1=1,
-                xref=f"x{r}" if r==1 else f"x{r}", # Plotly internal reference
-                yref=f"y{r} domain", # ใช้ domain (0-1) ของแกน Y
-                line=dict(color="gray", width=1, dash="dash"),
-                row=r, col=1
+            fig.add_vline(
+                x=x_pos, 
+                row=r, col=1, 
+                line_width=1, 
+                line_dash="dash", 
+                line_color="gray", 
+                opacity=0.5,
+                layer="below" # ให้เส้นอยู่ข้างหลังกราฟ
             )
 
     # === ROW 1: Structure ===
@@ -114,7 +114,6 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads):
     
     # Supports & Labels
     for i, x_pos in enumerate(cum_spans):
-        # Type Logic
         sup_type = "Pin"
         if not sup_df.empty:
              match = sup_df[sup_df['id'] == i]
@@ -126,12 +125,14 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads):
         elif 'fix' in stype: sym, col = 'square', '#000000'
         else: sym, col = 'triangle-up', 'gray'
         
+        # Label Text
         label = sup_type.capitalize()
         if reac and i in reac:
             label += f"<br>R={reac[i]/1000:.2f} kN"
 
+        # วาด Support (ขยับ y ลงมา -0.2 เพื่อให้อยู่ใต้คาน)
         fig.add_trace(go.Scatter(
-            x=[x_pos], y=[-0.2], # Support อยู่ใต้คาน
+            x=[x_pos], y=[-0.2], 
             mode='markers+text',
             marker=dict(symbol=sym, size=20, color=col, line=dict(width=2, color='black')),
             text=[label], textposition="bottom center",
@@ -149,30 +150,31 @@ def draw_interactive_diagrams(df, reac, spans, sup_df, loads):
 
     # === ROW 2: Shear ===
     fig.add_trace(go.Scatter(x=df_plot['x'], y=df_plot['shear_kn'], fill='tozeroy', line=dict(color='#D35400'), name="Shear"), row=2, col=1)
-    # Labels
     vmax, vmin = df_plot['shear_kn'].max(), df_plot['shear_kn'].min()
     fig.add_annotation(x=df_plot.loc[df_plot['shear_kn'].idxmax(), 'x'], y=vmax, text=f"{vmax:.2f}", showarrow=False, yshift=10, row=2, col=1)
     fig.add_annotation(x=df_plot.loc[df_plot['shear_kn'].idxmin(), 'x'], y=vmin, text=f"{vmin:.2f}", showarrow=False, yshift=-10, row=2, col=1)
 
     # === ROW 3: Moment ===
     fig.add_trace(go.Scatter(x=df_plot['x'], y=df_plot['moment_plot'], fill='tozeroy', line=dict(color='#2980B9'), name="Moment"), row=3, col=1)
-    # Labels
     msag, mhog = df_plot['moment_knm'].max(), df_plot['moment_knm'].min()
     if msag > 0.01: fig.add_annotation(x=df_plot.loc[df_plot['moment_knm'].idxmax(), 'x'], y=-msag, text=f"{msag:.2f}", arrowhead=1, ay=30, row=3, col=1)
     if mhog < -0.01: fig.add_annotation(x=df_plot.loc[df_plot['moment_knm'].idxmin(), 'x'], y=-mhog, text=f"{mhog:.2f}", arrowhead=1, ay=-30, row=3, col=1)
 
     # === ROW 4: Deflection ===
     fig.add_trace(go.Scatter(x=df_plot['x'], y=df_plot['deflection_mm'], fill='tozeroy', line=dict(color='#27AE60'), name="Deflection"), row=4, col=1)
-    dmax = df_plot['deflection_mm'].abs().max()
     didx = df_plot['deflection_mm'].abs().idxmax()
     dval = df_plot.loc[didx, 'deflection_mm']
-    if dmax > 0.001: fig.add_annotation(x=df_plot.loc[didx, 'x'], y=dval, text=f"{dval:.2f}", arrowhead=1, ay=30 if dval<0 else -30, row=4, col=1)
+    if abs(dval) > 0.001: 
+        fig.add_annotation(x=df_plot.loc[didx, 'x'], y=dval, text=f"{dval:.2f}", arrowhead=1, ay=30 if dval<0 else -30, row=4, col=1)
 
-    # Layout
+    # === Layout Finalization ===
     fig.update_layout(height=900, showlegend=False, template="plotly_white", hovermode="x unified")
-    fig.update_yaxes(range=[-0.8, 0.4], showticklabels=False, row=1, col=1) # Adjust for support labels
     
-    # Axes Titles
+    # Adjust Y-axis for Structure (Model)
+    # Range [-0.8, 0.4] ensures y=0 is near top, giving space below for supports
+    fig.update_yaxes(range=[-0.8, 0.4], showticklabels=False, row=1, col=1)
+    
+    # Labels
     fig.update_yaxes(title_text="V (kN)", row=2, col=1)
     fig.update_yaxes(title_text="M (kNm)", row=3, col=1)
     fig.update_yaxes(title_text="δ (mm)", row=4, col=1)
