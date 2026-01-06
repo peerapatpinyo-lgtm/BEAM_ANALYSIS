@@ -19,13 +19,14 @@ class BeamSolver:
             pts = self.cum_spans.copy()
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
-                pts.append(gx); pts.append(round(gx + float(l.get('dist', 0)), 4))
+                pts.append(gx)
+                if l['type'] == 'U': pts.append(round(gx + float(l['dist']), 4))
             nodes = sorted(list(set([round(p, 4) for p in pts])))
             num_nodes = len(nodes)
             dof = 2 * num_nodes
             K, F = np.zeros((dof, dof)), np.zeros(dof)
 
-            # Stiffness Matrix
+            # Assemble Global Stiffness Matrix
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
                 if L > 1e-5:
@@ -37,7 +38,7 @@ class BeamSolver:
                     idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
                     K[np.ix_(idx, idx)] += k_el
 
-            # Applied Loads
+            # Applied Loads (P, U, M) & Total Load for Eq Check
             total_applied_force = 0.0
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
@@ -57,7 +58,7 @@ class BeamSolver:
                             F[2*(i+1)] -= (w * L_el / 2); F[2*(i+1)+1] += (w * L_el**2 / 12)
                             total_applied_force += (w * L_el)
 
-            # Boundary Conditions
+            # Apply Boundary Conditions
             free_dof = np.full(dof, True)
             for _, sup in self.supports_df.iterrows():
                 if sup['type'] == "None": continue
@@ -70,15 +71,20 @@ class BeamSolver:
             R_full = K @ U - F
 
             # Reactions Table Data
-            reac_data = []
+            reac_list = []
             total_rx_force = 0.0
             for _, sup in self.supports_df.iterrows():
                 if sup['type'] == "None": continue
                 nid = np.argmin([abs(n - self.cum_spans[int(sup['id'])]) for n in nodes])
-                reac_data.append({'Node': sup['id'], 'Ry (kN)': round(R_full[2*nid]/1000, 2), 'M (kNm)': round(R_full[2*nid+1]/1000, 2)})
+                reac_list.append({
+                    'Node': int(sup['id']),
+                    'Type': sup['type'],
+                    'Vertical Reaction (kN)': round(R_full[2*nid]/1000, 2),
+                    'Moment Reaction (kNm)': round(R_full[2*nid+1]/1000, 2)
+                })
                 total_rx_force += R_full[2*nid]
 
-            # Results sampling
+            # Results sampling for Diagrams
             res = []
             for x in np.linspace(0, nodes[-1], 400):
                 V, M = 0.0, 0.0
@@ -89,15 +95,17 @@ class BeamSolver:
                     gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
                     if l['type'] == 'P' and gx <= x + 1e-5:
                         V -= l['mag']; M -= l['mag']*(x - gx)
-                    elif l['type'] == 'M' and gx <= x + 1e-5: M -= l['mag']
+                    elif l['type'] == 'M' and gx <= x + 1e-5:
+                        M -= l['mag']
                     elif l['type'] == 'U' and gx < x:
                         d = min(x, gx + l['dist']) - gx
                         V -= l['mag']*d; M -= l['mag']*d*(x - (gx + d/2))
-                res.append({'x': x, 'shear': V, 'moment': M, 'deflection': 0.0}) # Simplified defl for snippet
+                res.append({'x': x, 'shear': V, 'moment': M, 'deflection': 0.0})
 
-            return pd.DataFrame(res), pd.DataFrame(reac_data), {
+            return pd.DataFrame(res), pd.DataFrame(reac_list), {
                 'total_load': total_applied_force,
                 'total_reac': total_rx_force,
-                'error_percent': abs(total_applied_force - total_rx_force)
+                'error': abs(total_applied_force - total_rx_force)
             }
-        except: return pd.DataFrame(), pd.DataFrame(), {}
+        except Exception as e:
+            return pd.DataFrame(), pd.DataFrame(), {"error": str(e)}
