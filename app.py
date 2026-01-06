@@ -102,8 +102,9 @@ if 'results' in st.session_state:
     
     st.divider()
 
-    # 3.2 Diagrams
-    design_view.draw_interactive_diagrams(
+    # 3.2 Diagrams (ส่วนที่แก้ไข)
+    # รับค่า fig_structure มาจากฟังก์ชัน
+    fig_structure = design_view.draw_interactive_diagrams(
         df=res['df'],
         reac=res['reac'],
         spans=spans,
@@ -112,6 +113,8 @@ if 'results' in st.session_state:
         dl_factor=params['gamma_dead'],
         ll_factor=params['gamma_live']
     )
+    # สั่งให้วาดลงหน้าจอ (สำคัญมาก)
+    st.plotly_chart(fig_structure, use_container_width=True)
     
     # 3.3 Reaction Table
     with st.expander("📌 View Reactions"):
@@ -169,7 +172,7 @@ if 'results' in st.session_state:
             
             with col_viz:
                 st.write("**📊 Moment Capacity Check**")
-                # เรียกใช้กราฟ Capacity ใหม่
+                # เรียกใช้กราฟ Capacity
                 fig_cap = design_view.plot_capacity_vs_demand(
                     df_span=span_data,
                     phi_Mn_pos=design_res['pos']['capacity'],
