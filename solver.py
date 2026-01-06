@@ -8,16 +8,19 @@ class BeamSolver:
         self.E = float(E)
         self.b, self.h = b, h
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
-        # Timoshenko constants
         self.G = self.E / (2 * (1 + 0.2)) 
         self.As = (5/6) * (b * h)        
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
         self.loads_df = pd.DataFrame(loads_input)
         self.supports_df = pd.DataFrame(supports_input)
 
+    def _get_phi(self, L):
+        EI = self.E * self.I
+        return (12 * EI) / (L**2 * self.G * self.As)
+
     def _get_k_timoshenko(self, L):
         EI = self.E * self.I
-        Phi = (12 * EI) / (L**2 * self.G * self.As)
+        Phi = self._get_phi(L)
         coeff = EI / (L**3 * (1 + Phi))
         return coeff * np.array([
             [12, 6*L, -12, 6*L],
@@ -43,25 +46,20 @@ class BeamSolver:
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
                 if L > 1e-5:
-                    idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
-                    K[np.ix_(idx, idx)] += self._get_k_timoshenko(L)
+                    K[np.ix_([2*i, 2*i+1, 2*(i+1), 2*(i+1)+1], [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1])] += self._get_k_timoshenko(L)
 
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
                 mag = float(l['mag'])
                 if l['type'] == 'P':
-                    nid = np.argmin([abs(n - gx) for n in nodes])
-                    F[2*nid] -= mag
-                    total_load_fy += mag
-                    total_load_m0 += mag * gx
+                    nid = np.argmin([abs(n - gx) for n in nodes]); F[2*nid] -= mag
+                    total_load_fy += mag; total_load_m0 += mag * gx
                 elif l['type'] == 'M':
-                    nid = np.argmin([abs(n - gx) for n in nodes])
-                    F[2*nid+1] += mag
+                    nid = np.argmin([abs(n - gx) for n in nodes]); F[2*nid+1] += mag
                     total_load_m0 -= mag 
                 elif l['type'] == 'U':
                     dist = float(l['dist'])
-                    total_load_fy += mag * dist
-                    total_load_m0 += (mag * dist) * (gx + dist/2)
+                    total_load_fy += mag * dist; total_load_m0 += (mag * dist) * (gx + dist/2)
                     for i in range(num_nodes - 1):
                         overlap = min(gx+dist, nodes[i+1]) - max(gx, nodes[i])
                         if overlap > 1e-5:
@@ -103,11 +101,19 @@ class BeamSolver:
                     elif l['type'] == 'U' and gx < x:
                         d = min(x, gx + l['dist']) - gx
                         V -= l['mag']*d; M -= l['mag']*d*(x - (gx + d/2))
+                
+                # --- Advanced Timoshenko Shape Functions (Modified for Deep Beams) ---
                 for i in range(num_nodes - 1):
                     if nodes[i] <= x <= nodes[i+1] + 1e-5:
-                        L_el, s = nodes[i+1] - nodes[i], (x - nodes[i]) / (nodes[i+1] - nodes[i])
-                        H = np.array([1-3*s**2+2*s**3, L_el*(s-2*s**2+s**3), 3*s**2-2*s**3, L_el*(s**3-s**2)])
-                        defl = np.dot(H, U[2*i:2*i+4])
+                        L_e, xi = nodes[i+1] - nodes[i], (x - nodes[i]) / (nodes[i+1] - nodes[i])
+                        Phi = self._get_phi(L_e)
+                        # Timoshenko Shape Functions (N1-N4)
+                        N1 = (1 / (1 + Phi)) * (1 - 3*xi**2 + 2*xi**3 + Phi*(1 - xi))
+                        N2 = (L_e / (1 + Phi)) * (xi - 2*xi**2 + xi**3 + 0.5*Phi*(xi - xi**2))
+                        N3 = (1 / (1 + Phi)) * (3*xi**2 - 2*xi**3 + Phi*xi)
+                        N4 = (L_e / (1 + Phi)) * (-xi**2 + xi**3 - 0.5*Phi*(xi - xi**2))
+                        
+                        defl = N1*U[2*i] + N2*U[2*i+1] + N3*U[2*i+2] + N4*U[2*i+3]
                         break
                 res_data.append({'x': x, 'shear': V, 'moment': M, 'deflection': defl})
             return pd.DataFrame(res_data), pd.DataFrame(reac_list), {'load_fy': total_load_fy, 'reac_fy': total_reac_fy, 'load_m0': total_load_m0, 'reac_m0': total_reac_m0}
