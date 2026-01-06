@@ -7,21 +7,20 @@ def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_m
     
     def calc_flexure(mu_knm):
         if abs(mu_knm) < 0.1: 
-            return {"n": 2, "as_req": 0, "status": "Min Steel", "et": 0.005}
+            return {"n": 2, "as_req": 0, "status": "Min Steel", "et": 0.005, "a": 0, "k": 0}
         
         mu_n = (abs(mu_knm) * 1e6) / phi_m
         k = mu_n / (b * d**2)
         m = fy / (0.85 * fc)
         
         check_val = 1 - (2 * m * k / fy)
-        if check_val < 0: return {"status": "FAIL: SECTION OVER-REINFORCED", "n": 0}
+        if check_val < 0: return {"status": "FAIL: OVER-REINFORCED", "n": 0, "as_req": 0, "a": 0, "et": 0, "k": k}
             
         rho = (1/m) * (1 - np.sqrt(max(0, check_val)))
         rho_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy)
         rho_final = max(rho, rho_min)
         as_req = rho_final * b * d
         
-        # Strain check for ductility
         a = (as_req * fy) / (0.85 * fc * b)
         beta1 = max(0.65, 0.85 - 0.05 * (fc - 28) / 7)
         c = a / beta1
@@ -30,15 +29,10 @@ def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_m
         n_bars = max(2, int(np.ceil(as_req / (np.pi * (db_main**2) / 4))))
         return {"n": n_bars, "as_req": as_req, "k": k, "a": a, "et": et, "status": "OK"}
 
-    res_pos = calc_flexure(mu_pos)
-    res_neg = calc_flexure(mu_neg)
-    
-    # Shear Design (ACI 318-19)
-    vc = (0.17 * np.sqrt(fc) * b * d) / 1000 # kN
-    vs_req = (vu / phi_v) - vc if vu > (phi_v * vc * 0.5) else 0
-    s_limit = min(d/2, 600, 300)
-    
     return {
-        "pos": res_pos, "neg": res_neg, "spacing": int(s_limit), 
-        "d": d, "mu_pos": mu_pos, "mu_neg": mu_neg, "vu": vu, "vc": vc
+        "pos": calc_flexure(mu_pos),
+        "neg": calc_flexure(mu_neg),
+        "spacing": int(min(d/2, 300)), 
+        "d": d, "mu_pos": mu_pos, "mu_neg": mu_neg, "vu": vu, 
+        "vc": (0.17 * np.sqrt(fc) * b * d) / 1000
     }
