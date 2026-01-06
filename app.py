@@ -2,18 +2,19 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from solver import BeamSolver
 import rc_design
 
 st.set_page_config(page_title="Professional Beam Design", layout="wide")
 
-# --- 1. Session State (กันข้อมูลหาย) ---
+# --- 1. Session State ---
 if 'loads' not in st.session_state: st.session_state.loads = []
 if 'results' not in st.session_state: st.session_state.results = None
 
-st.title("🏗️ Professional Beam Studio (Final Stable)")
+st.title("🏗️ Professional Beam Studio (Full Option)")
 
-# --- 2. Inputs ---
+# --- 2. Input Section ---
 with st.sidebar:
     st.header("🧱 Material Config")
     fc = st.number_input("f'c (MPa)", 18.0, 50.0, 24.0)
@@ -28,8 +29,7 @@ with st.container(border=True):
     with c1:
         st.subheader("📏 Geometry")
         n_spans = st.number_input("Num Spans", 1, 10, 2)
-        # ใส่ key ให้ input ใน loop เพื่อไม่ให้ ID ชนกัน
-        spans = [st.number_input(f"L{i+1} (m)", 1.0, 20.0, 5.0, key=f"span_input_{i}") for i in range(n_spans)]
+        spans = [st.number_input(f"L{i+1} (m)", 1.0, 20.0, 5.0, key=f"span_in_{i}") for i in range(n_spans)]
         
     with c2:
         st.subheader("📥 Load Manager")
@@ -42,7 +42,6 @@ with st.container(border=True):
         if st.button("➕ Add Load", use_container_width=True):
             safe_x = min(l_x, spans[l_idx] - 0.01)
             safe_x = max(safe_x, 0.01)
-            
             st.session_state.loads.append({
                 'span_index': l_idx,
                 'type': l_type[0],
@@ -77,13 +76,43 @@ if st.session_state.results:
     df, reac, eq = st.session_state.results
     
     if df is None or df.empty:
-        st.error("Solver returned empty data.")
+        st.error("❌ Solver returned empty data.")
     else:
         x_col = 'x' if 'x' in df.columns else df.columns[0]
-        st.success("✅ Analysis Complete!")
+        st.success("Analysis Complete!")
         
-        # --- A. Longitudinal View ---
-        st.header("🖼️ Part 1: Longitudinal View")
+        # --- A. Force Diagrams (SFD & BMD) ---
+        # ส่วนนี้ที่หายไป ผมเพิ่มกลับมาให้แล้วครับ!
+        st.header("📈 Part 1: Force Diagrams (SFD & BMD)")
+        
+
+[Image of shear force and bending moment diagrams for a continuous beam]
+
+
+        fig_main = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.1,
+                                 subplot_titles=("Shear Force Diagram (SFD)", "Bending Moment Diagram (BMD)"))
+        
+        # Shear (Area Chart)
+        fig_main.add_trace(go.Scatter(x=df[x_col], y=df['shear']/1000, fill='tozeroy', 
+                                      line=dict(color='green'), name='Shear (kN)'), row=1, col=1)
+        # Moment (Area Chart) - กลับด้านตามหลักวิศวกรรมโยธา (Invert Y)
+        fig_main.add_trace(go.Scatter(x=df[x_col], y=df['moment']/1000, fill='tozeroy', 
+                                      line=dict(color='orange'), name='Moment (kNm)'), row=2, col=1)
+        
+        # วาดเส้นแบ่ง Span
+        cum_dist_list = [0] + list(np.cumsum(spans))
+        for d in cum_dist_list:
+            fig_main.add_vline(x=d, line_dash="dash", line_color="gray")
+            
+        fig_main.update_layout(height=500, showlegend=False)
+        fig_main.update_yaxes(autorange="reversed", row=2, col=1) # กลับหัวกราฟโมเมนต์
+        
+        # ✅ ใส่ Key เพื่อป้องกัน Duplicate ID
+        st.plotly_chart(fig_main, use_container_width=True, key="sfd_bmd_chart")
+
+
+        # --- B. Longitudinal View (รูปตัดยาว) ---
+        st.header("🖼️ Part 2: Longitudinal Detailing")
         
         
         fig_long = go.Figure()
@@ -96,42 +125,42 @@ if st.session_state.results:
             fig_long.add_trace(go.Scatter(x=[cum_l], y=[-0.05], mode="markers", marker=dict(symbol="triangle-up", size=15, color="black"), showlegend=False))
             cum_l += l
         fig_long.add_trace(go.Scatter(x=[cum_l], y=[-0.05], mode="markers", marker=dict(symbol="triangle-up", size=15, color="black"), showlegend=False))
-        
         fig_long.update_layout(height=200, showlegend=False, xaxis=dict(title="Length (m)"), yaxis=dict(visible=False, scaleanchor="x"))
         
-        # ✅ FIX 1: ใส่ Key ให้กราฟหลัก
-        st.plotly_chart(fig_long, use_container_width=True, key="longitudinal_plot")
+        # ✅ ใส่ Key
+        st.plotly_chart(fig_long, use_container_width=True, key="long_detailing_chart")
 
-        # --- B. Cross Sections ---
-        st.header("📋 Part 2: Detailed Design")
-        cum_dist = [0] + list(np.cumsum(spans))
+
+        # --- C. Cross Sections (รูปตัดขวาง) ---
+        st.header("📋 Part 3: Section Design")
         
         for i in range(n_spans):
             with st.container(border=True):
-                mask = (df[x_col] >= cum_dist[i]) & (df[x_col] <= cum_dist[i+1])
+                mask = (df[x_col] >= cum_dist_list[i]) & (df[x_col] <= cum_dist_list[i+1])
                 span_data = df[mask]
                 
                 if span_data.empty:
-                    st.warning(f"Span {i+1}: No data points.")
+                    st.warning(f"Span {i+1}: No data found.")
                     continue
 
                 m_max = span_data['moment'].max() / 1000 
                 m_min = span_data['moment'].min() / 1000 
                 v_max = span_data['shear'].abs().max() / 1000 
                 
+                # เรียก Design
                 res = rc_design.design_span_expert(m_max, m_min, v_max, b_m, h_m, fc, fy, cover, db_m)
                 
                 c1, c2 = st.columns([1, 1])
                 with c1:
-                    st.subheader(f"Span {i+1} Calculation")
-                    st.write(f"**Forces:** $M_u^+ = {res['mu_pos']:.2f}, M_u^- = {res['mu_neg']:.2f}$ kNm")
-                    st.write(f"**Shear:** $V_u = {res['vu']:.2f}$ vs $\phi V_c = {res['phi_vc']:.2f}$ kN")
-                    st.markdown("---")
-                    st.markdown(f"**🔴 Top:** {res['neg']['n']} x DB{db_m} <small>({res['neg']['status']})</small>", unsafe_allow_html=True)
-                    st.markdown(f"**🔵 Bot:** {res['pos']['n']} x DB{db_m} <small>({res['pos']['status']})</small>", unsafe_allow_html=True)
+                    st.subheader(f"Span {i+1} Results")
+                    st.write(f"**M+:** {res['mu_pos']:.2f} | **M-:** {res['mu_neg']:.2f} kNm")
+                    st.write(f"**V:** {res['vu']:.2f} kN")
+                    st.divider()
+                    st.markdown(f"🔴 **Top:** {res['neg']['n']} x DB{db_m}")
+                    st.markdown(f"🔵 **Bot:** {res['pos']['n']} x DB{db_m}")
 
                 with c2:
-                    st.write("**Cross-Section**")
+                    st.write("**Cross-Section Drawing**")
                     
                     
                     fig_cs = go.Figure()
@@ -144,12 +173,12 @@ if st.session_state.results:
                     
                     for k in range(n_t):
                         x_pos = (b_m - 2*c_m)/(n_t+1)*(k+1) + c_m
-                        fig_cs.add_trace(go.Scatter(x=[x_pos], y=[h_m - c_m - 0.01], mode="markers", marker=dict(color="red", size=10)))
+                        fig_cs.add_trace(go.Scatter(x=[x_pos], y=[h_m - c_m - 0.01], mode="markers", marker=dict(color="red", size=12)))
                     for k in range(n_b):
                         x_pos = (b_m - 2*c_m)/(n_b+1)*(k+1) + c_m
-                        fig_cs.add_trace(go.Scatter(x=[x_pos], y=[c_m + 0.01], mode="markers", marker=dict(color="blue", size=10)))
+                        fig_cs.add_trace(go.Scatter(x=[x_pos], y=[c_m + 0.01], mode="markers", marker=dict(color="blue", size=12)))
                         
-                    fig_cs.update_layout(width=220, height=250, showlegend=False, xaxis=dict(visible=False, range=[-0.05, b_m+0.05]), yaxis=dict(visible=False, range=[-0.05, h_m+0.05]), margin=dict(l=10,r=10,t=10,b=10))
+                    fig_cs.update_layout(width=200, height=220, showlegend=False, xaxis=dict(visible=False, range=[-0.05, b_m+0.05]), yaxis=dict(visible=False, range=[-0.05, h_m+0.05]), margin=dict(l=10,r=10,t=10,b=10))
                     
-                    # ✅ FIX 2: จุดสำคัญ! ใส่ Key ที่ไม่ซ้ำกันตาม Index (i)
-                    st.plotly_chart(fig_cs, use_container_width=True, key=f"section_chart_{i}")
+                    # ✅ ใส่ Key ตาม Index i
+                    st.plotly_chart(fig_cs, use_container_width=True, key=f"sec_chart_{i}")
