@@ -1,15 +1,14 @@
 import numpy as np
 
 def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, cover_mm, db_main):
-    # Units: Mu in kNm, Vu in kN, b/h in m
     phi_m, phi_v = 0.90, 0.75
-    b, h = b_m * 1000, h_m * 1000 # to mm
+    b, h = b_m * 1000, h_m * 1000 # convert to mm
     db_stirrup = 9 
     d = h - cover_mm - db_stirrup - (db_main / 2)
     
     def calc_flexure(mu_knm):
         abs_mu = abs(mu_knm)
-        if abs_mu < 0.5: # Minimum steel area
+        if abs_mu < 0.1: # Minimum Steel Case
             as_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy) * b * d
             return {"n": 2, "as_req": as_min, "status": "Min Steel"}
         
@@ -17,9 +16,8 @@ def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, cover_mm, db_main):
         rn = mu_n / (b * d**2)
         m = fy / (0.85 * fc)
         
-        # Check for section failure
-        if rn > (0.85 * fc * 0.35): 
-            return {"n": 0, "status": "OVER-REINFORCED: INCREASE SECTION"}
+        if rn > (0.85 * fc * 0.35): # Check for Compression Failure
+            return {"n": 0, "status": "RE-SECTION"}
             
         rho = (1/m) * (1 - np.sqrt(max(0, 1 - (2 * m * rn / fy))))
         rho_min = max(0.25 * np.sqrt(fc) / fy, 1.4 / fy)
@@ -33,5 +31,5 @@ def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, cover_mm, db_main):
     
     return {
         "pos": res_pos, "neg": res_neg, "vu": vu, "phi_vc": phi_vc,
-        "mu_pos": mu_pos, "mu_neg": mu_neg
+        "mu_pos": mu_pos, "mu_neg": mu_neg, "b": b_m, "h": h_m
     }
