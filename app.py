@@ -10,81 +10,85 @@ st.set_page_config(page_title="Expert Beam Designer PRO", layout="wide")
 
 if 'loads' not in st.session_state: st.session_state.loads = []
 
-# --- 1. LOAD INPUT SYSTEM (PRECISE CONTROL) ---
-st.header("1. Global Load & Geometry Manager")
+st.title("🏗️ Professional Beam Structural Suite")
+
+# --- 1. LOAD & GEOMETRY MANAGER ---
+st.header("1. Geometry & Advanced Loading")
 with st.container(border=True):
-    col_g1, col_g2 = st.columns([1, 2])
+    col_g1, col_g2 = st.columns([1, 3])
     with col_g1:
-        n_spans = st.number_input("Number of Spans", 1, 10, 1)
+        n_spans = st.number_input("Spans", 1, 10, 1)
         spans = [st.number_input(f"L{i+1} (m)", 0.1, 25.0, 5.0, key=f"L_{i}") for i in range(n_spans)]
         
     with col_g2:
-        st.subheader("Add Loads with Coordinates")
-        c1, c2, c3, c4, c5 = st.columns([1.5, 1, 1, 1, 1])
-        l_span = c1.selectbox("Span", range(n_spans))
-        l_type = c2.selectbox("Type", ["Point (P)", "Uniform (U)", "Moment (M)"])
-        l_mag = c3.number_input("Mag (kN or kNm)", 10.0)
+        c1, c2, c3, c4, c5 = st.columns([1, 1.2, 1, 1, 1])
+        l_span = c1.selectbox("Span Index", range(n_spans))
+        l_type = c2.selectbox("Load Category", ["Point (P)", "Uniform (U)", "Moment (M)"])
+        l_mag = c3.number_input("Magnitude", 10.0)
         l_x = c4.number_input("Start x (m)", 0.0, spans[l_span])
-        l_end = c5.number_input("End x (m)", spans[l_span]) if l_type == "Uniform (U)" else 0.0
+        # Only show End X for Uniform loads
+        l_end = c5.number_input("End x (m)", spans[l_span]) if l_type == "Uniform (U)" else l_x
 
-        if st.button("➕ Add Precise Load", use_container_width=True):
+        if st.button("➕ Apply Load", use_container_width=True):
             st.session_state.loads.append({
                 'span_index': l_span, 'type': l_type[0], 
                 'mag': l_mag*1000, 'x': l_x, 'dist': l_end - l_x if l_type == "Uniform (U)" else 0.0
             })
             st.rerun()
 
-# --- 2. SUPPORT & MATERIAL ---
+# --- 2. MATERIAL PROPERTIES ---
 with st.sidebar:
-    st.header("🏗️ Material & Section")
+    st.header("🧱 Material Properties")
     fc = st.number_input("Concrete f'c (MPa)", 28.0)
     fy = st.number_input("Rebar fy (MPa)", 400.0)
     b_m = st.number_input("Width b (m)", 0.30)
     h_m = st.number_input("Height h (m)", 0.50)
     cover = st.number_input("Cover (mm)", 30.0)
 
-# --- 3. ANALYSIS & DESIGN RESULTS ---
-if st.button("🚀 RUN EXPERT ANALYSIS", type="primary", use_container_width=True):
-    # Standard Support (Can be expanded with data_editor as before)
+# --- 3. ANALYSIS & DESIGN ---
+if st.button("🚀 EXECUTE ANALYSIS", type="primary", use_container_width=True):
     supports = [{'id': i, 'type': 'Pin' if i==0 else 'Roller'} for i in range(n_spans+1)]
     sol = BeamSolver(spans, supports, st.session_state.loads, 2e11, b_m, h_m)
     df, reac, eq = sol.solve()
 
     if not df.empty:
-        st.header("📊 Analysis & Force Diagrams")
+        st.header("📊 Internal Forces Analysis")
         design_view.draw_interactive_diagrams(df, reac, spans, pd.DataFrame(supports), st.session_state.loads)
         
 
-        # Detailed Design Section
-        st.header("🧱 Expert Design Report (SDM)")
-        db_m = st.selectbox("Main Bar (DB)", [12, 16, 20, 25, 28])
+[Image of shear force and bending moment diagrams for a continuous beam]
+
+
+        st.header("📋 Technical Design Sheet (SDM)")
+        db_m = st.selectbox("Select Bar DB", [12, 16, 20, 25, 28])
         
         cum_dist = [0] + list(np.cumsum(spans))
         for i in range(n_spans):
-            with st.expander(f"SPAN {i+1} CALCULATION DETAILS", expanded=True):
+            with st.expander(f"SPAN {i+1} CALCULATION REPORT", expanded=True):
                 s_df = df[(df['x'] >= cum_dist[i]) & (df['x'] <= cum_dist[i+1])]
-                res = rc_design.design_span_expert(s_df['moment'].max()/1000, s_df['moment'].min()/1000, s_df['shear'].abs().max()/1000, b_m, h_m, fc, fy, 240, cover, db_m, 9)
+                res = rc_design.design_span_expert(s_df['moment'].max()/1000, s_df['moment'].min()/1000, 
+                                                   s_df['shear'].abs().max()/1000, b_m, h_m, fc, fy, 240, cover, db_m, 9)
                 
-                c1, c2, c3 = st.columns([1, 1, 1])
+                c1, c2, c3 = st.columns([1.5, 1, 1.5])
                 with c1:
-                    st.markdown("**Flexural Check**")
+                    st.markdown("**Moment Capacity Check**")
+                    # Corrected LaTeX escaping
                     st.latex(rf"M_u^{(+)} = {res['mu_pos']:.2f} \text{{ kNm}}")
                     st.latex(rf"M_u^{{(-)}} = {res['mu_neg']:.2f} \text{{ kNm}}")
                     st.write(f"Section Status: {res['pos']['status']}")
                 with c2:
-                    st.markdown("**Ductility & Strain**")
-                    st.latex(rf"\epsilon_t = {res['pos'].get('et', 0):.5f}")
-                    st.caption("εt > 0.005 = Tension Controlled")
-                    st.latex(rf"a = {res['pos'].get('a', 0):.2f} \text{{ mm}}")
+                    st.markdown("**Ductility**")
+                    st.latex(rf"\epsilon_t = {res['pos']['et']:.5f}")
+                    st.latex(rf"a = {res['pos']['a']:.2f} \text{{ mm}}")
                 with c3:
-                    st.markdown("**Recommended Bars**")
-                    st.info(f"Top: {res['neg']['n']}xDB{db_m}\nBot: {res['pos']['n']}xDB{db_m}")
-                
-                # Manual Adjustment Plot
-                fig_cs = go.Figure()
-                fig_cs.add_shape(type="rect", x0=0, y0=0, x1=b_m, y1=h_m, fillcolor="rgba(0,0,0,0.05)", line=dict(color="Black", width=3))
-                # Visualize bars
-                for j in range(int(res['neg']['n'])): fig_cs.add_trace(go.Scatter(x=[(b_m/(res['neg']['n']+1))*(j+1)], y=[h_m-(cover/1000)], mode='markers', marker=dict(color='Red')))
-                for j in range(int(res['pos']['n'])): fig_cs.add_trace(go.Scatter(x=[(b_m/(res['pos']['n']+1))*(j+1)], y=[cover/1000], mode='markers', marker=dict(color='Blue')))
-                fig_cs.update_layout(width=200, height=250, xaxis=dict(visible=False), yaxis=dict(visible=False), showlegend=False)
-                st.plotly_chart(fig_cs)
+                    st.markdown("**Final Reinforcement**")
+                    n_top = st.number_input(f"Adj. Top Bars S{i+1}", 2, 20, int(res['neg']['n']))
+                    n_bot = st.number_input(f"Adj. Bot Bars S{i+1}", 2, 20, int(res['pos']['n']))
+                    
+                    # Section Drawing
+                    fig_cs = go.Figure()
+                    fig_cs.add_shape(type="rect", x0=0, y0=0, x1=b_m, y1=h_m, fillcolor="rgba(0,0,0,0.05)", line=dict(color="Black", width=3))
+                    for j in range(n_top): fig_cs.add_trace(go.Scatter(x=[(b_m/(n_top+1))*(j+1)], y=[h_m-(cover/1000)], mode='markers', marker=dict(color='Red', size=db_m)))
+                    for j in range(n_bot): fig_cs.add_trace(go.Scatter(x=[(b_m/(n_bot+1))*(j+1)], y=[cover/1000], mode='markers', marker=dict(color='Blue', size=db_m)))
+                    fig_cs.update_layout(width=200, height=220, xaxis=dict(visible=False), yaxis=dict(visible=False), showlegend=False, margin=dict(l=5,r=5,t=5,b=5))
+                    st.plotly_chart(fig_cs)
