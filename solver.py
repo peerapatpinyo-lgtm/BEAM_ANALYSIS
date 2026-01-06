@@ -38,7 +38,6 @@ class BeamSolver:
             nodes = sorted(list(set([round(p, 4) for p in pts])))
             num_nodes, dof = len(nodes), 2 * len(nodes)
             K, F = np.zeros((dof, dof)), np.zeros(dof)
-            t_load_fy, t_load_m0 = 0.0, 0.0
 
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
@@ -51,13 +50,10 @@ class BeamSolver:
                 mag = float(l['mag'])
                 if l['type'] == 'P':
                     nid = np.argmin([abs(n - gx) for n in nodes]); F[2*nid] -= mag
-                    t_load_fy += mag; t_load_m0 += mag * gx
                 elif l['type'] == 'M':
                     nid = np.argmin([abs(n - gx) for n in nodes]); F[2*nid+1] += mag
-                    t_load_m0 -= mag 
                 elif l['type'] == 'U':
                     dist = float(l['dist'])
-                    t_load_fy += mag * dist; t_load_m0 += (mag * dist) * (gx + dist/2)
                     for i in range(num_nodes - 1):
                         overlap = min(gx+dist, nodes[i+1]) - max(gx, nodes[i])
                         if overlap > 1e-5:
@@ -77,17 +73,23 @@ class BeamSolver:
             R = K @ U - F
 
             reac_res = []
-            t_reac_fy, t_reac_m0 = 0.0, 0.0
+            t_reac_fy, t_reac_m0, t_load_fy, t_load_m0 = 0, 0, 0, 0
             for _, s in self.supports_df.iterrows():
                 if s['type'] == "None": continue
                 nid = np.argmin([abs(n - self.cum_spans[int(s['id'])]) for n in nodes])
-                t_reac_fy += R[2*nid]
-                t_reac_m0 += (R[2*nid] * self.cum_spans[int(s['id'])]) + R[2*nid+1]
                 reac_res.append({'id': int(s['id']), 'type': s['type'], 'Ry (kN)': round(R[2*nid]/1000, 3), 'M (kNm)': round(R[2*nid+1]/1000, 3)})
+                t_reac_fy += R[2*nid]
+                t_reac_m0 += (R[2*nid] * nodes[nid]) + R[2*nid+1]
+
+            for _, l in self.loads_df.iterrows():
+                gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
+                if l['type'] == 'P': t_load_fy += l['mag']; t_load_m0 += l['mag']*gx
+                elif l['type'] == 'U': t_load_fy += l['mag']*l['dist']; t_load_m0 += l['mag']*l['dist']*(gx+l['dist']/2)
+                elif l['type'] == 'M': t_load_m0 -= l['mag']
 
             res = []
             for x in np.linspace(0, nodes[-1], 500):
-                v_sh, m_bm, d_defl = 0.0, 0.0, 0.0
+                v_sh, m_bm, d_defl = 0, 0, 0
                 for i, np_x in enumerate(nodes):
                     if np_x <= x + 1e-5:
                         v_sh += R[2*i]; m_bm += R[2*i]*(x - np_x) + R[2*i+1]
