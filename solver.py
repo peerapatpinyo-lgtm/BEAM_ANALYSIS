@@ -84,7 +84,7 @@ class BeamSolver:
                 nid = np.argmin([abs(n - self.cum_spans[int(s['id'])]) for n in nodes])
                 t_reac_fy += R[2*nid]
                 t_reac_m0 += (R[2*nid] * self.cum_spans[int(s['id'])]) + R[2*nid+1]
-                reac_res.append({'Node': int(s['id']), 'Type': s['type'], 'Ry (kN)': round(R[2*nid]/1000, 3), 'M (kNm)': round(R[2*nid+1]/1000, 3)})
+                reac_res.append({'id': int(s['id']), 'type': s['type'], 'Ry (kN)': round(R[2*nid]/1000, 3), 'M (kNm)': round(R[2*nid+1]/1000, 3)})
 
             res = []
             for x in np.linspace(0, nodes[-1], 500):
