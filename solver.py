@@ -8,6 +8,7 @@ class BeamSolver:
         self.E = float(E)
         self.b, self.h = b, h
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
+        # G = Shear Modulus, As = Effective Shear Area (Rectangular factor 5/6)
         self.G = self.E / (2 * (1 + 0.2)) 
         self.As = (5/6) * (b * h)        
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
@@ -15,12 +16,12 @@ class BeamSolver:
         self.supports_df = pd.DataFrame(supports_input)
 
     def _get_phi(self, L):
+        # Shear Deformation Parameter (Phi)
         EI = self.E * self.I
         return (12 * EI) / (L**2 * self.G * self.As)
 
     def _get_k_timoshenko(self, L):
-        EI = self.E * self.I
-        Phi = self._get_phi(L)
+        EI, Phi = self.E * self.I, self._get_phi(L)
         coeff = EI / (L**3 * (1 + Phi))
         return coeff * np.array([
             [12, 6*L, -12, 6*L],
@@ -31,18 +32,19 @@ class BeamSolver:
 
     def solve(self):
         try:
+            # 1. Node Generation (Critical Points)
             pts = self.cum_spans.copy()
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
                 pts.append(gx)
                 if l['type'] == 'U': pts.append(round(gx + float(l['dist']), 4))
             nodes = sorted(list(set([round(p, 4) for p in pts])))
-            num_nodes = len(nodes)
-            dof = 2 * num_nodes
+            num_nodes, dof = len(nodes), 2 * len(nodes)
             K, F = np.zeros((dof, dof)), np.zeros(dof)
 
             t_load_fy, t_load_m0 = 0.0, 0.0
 
+            # 2. Stiffness Assembly & Load Application
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
                 if L > 1e-5:
@@ -68,6 +70,7 @@ class BeamSolver:
                             F[2*i] -= (w * Le / 2); F[2*i+1] -= (w * Le**2 / 12)
                             F[2*(i+1)] -= (w * Le / 2); F[2*(i+1)+1] += (w * Le**2 / 12)
 
+            # 3. Boundary Conditions & Solution
             free_d = np.full(dof, True)
             for _, s in self.supports_df.iterrows():
                 if s['type'] == "None": continue
@@ -79,18 +82,18 @@ class BeamSolver:
             U[free_d] = solve(K[np.ix_(free_d, free_d)], F[free_d])
             R = K @ U - F
 
-            reac_res = []
-            t_reac_fy, t_reac_m0 = 0.0, 0.0
+            # 4. Reactions Summary
+            reac_res, t_reac_fy, t_reac_m0 = [], 0.0, 0.0
             for _, s in self.supports_df.iterrows():
                 if s['type'] == "None": continue
-                node_idx = int(s['id'])
-                nid = np.argmin([abs(n - self.cum_spans[node_idx]) for n in nodes])
+                nid = np.argmin([abs(n - self.cum_spans[int(s['id'])]) for n in nodes])
                 t_reac_fy += R[2*nid]
-                t_reac_m0 += (R[2*nid] * self.cum_spans[node_idx]) + R[2*nid+1]
-                reac_res.append({'Node': node_idx, 'Type': s['type'], 'Ry (kN)': round(R[2*nid]/1000, 3), 'M (kNm)': round(R[2*nid+1]/1000, 3)})
+                t_reac_m0 += (R[2*nid] * self.cum_spans[int(s['id'])]) + R[2*nid+1]
+                reac_res.append({'Node': int(s['id']), 'Type': s['type'], 'Ry (kN)': round(R[2*nid]/1000, 3), 'M (kNm)': round(R[2*nid+1]/1000, 3)})
 
+            # 5. Continuous Results (SFD, BMD, Deflection)
             res = []
-            for x in np.linspace(0, nodes[-1], 400):
+            for x in np.linspace(0, nodes[-1], 500):
                 v_sh, m_bm, d_defl = 0.0, 0.0, 0.0
                 for i, np_x in enumerate(nodes):
                     if np_x <= x + 1e-5:
@@ -106,6 +109,7 @@ class BeamSolver:
                     if nodes[i] <= x <= nodes[i+1] + 1e-5:
                         Le, xi = nodes[i+1] - nodes[i], (x - nodes[i]) / (nodes[i+1] - nodes[i])
                         Phi = self._get_phi(Le)
+                        # Timoshenko Inter-nodal Shape Functions
                         N1 = (1/(1+Phi))*(1-3*xi**2+2*xi**3+Phi*(1-xi))
                         N2 = (Le/(1+Phi))*(xi-2*xi**2+xi**3+0.5*Phi*(xi-xi**2))
                         N3 = (1/(1+Phi))*(3*xi**2-2*xi**3+Phi*xi)
