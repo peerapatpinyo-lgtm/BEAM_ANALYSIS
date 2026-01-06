@@ -7,7 +7,8 @@ import input_handler
 import design_view
 from solver import BeamSolver
 import rc_design
-import section_plotter  # <--- เพิ่มบรรทัดนี้ เพื่อเรียกใช้ไฟล์วาดรูป
+import section_plotter 
+import file_manager
 
 st.set_page_config(page_title="Professional Beam Studio", layout="wide", page_icon="🏗️")
 
@@ -56,7 +57,7 @@ if st.button("RUN ANALYSIS", type="primary"):
                 supports_input=sup_df.to_dict('records'),
                 loads_input=factored_loads,
                 E=params['E'],
-                I_custom=params['I'] # Uses Calculated I from Sidebar
+                I_custom=params['I']
             )
             
             df_res, reactions, status = solver.solve()
@@ -80,24 +81,20 @@ if st.button("RUN ANALYSIS", type="primary"):
 if 'results' in st.session_state:
     res = st.session_state.results
     
-    # 3.1 Deflection Check (Serviceability)
+    # 3.1 Deflection
     st.markdown("#### 📏 Serviceability Check (Deflection)")
     cum_dist = [0] + list(np.cumsum(spans))
     
     cols_def = st.columns(n_spans)
     for i in range(n_spans):
-        # Find Max Deflection in Span
         mask = (res['df']['x'] >= cum_dist[i]) & (res['df']['x'] <= cum_dist[i+1])
         span_data = res['df'][mask]
         if not span_data.empty:
-            max_def_mm = span_data['deflection'].abs().max() * 1000 # convert to mm
-            
-            # Limit L/240
+            max_def_mm = span_data['deflection'].abs().max() * 1000 
             limit = (spans[i] * 1000) / 240
-            
             status_def = "✅ PASS" if max_def_mm <= limit else "❌ FAIL"
             cols_def[i].metric(
-                label=f"Span {i+1} (Limit L/240 = {limit:.1f}mm)",
+                label=f"Span {i+1} (Limit L/240)",
                 value=f"{max_def_mm:.2f} mm",
                 delta=status_def,
                 delta_color="normal" if "PASS" in status_def else "inverse"
@@ -117,37 +114,36 @@ if 'results' in st.session_state:
     )
     
     # 3.3 Reaction Table
-    st.subheader("📌 Reactions")
-    reac_data = []
-    for node_idx, val in res['reac'].items():
-        val_show = val / 1000 if params['u_force'] == 'kN' else val
-        s_type = "Support"
-        match = sup_df[sup_df['id'] == node_idx]
-        if not match.empty: s_type = match.iloc[0]['type']
-        
-        reac_data.append({
-            "Node": node_idx+1, 
-            "Type": s_type,
-            f"Ry ({params['u_force']})": f"{val_show:.2f}"
-        })
-    st.table(pd.DataFrame(reac_data).set_index("Node"))
+    with st.expander("📌 View Reactions"):
+        reac_data = []
+        for node_idx, val in res['reac'].items():
+            val_show = val / 1000 if params['u_force'] == 'kN' else val
+            s_type = "Support"
+            match = sup_df[sup_df['id'] == node_idx]
+            if not match.empty: s_type = match.iloc[0]['type']
+            
+            reac_data.append({
+                "Node": node_idx+1, 
+                "Type": s_type,
+                f"Ry ({params['u_force']})": f"{val_show:.2f}"
+            })
+        st.table(pd.DataFrame(reac_data).set_index("Node"))
 
-    # 3.4 RC Design (Detailed with Visualization)
+    # 3.4 RC Design (Professional Detail)
     st.markdown("---")
-    st.header("🏗️ Reinforced Concrete Design")
+    st.header("🏗️ Reinforced Concrete Design Details")
     
-    with st.expander("🛠️ RC Parameters", expanded=True):
+    with st.expander("🛠️ Design Parameters (Click to Edit)", expanded=False):
         c1, c2, c3, c4 = st.columns(4)
         fc = c1.number_input("f'c (MPa)", value=24.0)
         fy = c2.number_input("fy (MPa)", value=400.0)
         cover = c3.number_input("Cover (mm)", value=30.0)
         db = c4.selectbox("Main Bar (mm)", [12, 16, 20, 25, 28], index=2)
 
-    # Loop Design per Span
     df = res['df']
     
     for i in range(n_spans):
-        st.markdown(f"#### Span {i+1}")
+        st.markdown(f"### 🌉 Span {i+1}")
         mask = (df['x'] >= cum_dist[i]) & (df['x'] <= cum_dist[i+1])
         span_data = df[mask]
         
@@ -157,44 +153,69 @@ if 'results' in st.session_state:
         m_max_neg = span_data['moment'].min() / 1000
         v_max_abs = span_data['shear'].abs().max() / 1000
         
-        # Call Improved RC Design Function
         design_res = rc_design.design_span_expert(
             m_pos=m_max_pos, m_neg=m_max_neg, v_u=v_max_abs,
             b=params['b'], h=params['h'],
             fc=fc, fy=fy, cover=cover, db=db
         )
         
-        # --- Display Results Card ---
         with st.container(border=True):
-            col_txt, col_img = st.columns([2, 1])
+            col_viz, col_data = st.columns([1, 2])
             
-            with col_txt:
-                c_bot, c_top = st.columns(2)
-                with c_bot:
-                    st.caption("Bottom Steel (+M)")
-                    st.info(f"🔵 {design_res['pos']['n']} - DB{db}")
-                    st.markdown(f"*{design_res['pos']['note']}*")
-                    
-                with c_top:
-                    st.caption("Top Steel (-M)")
-                    st.warning(f"🔴 {design_res['neg']['n']} - DB{db}")
-                    st.markdown(f"*{design_res['neg']['note']}*")
-                
-                st.divider()
-                st.caption("Shear Reinforcement")
-                st.success(f"⛓️ {design_res['shear_stirrups']}")
-                st.write(f"Status: **{design_res['shear_status']}**")
-
-            # --- Visual Section (ส่วนแสดงรูปภาพ) ---
-            with col_img:
-                st.caption("Cross Section Preview")
+            # --- Left: Visualization ---
+            with col_viz:
+                st.write("**Section Preview**")
                 fig_sec = section_plotter.plot_section(
-                    b=params['b'], 
-                    h=params['h'], 
-                    cover_mm=cover, 
-                    db_mm=db, 
-                    n_top=design_res['neg']['n'], 
-                    n_bot=design_res['pos']['n'],
+                    b=params['b'], h=params['h'], 
+                    cover_mm=cover, db_mm=db, 
+                    n_top=design_res['neg']['n'], n_bot=design_res['pos']['n'],
                     stirrup_info=design_res['shear_stirrups']
                 )
                 st.pyplot(fig_sec, use_container_width=True)
+
+            # --- Right: Technical Data (Tabs) ---
+            with col_data:
+                tab1, tab2, tab3 = st.tabs(["💪 Strength", "⚓ Detailing", "🔍 Serviceability"])
+                
+                with tab1:
+                    c_a, c_b = st.columns(2)
+                    with c_a:
+                        st.info(f"**Top Steel (-M):**\n\n{design_res['neg']['n']} - DB{db}")
+                        st.caption(f"Mu- = {abs(m_max_neg):.2f} kNm")
+                    with c_b:
+                        st.success(f"**Bot Steel (+M):**\n\n{design_res['pos']['n']} - DB{db}")
+                        st.caption(f"Mu+ = {m_max_pos:.2f} kNm")
+                    
+                    st.write("---")
+                    st.write(f"**Shear Reinforcement:** {design_res['shear_stirrups']}")
+                    st.caption(f"Vu max = {v_max_abs:.2f} kN | Status: {design_res['shear_status']}")
+
+                with tab2: # Detailing (Item #1)
+                    st.write("##### Development Length & Splices")
+                    
+                    st.write(f"**Top Bars (Zone -M):**")
+                    st.markdown(f"- $L_d$ (Embed): **{design_res['neg']['Ld']/1000:.2f} m**")
+                    st.markdown(f"- Lap Splice: **{design_res['neg']['Ls']/1000:.2f} m** (Splice at Mid-span)")
+                    
+                    st.divider()
+                    
+                    st.write(f"**Bottom Bars (Zone +M):**")
+                    st.markdown(f"- $L_d$ (Embed): **{design_res['pos']['Ld']/1000:.2f} m**")
+                    st.markdown(f"- Lap Splice: **{design_res['pos']['Ls']/1000:.2f} m** (Splice at Supports)")
+
+                with tab3: # Crack Control (Item #3)
+                    st.write("##### Crack Width Control (ACI 318)")
+                    
+                    # Top Check
+                    status_top = "✅ OK" if design_res['neg']['crack_ok'] else "⚠️ Check Spacing"
+                    st.write(f"**Top Surface:** {status_top}")
+                    if not design_res['neg']['crack_ok']:
+                         st.caption(f"Calculated bar spacing exceeds limit ({design_res['neg']['s_limit']:.0f} mm)")
+
+                    # Bot Check
+                    status_bot = "✅ OK" if design_res['pos']['crack_ok'] else "⚠️ Check Spacing"
+                    st.write(f"**Bottom Surface:** {status_bot}")
+                    if not design_res['pos']['crack_ok']:
+                         st.caption(f"Calculated bar spacing exceeds limit ({design_res['pos']['s_limit']:.0f} mm)")
+                    
+                    st.info("ℹ️ Crack control is based on ACI 318 max bar spacing requirements.")
