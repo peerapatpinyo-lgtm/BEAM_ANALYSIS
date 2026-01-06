@@ -3,34 +3,20 @@ import math
 def get_development_length(db_mm, fc, fy, is_top_bar):
     """
     คำนวณระยะฝังยึด (Development Length) ตามมาตรฐาน ACI 318
-    Ld = (fy / (1.1 * lambda * sqrt(fc))) * db * modifiers
     """
     # Parameters
-    lambda_val = 1.0 (Normal weight concrete)
-    # Top bar factor: 1.3 ถ้าเป็นเหล็กบน (คอนกรีตข้างใต้ลึก > 30 ซม.), 1.0 ถ้าเหล็กล่าง
+    lambda_val = 1.0 # (Normal weight concrete) <--- แก้ไขจุดที่ Error ตรงนี้ครับ
+    
+    # Top bar factor: 1.3 ถ้าเป็นเหล็กบน, 1.0 ถ้าเหล็กล่าง
     psi_t = 1.3 if is_top_bar else 1.0
     psi_e = 1.0 # Uncoated
     psi_s = 0.8 if db_mm <= 19 else 1.0 # Size factor
     
-    # Simplified Equation (ACI 318) for generally conservative results
-    # Term: (fy * psi_t * psi_e) / (1.1 * lambda * sqrt(fc))
-    # แต่ใช้สูตรตารางทั่วไปเพื่อความปลอดภัยและครอบคลุม:
-    # Ld approx 50db for high strength or calculation:
-    
-    cb_factor = (3 * db_mm) / db_mm # Assuming spacing/cover > db
+    # Simplified Equation (ACI 318)
+    cb_factor = (3 * db_mm) / db_mm 
     if cb_factor > 2.5: cb_factor = 2.5
     
-    # Full Equation: Ld = [ (3/40) * (fy / sqrt(fc)) * (psi_t / cb_factor) ] * db
-    # หน่วย: fy, fc (MPa), db (mm) -> Ld (mm)
-    
-    term1 = (3.0 / 40.0)
-    term2 = fy / math.sqrt(fc)
-    term3 = (psi_t * psi_e * psi_s) / 1.5 # 1.5 approx for confinement/spacing
-    
-    # Use Simplified Safe Value used in Thai construction (EIT):
-    # Ld = 0.019 * Ab * fy / sqrt(fc) ... (Old)
-    # Let's use Robust ACI approx: Ld = 40 * db * factors
-    
+    # Ld approx 40-50 db depending on yield strength
     base_mult = 40.0
     if fy > 400: base_mult = 50.0
     
@@ -39,7 +25,7 @@ def get_development_length(db_mm, fc, fy, is_top_bar):
     # Min Limit
     Ld_final = max(Ld_req, 300.0)
     
-    # Splice Class B (Most common) = 1.3 * Ld
+    # Splice Class B = 1.3 * Ld
     L_splice = 1.3 * Ld_final
     
     return Ld_final, L_splice
@@ -47,9 +33,10 @@ def get_development_length(db_mm, fc, fy, is_top_bar):
 def check_crack_width_aci(fs_service, dc_mm, s_mm):
     """
     ตรวจสอบรอยร้าวโดยใช้ ACI 318 Spacing Control
-    s_max = 380 * (280/fs) - 2.5*cc
     """
-    # fs_service approx 0.60 fy or 2/3 fy
+    if fs_service <= 0: return True, 300.0
+    
+    # s_max = 380 * (280/fs) - 2.5*cc
     term1 = 380.0 * (280.0 / fs_service)
     term2 = 2.5 * dc_mm
     s_max = term1 - term2
@@ -57,7 +44,7 @@ def check_crack_width_aci(fs_service, dc_mm, s_mm):
     # Upper cap just in case
     s_max = min(s_max, 300.0)
     
-    if s_max < 0: s_max = 50.0 # Strict
+    if s_max < 50: s_max = 50.0 # Minimum practical spacing
     
     pass_crack = s_mm <= s_max
     
@@ -76,6 +63,8 @@ def design_shear(Vu_kN, b_m, d_m, fc, fy):
         return "Min. Stirrups (RB6 @ 0.25m)", "OK (Min)"
     else:
         Vs = (Vu - phi_Vc) / phi
+        if Vs < 0: Vs = 0 # Case where phiVc < Vu < phiVc (should not happen with /2 logic but safe check)
+        
         if Vs > 4 * Vc:
             return "❌ Section too small (Increase Size)", "Fail"
 
@@ -83,7 +72,12 @@ def design_shear(Vu_kN, b_m, d_m, fc, fy):
         Av = 127.0 
         fy_stirrup = 240.0 # SR24 standard for stirrups
         
-        s_req = (Av * fy_stirrup * d) / Vs
+        # Avoid division by zero
+        if Vs == 0: 
+             s_req = 600
+        else:
+             s_req = (Av * fy_stirrup * d) / Vs
+             
         s_max = d / 2
         s_final = min(s_req, s_max, 600.0)
         
@@ -98,7 +92,7 @@ def design_span_expert(m_pos, m_neg, v_u, b, h, fc, fy, cover, db):
     Main Function: Flexure + Shear + Detailing + Serviceability
     """
     d = h - (cover/1000) - (db/2000) - 0.009 # d approx
-    Es = 200000.0 # Steel Modulus MPa
+    A_bar = 3.1416 * (db/2)**2
     
     def get_steel(Mu_kNm, is_top):
         if Mu_kNm == 0: 
@@ -108,16 +102,19 @@ def design_span_expert(m_pos, m_neg, v_u, b, h, fc, fy, cover, db):
         phi = 0.9
         
         # 1. Strength Design
-        As_try = Mu / (phi * fy * 0.9 * (d*1000))
+        # As approx = Mu / (phi * fy * 0.9d)
+        denom = (phi * fy * 0.9 * (d*1000))
+        if denom == 0: return 0, 0, "Error", 0, 0, False, 0
+        
+        As_try = Mu / denom
         a = (As_try * fy) / (0.85 * fc * (b*1000))
         As_req = Mu / (phi * fy * ((d*1000) - a/2))
         
         As_min = (1.4 / fy) * (b*1000) * (d*1000)
         As_final = max(As_req, As_min)
         
-        A_bar = 3.1416 * (db/2)**2
         n = math.ceil(As_final / A_bar)
-        if n < 2: n = 2 # Minimum 2 bars for constructability
+        if n < 2: n = 2 # Minimum 2 bars
         
         # 2. Spacing Check (Congestion)
         b_mm = b * 1000
@@ -127,18 +124,25 @@ def design_span_expert(m_pos, m_neg, v_u, b, h, fc, fy, cover, db):
         if width_req > b_mm:
             note_spacing = "⚠️ Congested (Use 2 Layers)"
 
-        # 3. Development Length & Splice (Item #1)
+        # 3. Development Length & Splice
         Ld, L_splice = get_development_length(db, fc, fy, is_top)
         
-        # 4. Crack Control Check (Item #3)
+        # 4. Crack Control Check
         # Calculate actual spacing s_act
-        s_act = (b_mm - 2*cover - n*db) / (n - 1) if n > 1 else 0
+        s_act = 0
+        if n > 1:
+            s_act = (b_mm - 2*cover - n*db) / (n - 1)
         
-        # Calculate Service Stress (fs) approx: M_service ~ Mu/1.5
-        # fs = M_service / (As * 0.9 d)
+        # Service Stress (fs) approx: M_service ~ Mu/1.5
         M_service = Mu / 1.5 
-        fs = M_service / ((n * A_bar) * 0.9 * (d*1000))
-        if fs > 0.6 * fy: fs = 0.6 * fy # Cap at limit
+        
+        # Avoid division by zero
+        As_prov = n * A_bar
+        fs = 0
+        if As_prov > 0:
+            fs = M_service / (As_prov * 0.9 * (d*1000))
+            
+        if fs > 0.6 * fy: fs = 0.6 * fy 
         
         pass_crack, s_max_allow = check_crack_width_aci(fs, cover + db/2, s_act)
         
