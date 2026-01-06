@@ -20,7 +20,7 @@ def design_section(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_main,
     n_top = calc_bars(mu_neg)
     n_bot = calc_bars(mu_pos)
     
-    # Shear
+    # Shear reinforcement
     vc = (1/6) * np.sqrt(fc) * b * d / 1000
     vs_req = (vu / phi_v) - vc if vu > (phi_v * vc * 0.5) else 0
     asv = 2 * (np.pi * (db_stirrup**2) / 4)
@@ -28,4 +28,7 @@ def design_section(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_main,
     if vs_req > 0:
         s = min((asv * fyt * d) / (vs_req * 1000), s)
         
-    return {"n_top": n_top, "n_bot": n_bot, "spacing": int(s), "d": d, "b": b, "h": h}
+    return {
+        "n_top": n_top, "n_bot": n_bot, "spacing": int(s), 
+        "d": d, "b": b, "h": h, "mu_pos": mu_pos, "mu_neg": mu_neg
+    }
