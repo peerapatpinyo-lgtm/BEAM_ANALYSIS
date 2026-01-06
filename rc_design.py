@@ -3,7 +3,6 @@ import numpy as np
 def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_main, db_stirrup):
     phi_m, phi_v = 0.90, 0.75
     b, h = b_m * 1000, h_m * 1000
-    # Effective depth (d)
     d = h - cover_mm - db_stirrup - (db_main / 2)
     
     def calc_flexure(mu_knm):
@@ -23,23 +22,20 @@ def design_span_expert(mu_pos, mu_neg, vu, b_m, h_m, fc, fy, fyt, cover_mm, db_m
         rho_final = max(rho, rho_min)
         as_req = rho_final * b * d
         
-        # Stress block and strain
         a = (as_req * fy) / (0.85 * fc * b)
         beta1 = max(0.65, 0.85 - 0.05 * (fc - 28) / 7)
         c = a / beta1
-        et = ((d - c) / c) * 0.003 # Tension strain
+        et = ((d - c) / c) * 0.003
         
         n_bars = max(2, int(np.ceil(as_req / (np.pi * (db_main**2) / 4))))
         return {"n": n_bars, "as_req": as_req, "k": k, "a": a, "et": et, "status": "OK", "mu_val": mu_knm}
 
-    # Shear Calculation (ACI 318)
     vc = (0.17 * np.sqrt(fc) * b * d) / 1000
     phi_vc = phi_v * vc
-    s_max = min(d/2, 300)
     
     return {
         "pos": calc_flexure(mu_pos),
         "neg": calc_flexure(mu_neg),
-        "spacing": int(s_max), 
+        "spacing": int(min(d/2, 300)), 
         "d": d, "vu": vu, "phi_vc": phi_vc
     }
