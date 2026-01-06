@@ -8,6 +8,7 @@ class BeamSolver:
         self.E = float(E)
         self.b = b
         self.h = h
+        # 1. จัดการค่า I (Auto/Custom)
         self.I = float(I_custom) if I_custom else (b * h**3) / 12
         self.cum_spans = [round(x, 4) for x in ([0.0] + list(np.cumsum(self.spans)))]
         self.loads_df = pd.DataFrame(loads_input)
@@ -15,6 +16,7 @@ class BeamSolver:
 
     def solve(self):
         try:
+            # --- Node Generation ---
             pts = self.cum_spans.copy()
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
@@ -25,17 +27,23 @@ class BeamSolver:
             dof = 2 * num_nodes
             K, F = np.zeros((dof, dof)), np.zeros(dof)
 
-            # --- Equation Check Setup: คำนวณ Load จริงเพื่อเช็คสมดุล ---
+            # Equation Check Accumulators
             total_load_fy = 0.0
             total_load_moment_at_0 = 0.0
 
+            # Stiffness Matrix Assembly
             for i in range(num_nodes - 1):
                 L = nodes[i+1] - nodes[i]
                 if L > 1e-5:
                     EI = self.E * self.I
-                    k_el = (EI / L**3) * np.array([[12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2], [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]])
-                    K[np.ix_([2*i, 2*i+1, 2*(i+1), 2*(i+1)+1], [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1])] += k_el
+                    k_el = (EI / L**3) * np.array([
+                        [12, 6*L, -12, 6*L], [6*L, 4*L**2, -6*L, 2*L**2],
+                        [-12, -6*L, 12, -6*L], [6*L, 2*L**2, -6*L, 4*L**2]
+                    ])
+                    idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
+                    K[np.ix_(idx, idx)] += k_el
 
+            # --- 2. Load Application (P, U, M) & Equation Check Logic ---
             for _, l in self.loads_df.iterrows():
                 gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
                 mag = float(l['mag'])
@@ -44,10 +52,10 @@ class BeamSolver:
                     F[2*nid] -= mag
                     total_load_fy += mag
                     total_load_moment_at_0 += mag * gx
-                elif l['type'] == 'M':
+                elif l['type'] == 'M': # Moment Load
                     nid = np.argmin([abs(n - gx) for n in nodes])
                     F[2*nid+1] += mag
-                    total_load_moment_at_0 -= mag # Moment direct sum
+                    total_load_moment_at_0 -= mag 
                 elif l['type'] == 'U':
                     dist = float(l['dist'])
                     s_g, e_g = gx, round(gx + dist, 4)
@@ -60,6 +68,7 @@ class BeamSolver:
                             F[2*i] -= (w * L_el / 2); F[2*i+1] -= (w * L_el**2 / 12)
                             F[2*(i+1)] -= (w * L_el / 2); F[2*(i+1)+1] += (w * L_el**2 / 12)
 
+            # Boundary Conditions
             free_dof = np.full(dof, True)
             for _, sup in self.supports_df.iterrows():
                 if sup['type'] == "None": continue
@@ -77,25 +86,45 @@ class BeamSolver:
             total_reac_moment_at_0 = 0.0
             for _, sup in self.supports_df.iterrows():
                 if sup['type'] == "None": continue
-                nid = np.argmin([abs(n - self.cum_spans[int(sup['id'])]) for n in nodes])
-                ry = R_full[2*nid]
-                rm = R_full[2*nid+1]
-                reac_list.append({'Node': int(sup['id']), 'Type': sup['type'], 'Ry (kN)': round(ry/1000, 2), 'M (kNm)': round(rm/1000, 2)})
+                node_idx = int(sup['id'])
+                nid = np.argmin([abs(n - self.cum_spans[node_idx]) for n in nodes])
+                ry, rm = R_full[2*nid], R_full[2*nid+1]
+                reac_list.append({
+                    'Node': node_idx, 'Type': sup['type'], 
+                    'Ry (kN)': round(ry/1000, 3), 'M (kNm)': round(rm/1000, 3)
+                })
                 total_reac_fy += ry
-                total_reac_moment_at_0 += (ry * self.cum_spans[int(sup['id'])]) + rm
+                total_reac_moment_at_0 += (ry * self.cum_spans[node_idx]) + rm
 
-            res_df = [] # (ส่วนการคำนวณกราฟเหมือนเดิม...)
+            # Diagram Results
+            res_data = []
             for x in np.linspace(0, nodes[-1], 400):
-                # ... [Code logic สำหรับ Shear/Moment Diagram] ...
-                pass 
+                V, M, defl = 0.0, 0.0, 0.0
+                for i, n_p in enumerate(nodes):
+                    if n_p <= x + 1e-5:
+                        V += R_full[2*i]; M += R_full[2*i]*(x - n_p) + R_full[2*i+1]
+                for _, l in self.loads_df.iterrows():
+                    gx = self.cum_spans[int(l['span_index'])] + float(l['x'])
+                    if l['type'] == 'P' and gx <= x + 1e-5:
+                        V -= l['mag']; M -= l['mag']*(x - gx)
+                    elif l['type'] == 'M' and gx <= x + 1e-5: M -= l['mag']
+                    elif l['type'] == 'U' and gx < x:
+                        d = min(x, gx + l['dist']) - gx
+                        V -= l['mag']*d; M -= l['mag']*d*(x - (gx + d/2))
+                
+                for i in range(num_nodes - 1):
+                    if nodes[i] <= x <= nodes[i+1] + 1e-5:
+                        L_el, s = nodes[i+1] - nodes[i], (x - nodes[i]) / (nodes[i+1] - nodes[i])
+                        H = np.array([1-3*s**2+2*s**3, L_el*(s-2*s**2+s**3), 3*s**2-2*s**3, L_el*(s**3-s**2)])
+                        defl = np.dot(H, U[2*i:2*i+4])
+                        break
+                res_data.append({'x': x, 'shear': V, 'moment': M, 'deflection': defl})
 
-            # ส่งค่า Equation Check กลับไปแสดงผล
+            df_res = pd.DataFrame(res_data)
             eq_check = {
-                'sum_fy_load': total_load_fy,
-                'sum_fy_reac': total_reac_fy,
-                'sum_m0_load': total_load_moment_at_0,
-                'sum_m0_reac': total_reac_moment_at_0,
-                'is_balanced': abs(total_load_fy - total_reac_fy) < 1e-3
+                'sum_fy_load': total_load_fy, 'sum_fy_reac': total_reac_fy,
+                'sum_m0_load': total_load_moment_at_0, 'sum_m0_reac': total_reac_moment_at_0
             }
-            return pd.DataFrame(res_df), pd.DataFrame(reac_list), eq_check
-        except Exception as e: return pd.DataFrame(), pd.DataFrame(), {"error": str(e)}
+            return df_res, pd.DataFrame(reac_list), eq_check
+        except Exception as e:
+            return pd.DataFrame(), pd.DataFrame(), {"error": str(e)}
