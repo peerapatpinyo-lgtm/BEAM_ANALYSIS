@@ -1,4 +1,3 @@
-
 import math
 
 def get_development_length(db_mm, fc, fy, is_top_bar):
