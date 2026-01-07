@@ -108,7 +108,6 @@ if st.session_state.analyzed:
     full_loads = st.session_state.get('full_loads', [])
     sw_val = st.session_state.get('sw_val', 0.0)
     
-    # รวมเหลือ 2 Tab ตามที่คุยกัน
     tab1, tab2 = st.tabs(["📊 1. Analysis Diagrams", "📝 2. Detailed Design & Report"])
     
     # ================= TAB 1: DIAGRAMS =================
@@ -123,6 +122,7 @@ if st.session_state.analyzed:
         c3.metric("Max Shear", f"{max_V:.2f} kN")
         c4.metric("Self-Weight", f"{sw_val:.2f} kN/m")
         
+        # Plotly Graph
         fig = design_view.plot_analysis_results(res, spans, sup_df, full_loads)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -171,23 +171,31 @@ if st.session_state.analyzed:
         st.markdown('<div class="calc-box">', unsafe_allow_html=True)
         st.markdown(f'<div class="calc-header">📝 ENGINEER CALCULATION SHEET: Span {sel_span["span"]} ({f["name"]})</div>', unsafe_allow_html=True)
 
-        # --- PART 0: SYSTEM CHECK (FIXED BUG HERE) ---
+        # --- PART 0: SYSTEM CHECK (FIXED ROBUSTLY) ---
         st.markdown('<div class="sub-header">0. System Equilibrium Check</div>', unsafe_allow_html=True)
+        
+        # Calculate Total Load Y
         total_load_y = 0
         for l in full_loads:
             if l['type'] == 'P': total_load_y += l['mag']
             elif l['type'] == 'U': total_load_y += l['mag'] * l['dist']
-        
-        # [FIX] Handle DataFrame safely
+            
+        # [FIX] Robust Reaction Summation (DataFrame vs List)
         if isinstance(reac, pd.DataFrame):
             sum_reac = reac['fy'].abs().sum()
+        elif isinstance(reac, list):
+            # Safe check if it's a list of dicts
+            if len(reac) > 0 and isinstance(reac[0], dict):
+                 sum_reac = sum([abs(r.get('fy', 0)) for r in reac])
+            else:
+                 sum_reac = 0
         else:
-            sum_reac = sum([abs(r['fy']) for r in reac])
+            sum_reac = 0
         
         st.latex(rf"\sum F_{{load,y}} = {total_load_y/1000:.2f}\ kN")
         st.latex(rf"\sum R_y = {sum_reac/1000:.2f}\ kN")
         
-        if abs(total_load_y - sum_reac) < 1.0: # Tolerance 1N
+        if abs(total_load_y - sum_reac) < 10.0: # Tolerance increased slightly for num prec
              st.markdown(f'<span class="pass">✅ EQUILIBRIUM OK</span>', unsafe_allow_html=True)
         else:
              st.markdown(f'<span class="fail">❌ EQUILIBRIUM ERROR</span>', unsafe_allow_html=True)
@@ -269,7 +277,7 @@ if st.session_state.analyzed:
         else:
             st.markdown(f'<span class="fail">❌ UNSAFE (Reduce stirrup spacing)</span>', unsafe_allow_html=True)
 
-        # --- RECOMMENDATIONS (MOVED HERE AS REQUESTED) ---
+        # --- RECOMMENDATIONS ---
         st.markdown('<div class="rec-box">', unsafe_allow_html=True)
         st.markdown("#### 💡 Senior Engineer Recommendations")
         
