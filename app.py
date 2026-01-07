@@ -244,66 +244,118 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     st.warning("⚠️ **ตรวจพบแรงยก (Uplift):** ค่าที่เป็นลบหมายถึงแรงดึงขึ้นที่จุดรองรับ")              
 
             with t2:
-                # 1. Longitudinal Section (บีบความสูงลงเพื่อความสมส่วน)
-                st.markdown("#### 📏 Longitudinal Section")
+                st.subheader("🏗️ Interactive Reinforcement Detailing")
+                
+                # 1. Longitudinal Section (รูปตัดยาว)
                 fig_long = section_plotter.plot_longitudinal_section(spans, sup_df, design_res, params['h'], 40)
-                fig_long.set_size_inches(12, 3) 
+                fig_long.set_size_inches(12, 2.5) # บีบให้เตี้ยลง
                 st.pyplot(fig_long, use_container_width=True)
                 
-                st.markdown("---") 
+                st.divider()
                 
-                # 2. Cross Sections (จัดเรียงแบบหน้ากระดาน)
-                st.markdown("#### 🟦 Cross Sections")
-                
-                # กำหนดให้โชว์สูงสุด 4 รูปต่อแถว
-                n_spans = len(spans)
-                cols_per_row = 4
-                
-                for row_idx in range(0, n_spans, cols_per_row):
-                    # สร้างชุดคอลัมน์สำหรับแถวนั้นๆ
-                    current_batch = design_res[row_idx : row_idx + cols_per_row]
-                    cols = st.columns(cols_per_row)
-                    
-                    for i, d in enumerate(current_batch):
-                        actual_idx = row_idx + i
-                        with cols[i]:
-                            # --- ปรับปรุงการแสดงผลให้ชิดกัน ---
+                # 2. Cross Sections Loop (วนลูปสร้างรูปตัดขวาง + คำนวณ)
+                # ใช้ CSS เพื่อลดระยะห่างของ Header
+                st.markdown("""
+                    <style>
+                    .block-container {padding-top: 1rem;}
+                    div[data-testid="stExpander"] div[role="button"] p {font-size: 0.9rem; font-weight: bold;}
+                    </style>
+                """, unsafe_allow_html=True)
+
+                # จัด Layout ทีละ Span
+                for i, d_auto in enumerate(design_res):
+                    # สร้าง Container แยกแต่ละ Span เพื่อความชัดเจน
+                    with st.container():
+                        c1, c2, c3 = st.columns([3, 4, 3])
+                        
+                        # --- Column 1: Control Panel (ปรับแก้เหล็ก) ---
+                        with c1:
+                            st.markdown(f"### 🔹 Span {i+1}")
+                            st.caption(f"Section: {params['b']} x {params['h']} m")
+                            
+                            with st.expander("⚙️ ปรับแก้เหล็ก/Covering", expanded=False):
+                                # 1. Covering
+                                new_cover = st.number_input(f"Covering (mm) - Sp{i+1}", 20, 75, 40, 5, key=f"cov_{i}")
+                                
+                                # 2. Main Steel (Top/Bot)
+                                st.markdown("**Main Bars:**")
+                                c_top, c_bot = st.columns(2)
+                                with c_top:
+                                    n_top = st.number_input(f"Top Bars", 2, 10, d_auto['neg']['n'], key=f"nt_{i}")
+                                with c_bot:
+                                    n_bot = st.number_input(f"Bot Bars", 2, 10, d_auto['pos']['n'], key=f"nb_{i}")
+                                
+                                bar_size = st.selectbox(f"Bar Size - Sp{i+1}", [12, 16, 20, 25], index=1, key=f"db_{i}")
+                                
+                                # 3. Stirrups
+                                st.markdown("**Stirrups:**")
+                                s_spacing = st.number_input(f"Spacing (cm) - Sp{i+1}", 5, 30, 15, 5, key=f"s_{i}")
+                                
+                                # --- Recalculate Logic (Simplified) ---
+                                # คำนวณ Capacity ใหม่ตามที่ user เลือก
+                                # (หมายเหตุ: สูตรนี้เป็นการประมาณการเพื่อโชว์ผล Real-time)
+                                d_eff = (params['h']*1000) - new_cover - (bar_size/2) - 6 # 6=stirrup dia approx
+                                As_bot = n_bot * (3.1416 * (bar_size/2)**2)
+                                a_depth = (As_bot * 400) / (0.85 * 24 * (params['b']*1000))
+                                mn_val = 0.90 * As_bot * 400 * (d_eff - a_depth/2) / 1e6 # kNm
+                                
+                                req_moment = d_auto['pos']['required'] # Load เดิมจาก Analysis
+
+                        # --- Column 2: Visualization (รูปภาพ) ---
+                        with c2:
+                            # Plot ด้วยค่าใหม่ที่ปรับแล้ว
                             fig_sec = section_plotter.plot_section(
-                                params['b'], params['h'], 40, 16,
-                                d['neg']['n'], d['pos']['n'], 
-                                d['shear_stirrups'], 24, 400
+                                params['b'], params['h'], new_cover, bar_size,
+                                n_top, n_bot, 
+                                f"RB6@{s_spacing}cm", 24, 400
                             )
                             
-                            # 1. ใส่หัวข้อลงไปในรูปเลย (เพื่อความชิด)
-                            fig_sec.suptitle(f"Span {actual_idx+1}", fontsize=12, fontweight='bold', y=0.95)
-                            fig_sec.text(0.5, 0.88, f"({params['b']}x{params['h']} m)", ha='center', fontsize=9)
+                            # ปรับแต่งกราฟให้ชิดขอบที่สุด (แก้ปัญหาพื้นที่ว่าง)
+                            fig_sec.set_size_inches(3.5, 3.5)
+                            fig_sec.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
                             
-                            # 2. ปรับขนาดและตัดขอบขาวทิ้ง (Tighten Up)
-                            fig_sec.set_size_inches(3, 3.5) # ปรับให้สัดส่วนดูเป็นจตุรัสมากขึ้น
-                            fig_sec.subplots_adjust(top=0.85, bottom=0.05, left=0.1, right=0.9)
-                            
-                            # 3. แสดงผล (ใช้หัวข้อในตัวรูป ไม่ใช้ st.caption แล้ว)
                             st.pyplot(fig_sec, use_container_width=True)
                             
-                            # แสดงสถานะเหล็กปลอกแบบกระชับ
-                            status_color = "green" if d['shear_status'] != 'Fail' else "red"
-                            st.markdown(f"<p style='text-align:center; color:{status_color}; font-size:14px; margin-top:-20px;'><b>Shear: {d['shear_status']}</b></p>", unsafe_allow_html=True)     
-                            if d['shear_status'] == 'Fail':
-                                st.error("Shear: Fail", icon="❌")
-                            else:
-                                st.info(f"Shear: {d['shear_status']}")
+                            # Status Display
+                            status_color = "green" if mn_val >= req_moment else "red"
+                            status_icon = "✅" if mn_val >= req_moment else "⚠️"
+                            st.markdown(
+                                f"<div style='text-align:center; color:{status_color}; font-weight:bold; margin-top:-10px;'>"
+                                f"{status_icon} Capacity: {mn_val:.2f} kNm (Req: {req_moment:.2f})</div>", 
+                                unsafe_allow_html=True
+                            )
 
-                # 3. Material Summary (ประหยัดพื้นที่ด้วย Expander)
-                st.markdown("---")
-                st.markdown("#### 📋 Material Summary")
+                        # --- Column 3: Calculation Sheet (รายการคำนวณ) ---
+                        with c3:
+                            st.markdown("#### 📝 รายการคำนวณ")
+                            st.markdown(f"**Design Check (Bottom):**")
+                            
+                            # แสดงสูตร Latex
+                            st.latex(rf"d = {params['h']*1000:.0f} - {new_cover} - {bar_size}/2 = {d_eff:.1f} \text{{ mm}}")
+                            st.latex(rf"A_s = {n_bot} \times \pi ({bar_size}/2)^2 = {As_bot:.0f} \text{{ mm}}^2")
+                            
+                            st.write("**Moment Capacity ($\phi M_n$):**")
+                            st.latex(rf"a = \frac{{A_s f_y}}{{0.85 f_c' b}} = {a_depth:.1f} \text{{ mm}}")
+                            st.latex(rf"\phi M_n = 0.9 A_s f_y (d - a/2)")
+                            st.latex(rf"= {mn_val:.2f} \text{{ kNm}}")
+                            
+                            # Check Pass/Fail
+                            if mn_val >= req_moment:
+                                st.success(f"OK (Ratio: {req_moment/mn_val:.2f})")
+                            else:
+                                st.error(f"Fail (Needs {req_moment:.2f} kNm)")
+
+                    st.divider()
                 
+                # Material Summary (BBS) อยู่ด้านล่างสุด
+                st.markdown("### 📋 Bill of Quantities")
+                # (ส่วนนี้ใช้โค้ดเดิมได้ หรือจะให้ผมแปะให้ครบก็ได้ครับ)
                 bbs_list = rc_design.generate_bbs(design_res, spans, params['b'], params['h'], 40)
                 vol_conc, w_steel = rc_design.get_boq(spans, params['b'], params['h'], bbs_list)
-                
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Concrete", f"{vol_conc:.2f} m³")
-                m2.metric("Steel", f"{w_steel:.2f} kg")
-                m3.metric("Ratio", f"{w_steel/vol_conc:.1f} kg/m³" if vol_conc > 0 else "0 kg/m³")
+                m1.metric("Concrete Volume", f"{vol_conc:.2f} m³")
+                m2.metric("Total Steel Weight", f"{w_steel:.2f} kg")
+                m3.metric("Steel Ratio", f"{(w_steel/vol_conc) if vol_conc>0 else 0:.1f} kg/m³")
                 
                 if bbs_list:
                     with st.expander("🔍 คลิกเพื่อดูตารางเหล็กเสริม (BBS Table)"):
@@ -333,6 +385,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
