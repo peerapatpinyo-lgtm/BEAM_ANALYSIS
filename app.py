@@ -18,13 +18,13 @@ params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_side
 if not stable:
     st.error("🚨 Structure is unstable! Please check supports (Must have at least 3 reaction components).")
 else:
-    # --- 1. Prepare & Combine Loads (Logic Update) ---
-    # Goal: Merge Self-Weight + User Full-Span UDL into one single load entry
+    # --- 1. Prepare & Combine Loads ---
+    # 1.1 Calculate Self-Weight
+    # Define BOTH units to prevent NameError in display later
+    w_sw_kN = params['b'] * params['h'] * 24.0   # kN/m (for Display)
+    w_sw_N_m = w_sw_kN * 1000.0                  # N/m  (for Calculation)
     
-    # 1.1 Calculate Self-Weight (Concrete ~ 24 kN/m3) -> N/m
-    w_sw_N_m = params['b'] * params['h'] * 24.0 * 1000 
-    
-    # 1.2 Initialize dictionaries to hold Total UDL per span
+    # 1.2 Initialize bucket for Total UDL per span
     # Key = span_index, Value = Total Magnitude (N/m)
     span_total_udl = {i: w_sw_N_m for i in range(n_spans)}
     
@@ -33,28 +33,33 @@ else:
     # 1.3 Process User Loads
     if not loads_df.empty:
         for _, row in loads_df.iterrows():
-            s_idx = int(row['span_index'])
-            l_type = row['type']
-            mag = row['mag']   # N or N/m
-            dist = row['dist'] # m
-            
-            current_span_len = spans[s_idx]
-            
-            # CHECK: If it is UDL and covers the FULL span (or close to it)
-            if l_type == 'U' and dist >= (current_span_len - 0.01):
-                # MERGE IT: Add to the existing bucket
-                span_total_udl[s_idx] += mag
-            else:
-                # KEEP SEPARATE: Point loads or partial UDLs
-                combined_loads_list.append({
-                    'span_index': s_idx,
-                    'type': l_type,
-                    'mag': mag,
-                    'dist': dist,
-                    'desc': 'Point/Partial Load'
-                })
+            try:
+                s_idx = int(row['span_index'])
+                # Safe check: if span index exceeds current spans (e.g. after deleting a span)
+                if s_idx >= n_spans: continue 
+                
+                l_type = row['type']
+                mag = row['mag']   # N or N/m
+                dist = row['dist'] # m
+                
+                current_span_len = spans[s_idx]
+                
+                # CHECK: If UDL covers FULL span -> MERGE
+                if l_type == 'U' and dist >= (current_span_len - 0.01):
+                    span_total_udl[s_idx] += mag
+                else:
+                    # Point Load or Partial UDL -> KEEP SEPARATE
+                    combined_loads_list.append({
+                        'span_index': s_idx,
+                        'type': l_type,
+                        'mag': mag,
+                        'dist': dist,
+                        'desc': 'Point/Partial Load'
+                    })
+            except Exception as e:
+                st.warning(f"Skipping invalid load row: {e}")
     
-    # 1.4 Add the Merged UDLs to the final list
+    # 1.4 Add Merged UDLs to list
     for i in range(n_spans):
         total_mag = span_total_udl[i]
         if total_mag > 0:
@@ -66,7 +71,6 @@ else:
                 'desc': 'Total Combined UDL (SW + User)'
             })
             
-    # Create final DataFrame for Solver
     calc_loads_df = pd.DataFrame(combined_loads_list)
 
     # --- 2. Solve Beam ---
@@ -117,7 +121,7 @@ else:
                 
                 sum_R = sum(R.values()) / 1000.0 # kN
                 
-                # Sum Loads from the calc_loads_df (already combined)
+                # Sum Loads from calc_loads_df
                 sum_Load = 0.0
                 for _, l in calc_loads_df.iterrows():
                     force = l['mag']
@@ -153,26 +157,36 @@ else:
         # --- PART 4: LOAD DETAILS ---
         with st.expander("🧮 Load Combination Details", expanded=False):
             st.markdown("### How Loads are Combined:")
-            st.write(f"**1. Self-Weight (SW):** {w_sw_N_m/1000:.2f} kN/m (Calculated automatically)")
+            # FIXED: w_sw_kN is now defined correctly at the top
+            st.write(f"**1. Self-Weight (SW):** {w_sw_kN:.3f} kN/m (Calculated automatically)")
             
             st.write("**2. Load Breakdown per Span:**")
             
-            # Show breakdown table
             breakdown_data = []
             for i in range(n_spans):
-                # Find the Combined UDL for this span in the dataframe
                 row = calc_loads_df[(calc_loads_df['span_index'] == i) & (calc_loads_df['type'] == 'U')]
                 if not row.empty:
-                    total_udl = row.iloc[0]['mag'] / 1000.0 # kN/m
-                    user_part = total_udl - (w_sw_N_m/1000.0)
-                    breakdown_data.append({
-                        "Span": i+1,
-                        "Self-Weight (kN/m)": f"{w_sw_N_m/1000:.2f}",
-                        "User UDL (kN/m)": f"{user_part:.2f}",
-                        "TOTAL UDL (kN/m)": f"**{total_udl:.2f}**"
-                    })
-            st.table(pd.DataFrame(breakdown_data))
-        
+                    # Be careful: row might have multiple entries if logic failed, but our logic ensures unique 'U' per span for Total
+                    # Actually, if user puts partial UDL, it is separate. We only want the "Total Combined" one.
+                    # Let's filter by description or just take the max one to be safe, or sum them (though our logic merged them).
+                    
+                    # Better logic: Find the one with 'Total Combined' desc
+                    total_row = row[row['desc'].str.contains("Total Combined")]
+                    
+                    if not total_row.empty:
+                        total_udl = total_row.iloc[0]['mag'] / 1000.0 # kN/m
+                        user_part = total_udl - w_sw_kN
+                        breakdown_data.append({
+                            "Span": i+1,
+                            "Self-Weight": f"{w_sw_kN:.3f}",
+                            "User UDL": f"{user_part:.3f}",
+                            "TOTAL UDL (kN/m)": f"**{total_udl:.3f}**"
+                        })
+            if breakdown_data:
+                st.table(pd.DataFrame(breakdown_data))
+            else:
+                st.write("No Combined UDLs found (structure might be empty).")
+
     # ================= TAB 2: DESIGN & REPORT =================
     with tab2:
         st.header("Reinforced Concrete Design (WSD/SDM Concept)")
