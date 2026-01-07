@@ -140,33 +140,48 @@ else:
 
             st.markdown("---")
 
-            # 7.4 Detailed Calculation Reports (Requested: SW & Load Combinations)
-            with st.expander("🧮 Detailed Load Calculation Report", expanded=True):
-                st.markdown("#### A. Self-Weight Calculation (Dead Load)")
-                sw_report = []
-                for i in range(n_spans):
-                    sw_report.append({
-                        "Span": i+1,
-                        "Dimensions": f"{params['b']}m x {params['h']}m",
-                        "Formula": f"b*h * 24 kN/m³ * {f_dl}",
-                        "Factored Result": f"{w_sw_factored_kN:.2f} kN/m"
-                    })
-                st.table(pd.DataFrame(sw_report))
+            # --- 7.4 Detailed Calculation Reports (Full Breakdown) ---
+    with st.expander("🧮 Detailed Load Calculation & Combinations", expanded=True):
+    st.markdown("#### A. Self-Weight Calculation (Dead Load - DL)")
+    # แสดงที่มาของน้ำหนักตัวเอง
+    sw_base = params['b'] * params['h'] * 24.0
+    st.write(f"**Unit Weight of Concrete:** 24.0 kN/m³")
+    st.latex(r"w_{sw, \text{base}} = b \times h \times 24.0 = " + f"{params['b']} \times {params['h']} \times 24.0 = {sw_base:.2f} \text{ kN/m}")
 
-                st.markdown("#### B. Load Combination Breakdown")
-                combo_report = []
-                if not loads_df.empty:
-                    for _, row in loads_df.iterrows():
-                        combo_report.append({
-                            "Span": int(row['span_index'])+1,
-                            "Type": "Point" if row['type'] == 'P' else "Uniform",
-                            "Unfactored": f"{row['mag']/1000:.2f} kN(/m)",
-                            "Factor (LL)": f"x{f_ll}",
-                            "Factored": f"{row['mag']*f_ll/1000:.2f} kN(/m)"
-                        })
-                    st.table(pd.DataFrame(combo_report))
-                else:
-                    st.write("No additional user loads defined.")
+    st.markdown("---")
+    st.markdown("#### B. Load Combination Summary (Factored Loads)")
+    
+    combo_rows = []
+    for i in range(n_spans):
+        # 1. จัดการส่วน Self-weight (1.4DL หรือตาม factor ที่เลือก)
+        sw_f = sw_base * f_dl
+        combo_rows.append({
+            "Span": i+1,
+            "Load Case": "Self-Weight (DL)",
+            "Formula": f"{sw_base:.2f} x {f_dl:.2f}",
+            "Factored Load": f"{sw_f:.2f} kN/m"
+        })
+        
+        # 2. จัดการส่วน User Loads (1.7LL หรือตาม factor ที่เลือก)
+        if not loads_df.empty:
+            span_loads = loads_df[loads_df['span_index'] == i]
+            for _, row in span_loads.iterrows():
+                u_base = row['mag'] / 1000.0 # แปลงเป็น kN หรือ kN/m
+                u_f = u_base * f_ll
+                unit = "kN" if row['type'] == 'P' else "kN/m"
+                combo_rows.append({
+                    "Span": i+1,
+                    "Load Case": "User Load (LL)",
+                    "Formula": f"{u_base:.2f} x {f_ll:.2f}",
+                    "Factored Load": f"{u_f:.2f} {unit}"
+                })
+    
+    # แสดงตาราง Load Combination รวมทั้งหมด
+    df_combo = pd.DataFrame(combo_rows)
+    st.table(df_combo)
+
+    # สรุป Load ที่ใช้ในการคำนวณจริง (Total Combined)
+    st.info("💡 **Total Design Load:** The solver uses the summation of all factored loads above for each span.")
 
             # 7.5 Engineering Checks
             with st.expander("✅ Equilibrium & Deflection Checks", expanded=True):
@@ -251,3 +266,4 @@ else:
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
         st.write("Please check your input values (e.g. Span Lengths, Support positions, or Load definitions).")
+
