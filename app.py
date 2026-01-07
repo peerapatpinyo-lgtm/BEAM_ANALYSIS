@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 
 try:
     import input_handler
@@ -73,20 +72,42 @@ if run_btn:
 
         # --- B. RUN ANALYSIS ---
         solver_service = solver.BeamSolver(spans, sup_df.to_dict('records'), loads_combined, params['E'], params['b'], params['h'], params['I'])
-        res_service, reac_service, status = solver_service.solve()
+        # รับค่าดิบจาก Solver
+        res_service, reac_raw, status = solver_service.solve()
         
         if "error" in status:
             st.error(status['error'])
             st.stop()
 
-        # Format reactions for consistency (Ensure node_id is present)
-        formatted_reac = []
-        for node_id, val in reac_service.items():
-            formatted_reac.append({'node_id': int(node_id), 'fy': val})
+        # --- C. NORMALIZE REACTION DATA (The Fix) ---
+        # แปลงข้อมูล Reaction ให้เป็น List of Dicts เสมอ ไม่ว่าจะมาท่าไหน
+        final_reac_list = []
+        
+        if isinstance(reac_raw, pd.DataFrame):
+            # กรณีมาเป็น DataFrame
+            if 'fy' in reac_raw.columns:
+                final_reac_list = reac_raw.to_dict('records')
+            else:
+                 # กรณีไม่มีชื่อ column ชัดเจน (เผื่อไว้)
+                 st.error("Reaction DataFrame format unknown")
+        
+        elif isinstance(reac_raw, dict):
+            # กรณีมาเป็น Dict {node_id: value}
+            for nid, val in reac_raw.items():
+                final_reac_list.append({'node_id': int(nid), 'fy': val})
+                
+        elif isinstance(reac_raw, list):
+            # กรณีมาเป็น List อยู่แล้ว
+            final_reac_list = reac_raw
+            
+        # เติม node_id ถ้าไม่มี (เผื่อ error)
+        for idx, r in enumerate(final_reac_list):
+            if 'node_id' not in r and 'id' in r: r['node_id'] = r['id']
+            if 'fy' not in r: r['fy'] = 0.0
 
-        # --- C. SAVE STATE ---
+        # --- D. SAVE STATE ---
         st.session_state.res_service = res_service
-        st.session_state.reac_service = formatted_reac # Save as list of dicts
+        st.session_state.reac_service = final_reac_list # เก็บตัวที่ Clean แล้วเท่านั้น
         st.session_state.loads_df = loads_df
         st.session_state.full_loads = loads_combined
         st.session_state.params = params
@@ -98,7 +119,7 @@ if run_btn:
 # --- DISPLAY RESULTS ---
 if st.session_state.analyzed:
     res = st.session_state.res_service
-    reac = st.session_state.reac_service
+    reac = st.session_state.reac_service # อันนี้จะเป็น List of Dicts แน่นอน
     p = st.session_state.params
     f = st.session_state.factors
     saf_factor = st.session_state.get('avg_factor', 1.6)
@@ -119,7 +140,7 @@ if st.session_state.analyzed:
         c3.metric("Max Shear", f"{max_V:.2f} kN")
         c4.metric("Self-Weight", f"{sw_val:.2f} kN/m")
         
-        # [FIX] Pass Reaction Data to Plotter
+        # ส่ง reac ที่เป็น list เข้าไปพลอต
         fig = design_view.plot_analysis_results(res, spans, sup_df, full_loads, reac)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -173,8 +194,8 @@ if st.session_state.analyzed:
             if l['type'] == 'P': total_load_y += l['mag']
             elif l['type'] == 'U': total_load_y += l['mag'] * l['dist']
             
-        # [FIX] Safe Summation of Reactions (List of dicts)
-        sum_reac = sum([abs(r['fy']) for r in reac])
+        # [SOLVED] Reac is now guaranteed to be a list of dicts with 'fy'
+        sum_reac = sum([abs(r.get('fy', 0)) for r in reac])
         
         st.latex(rf"\sum F_{{load,y}} = {total_load_y/1000:.2f}\ kN")
         st.latex(rf"\sum R_y = {sum_reac/1000:.2f}\ kN")
