@@ -154,7 +154,8 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
             
             with t1:
                 st.subheader("Shear & Moment Diagrams")
-                fig_ana = design_view.plot_analysis_results(res_df, spans)
+               # ส่ง parameters เพิ่ม: supports_df และ load_list
+                fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, load_list)
                 st.plotly_chart(fig_ana, use_container_width=True)
                 
                 # Show Reactions
@@ -203,3 +204,4 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data))
+
