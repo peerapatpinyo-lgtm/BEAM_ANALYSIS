@@ -151,32 +151,62 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
             t1, t2, t3 = st.tabs(["📊 Analysis Results", "🏗️ Design & Detailing", "📝 Calculation Report"])
             
             with t1:
-                st.subheader("Structure & Diagrams")
-                # แก้ไข NameError: ใช้ final_load_list เพื่อแสดง Self-weight ในกราฟด้วย
-                fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, final_load_list)
-                st.plotly_chart(fig_ana, use_container_width=True)
+                st.subheader("📊 Analysis Results & Load Summary")
                 
+                # แบ่งหน้าจอเป็น 2 ฝั่ง: กราฟ (70%) และ รายการโหลด (30%)
+                col_graph, col_loads = st.columns([7, 3])
+                
+                with col_graph:
+                    st.markdown("#### 📈 Structural Diagrams")
+                    fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, final_load_list)
+                    st.plotly_chart(fig_ana, use_container_width=True)
+                
+                with col_loads:
+                    st.markdown("#### 📥 Applied Loads (kN, m)")
+                    
+                    # 1. แสดง Self-weight (น้ำหนักคาน)
+                    sw_val = params['b'] * params['h'] * 24.0
+                    st.info(f"**Self-weight:**\n{sw_val:.2f} kN/m (All Spans)")
+                    
+                    # 2. แสดง User Loads (โหลดที่ใส่เอง)
+                    if not loads_df.empty:
+                        # เตรียม DataFrame สำหรับแสดงผลแบบอ่านง่าย
+                        display_loads = loads_df.copy()
+                        # ถ้า mag เป็น N ให้แปลงเป็น kN เพื่อโชว์
+                        if 'mag' in display_loads.columns:
+                            display_loads['mag'] = (display_loads['mag'] / 1000.0).round(2)
+                        
+                        st.dataframe(
+                            display_loads[['type', 'span_index', 'mag', 'dist']], 
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    else:
+                        st.write("No additional loads applied.")
+
+                st.divider()
+                
+                # ส่วนแสดงผล Reaction ด้านล่าง
                 st.markdown("#### 🏁 Reaction Forces")
                 reac_data = []
                 uplift_warning = False
                 
                 for r_id, val in reactions.items():
-                    val_disp = round(val / 1000.0, 2) # แสดงผลเป็น kN
+                    val_disp = round(val / 1000.0, 2)
                     status_text = "Compression (OK)"
                     if val < -1e-3: 
-                         status_text = "⚠️ UPLIFT (แรงยก!)"
+                         status_text = "⚠️ UPLIFT"
                          uplift_warning = True
                     
                     reac_data.append({
-                        "Support Node": f"Node {r_id}",
-                        "Reaction": val_disp,
-                        "Unit": "kN / kNm",
+                        "Support": f"Node {r_id}",
+                        "Reaction (kN)": val_disp,
                         "Status": status_text
                     })
                 
                 st.dataframe(pd.DataFrame(reac_data), use_container_width=True, hide_index=True)
                 if uplift_warning:
-                    st.warning("⚠️ **Warning:** Found Uplift forces! Ensure supports are anchored properly.")
+                    st.warning("⚠️ **Found Uplift:** ตรวจสอบการยึดรั้งของจุดรองรับ")
                 
             with t2:
                 st.subheader("Reinforcement Detailing")
@@ -252,3 +282,4 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
