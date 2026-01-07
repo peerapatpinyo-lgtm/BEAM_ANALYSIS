@@ -62,7 +62,14 @@ else:
     
     # ================= TAB 1: DIAGRAMS & CHECKS =================
     with tab1:
-        # --- A. ANALYSIS SUMMARY (Max/Min) ---
+        # --- PART 1: PLOT DIAGRAMS (Moved to Top) ---
+        st.info(f"ℹ️ **Note:** Analysis uses **Timoshenko Beam Theory** (Service Load). Includes Self-Weight.")
+        fig = design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R)
+        st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("---")
+
+        # --- PART 2: ANALYSIS SUMMARY (Max/Min) ---
         st.subheader("📌 Analysis Summary (Max/Min Values)")
         
         # Calculate Global Extremes
@@ -70,10 +77,8 @@ else:
         v_max_neg = res_df['shear'].min()/1000
         m_max_pos = res_df['moment'].max()/1000
         m_max_neg = res_df['moment'].min()/1000
-        # Deflection magnitude
         d_abs_max = res_df['deflection'].abs().max()
         
-        # Summary Columns
         col_sum1, col_sum2, col_sum3 = st.columns(3)
         col_sum1.metric("Max Shear (V+)", f"{v_max_pos:.2f} kN")
         col_sum1.metric("Min Shear (V-)", f"{v_max_neg:.2f} kN")
@@ -83,18 +88,16 @@ else:
         
         col_sum3.metric("Max Deflection", f"{d_abs_max:.2f} mm")
         
-        # --- B. EQUILIBRIUM & DEFLECTION CHECK ---
+        # --- PART 3: ENGINEERING CHECKS ---
         with st.expander("✅ Engineering Checks (Equilibrium & Deflection)", expanded=True):
             ec1, ec2 = st.columns(2)
             
-            # 1. Equilibrium Check (Sigma Fy = 0)
+            # 1. Equilibrium Check
             with ec1:
                 st.markdown("### ⚖️ Equilibrium Check ($\\Sigma F_y = 0$)")
                 
-                # Sum Reactions
-                sum_R = sum(R.values()) / 1000.0 # kN (Up is +)
+                sum_R = sum(R.values()) / 1000.0 # kN
                 
-                # Sum Loads
                 sum_Load = 0.0
                 for _, l in calc_loads_df.iterrows():
                     force = l['mag']
@@ -103,9 +106,8 @@ else:
                     sum_Load += force
                 
                 sum_Load_kN = sum_Load / 1000.0
-                diff = sum_R - sum_Load_kN # Should be near 0
+                diff = sum_R - sum_Load_kN 
                 
-                # FIXED: Added double backslashes for LaTeX arrows
                 st.write(f"Total Applied Load ($\\downarrow$): **{sum_Load_kN:.2f} kN**")
                 st.write(f"Total Reaction ($\\uparrow$): **{sum_R:.2f} kN**")
                 
@@ -114,31 +116,27 @@ else:
                 else:
                     st.error(f"❌ Unbalanced! Error = {diff:.4f} kN")
 
-            # 2. Deflection Control Check
+            # 2. Deflection Control
             with ec2:
                 st.markdown("### 📉 Deflection Control")
-                
-                # Criteria: L/240 (Common for Total Load)
                 max_span_L = max(spans) * 1000 # mm
                 allowable_def = max_span_L / 240.0
                 
                 st.write(f"Max Deflection: **{d_abs_max:.2f} mm**")
-                st.write(f"Allowable Limit ($L/240$): **{allowable_def:.2f} mm** (based on longest span)")
+                st.write(f"Allowable Limit ($L/240$): **{allowable_def:.2f} mm**")
                 
                 if d_abs_max <= allowable_def:
                     st.success(f"✅ PASS ( < L/240 )")
                 else:
                     st.warning(f"⚠️ EXCEEDS LIMIT (Consider increasing Depth 'h')")
 
-        st.markdown("---")
-
-        # --- C. CALCULATION DETAILS (Reactions) ---
+        # --- PART 4: CALCULATION DETAILS ---
         with st.expander("🧮 Reaction Calculation Details", expanded=False):
             st.markdown("### 1. Self-Weight")
+            st.markdown(f"*The slope in the Shear Diagram is caused by this Uniform Load.*")
             st.latex(f"w_{{sw}} = {params['b']:.2f} \\times {params['h']:.2f} \\times 24 = \\mathbf{{{w_sw_kN:.3f}}} \\text{{ kN/m}}")
             
             st.markdown("### 2. Reaction Forces ($R_y$)")
-            st.markdown("Calculated from Global Stiffness Matrix $[K]$:")
             st.latex(r"\{R\} = [K]\{d\} - \{F_{equiv}\}")
             
             if R:
@@ -146,15 +144,10 @@ else:
                 for node_idx in sorted([int(k[1:]) for k in R.keys()]):
                     key = f"R{node_idx}"
                     if key in R:
-                        val = R[key] / 1000.0 # kN
+                        val = R[key] / 1000.0 
                         r_data.append({"Node": node_idx, "Reaction (kN)": f"{val:.3f}"})
                 st.table(pd.DataFrame(r_data))
         
-        # --- D. PLOT DIAGRAMS ---
-        st.info(f"ℹ️ **Note:** Analysis uses **Timoshenko Beam Theory** (Service Load).")
-        fig = design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R)
-        st.plotly_chart(fig, use_container_width=True)
-
     # ================= TAB 2: DESIGN & REPORT =================
     with tab2:
         st.header("Reinforced Concrete Design (WSD/SDM Concept)")
@@ -181,7 +174,7 @@ else:
             As_neg, rho_neg, _, steps_neg = rc_design.design_beam_flexure(mu_neg, params['b'], d, params['fc'], params['fy'])
             s_req, _, steps_shear = rc_design.check_shear(vu_max, params['b'], d, params['fc'], params['fy'])
             
-            def get_bars(As): return max(2, int(np.ceil(As / (3.14159*(0.008)**2)))) # DB16 approx area
+            def get_bars(As): return max(2, int(np.ceil(As / (3.14159*(0.008)**2)))) 
             
             design_res.append({
                 'span': i+1,
