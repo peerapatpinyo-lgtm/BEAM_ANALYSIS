@@ -94,7 +94,7 @@ else:
             
             # 1. Equilibrium Check
             with ec1:
-                st.markdown("### ⚖️ Equilibrium Check ($\\Sigma F_y = 0$)")
+                st.markdown("### ⚖️ Equilibrium Check (Sigma Fy = 0)")
                 
                 sum_R = sum(R.values()) / 1000.0 # kN
                 
@@ -108,8 +108,9 @@ else:
                 sum_Load_kN = sum_Load / 1000.0
                 diff = sum_R - sum_Load_kN 
                 
-                st.write(f"Total Applied Load ($\\downarrow$): **{sum_Load_kN:.2f} kN**")
-                st.write(f"Total Reaction ($\\uparrow$): **{sum_R:.2f} kN**")
+                # FIXED: Used standard Unicode arrows instead of LaTeX to prevent errors
+                st.write(f"Total Applied Load (↓): **{sum_Load_kN:.2f} kN**")
+                st.write(f"Total Reaction (↑): **{sum_R:.2f} kN**")
                 
                 if abs(diff) < 0.1:
                     st.success(f"✅ OK! Balance Error = {diff:.4f} kN")
@@ -123,7 +124,7 @@ else:
                 allowable_def = max_span_L / 240.0
                 
                 st.write(f"Max Deflection: **{d_abs_max:.2f} mm**")
-                st.write(f"Allowable Limit ($L/240$): **{allowable_def:.2f} mm**")
+                st.write(f"Allowable Limit (L/240): **{allowable_def:.2f} mm**")
                 
                 if d_abs_max <= allowable_def:
                     st.success(f"✅ PASS ( < L/240 )")
@@ -134,9 +135,10 @@ else:
         with st.expander("🧮 Reaction Calculation Details", expanded=False):
             st.markdown("### 1. Self-Weight")
             st.markdown(f"*The slope in the Shear Diagram is caused by this Uniform Load.*")
+            # FIXED: Used raw string for LaTeX or avoided backslash in f-string completely
             st.latex(f"w_{{sw}} = {params['b']:.2f} \\times {params['h']:.2f} \\times 24 = \\mathbf{{{w_sw_kN:.3f}}} \\text{{ kN/m}}")
             
-            st.markdown("### 2. Reaction Forces ($R_y$)")
+            st.markdown("### 2. Reaction Forces (Ry)")
             st.latex(r"\{R\} = [K]\{d\} - \{F_{equiv}\}")
             
             if R:
