@@ -83,25 +83,32 @@ st.markdown("---")
 
 # --- 4. Main Process ---
 if st.button("🚀 Run Analysis & Design", type="primary"):
-    # 1. คำนวณ Self-weight (kN/m)
-    sw_kn_m = params['b'] * params['h'] * 24.0
-    
-    # 2. เตรียมรายการโหลด (รวม Load List เดิม + Self-weight)
-    final_load_list = load_list.copy()
-    
-    # เพิ่ม Self-weight เข้าไปในทุกๆ Span
-    for i in range(len(spans)):
-        final_load_list.append({
-            "type": "U",
-            "span_index": i,
-            "x": 0.0,
-            "mag": sw_kn_m * 1000, # แปลงเป็น N/m เพื่อ Solver
-            "dist": spans[i],
-            "case": "DL" # ถือเป็น Dead Load
-        })
+    if not stable:
+        st.error("🚨 Structure is Unstable! Please check supports.")
+    else:
+        # A. Analysis (Solver)
+        st.info("Computing Finite Element Analysis...")
         
-    # 3. ส่ง final_load_list เข้า Solver แทน load_list เดิม
-    beam_solver = solver.BeamSolver(spans, sup_list, final_load_list, params['E'], params['b'], params['h'], params['I'])
+        sup_list = sup_df.to_dict('records') if not sup_df.empty else []
+        load_list_raw = loads_df.to_dict('records') if (loads_df is not None and not loads_df.empty) else []
+        
+        # --- [NEW] Self-weight Calculation ---
+        sw_kn_m = params['b'] * params['h'] * 24.0  # kN/m
+        
+        # รวมโหลดเดิมกับ Self-weight เข้าด้วยกัน
+        final_load_list = load_list_raw.copy()
+        for i in range(len(spans)):
+            final_load_list.append({
+                "type": "U",
+                "span_index": i,
+                "x": 0.0,
+                "mag": sw_kn_m * 1000, # แปลงกลับเป็น N เพื่อ Solver
+                "dist": spans[i],
+                "case": "DL"
+            })
+        
+        # ส่งรายการโหลดที่รวม Self-weight แล้วเข้า Solver
+        beam_solver = solver.BeamSolver(spans, sup_list, final_load_list, params['E'], params['b'], params['h'], params['I'])
         res_df, reactions, status = beam_solver.solve()
         
         if "error" in status:
@@ -113,24 +120,18 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
             design_res = []
             cum_dist = [0] + list(pd.Series(spans).cumsum())
             
-# --- ใน app.py ส่วนของ RC Design logic ---
             for i in range(len(spans)):
                 x_start = cum_dist[i]
                 x_end = cum_dist[i+1]
-                
                 span_res = res_df[(res_df['x'] >= x_start) & (res_df['x'] <= x_end)]
                 
                 if span_res.empty:
                     Mu_pos, Mu_neg, vu_val = 0, 0, 0
                 else:
-                    # ใช้ย่อหน้าให้ตรงกัน (แนะนำใช้ 4 spaces)
-                    factor = 1.4 
-                    m_max = span_res['moment'].max()
-                    m_min = span_res['moment'].min()
-                    
-                    # แก้ไขหน่วยจาก N-m เป็น kN-m ตรงนี้
-                    Mu_pos = (max(0, m_max) * factor) / 1000.0
-                    Mu_neg = (abs(min(0, m_min)) * factor) / 1000.0
+                    factor = 1.4 # Simplified Factor
+                    # แปลงหน่วยจาก N-m เป็น kN-m เพื่อส่งให้ rc_design
+                    Mu_pos = (max(0, span_res['moment'].max()) * factor) / 1000.0
+                    Mu_neg = (abs(min(0, span_res['moment'].min())) * factor) / 1000.0
                     vu_val = (span_res['shear'].abs().max() * factor) / 1000.0
                 
                 des_span = rc_design.design_span_expert(
@@ -243,6 +244,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True)
+
 
 
 
