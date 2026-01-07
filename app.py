@@ -18,38 +18,46 @@ params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_side
 if not stable:
     st.error("🚨 Structure is unstable! Please check supports (Must have at least 3 reaction components).")
 else:
-    # --- 0. Analysis Settings (NEW) ---
-    st.markdown("### ⚙️ Analysis Settings")
-    col_mode1, col_mode2 = st.columns([1, 3])
-    with col_mode1:
-        load_case = st.radio(
-            "Select Load Case:",
-            ["Service Load (Unfactored)", "Ultimate Load (Factored)"],
-            help="Service: 1.0DL + 1.0LL (for Deflection)\nUltimate: 1.4DL + 1.7LL (for Strength Design)"
-        )
+    # --- 0. Analysis Settings (Load Factors) ---
+    st.markdown("### ⚙️ Analysis Settings & Load Factors")
     
-    # Define Factors based on selection
-    if "Ultimate" in load_case:
-        f_dl = 1.4
-        f_ll = 1.7
-        tag = "Mu/Vu"
-        st.info(f"⚡ **Designing with Ultimate Load:** $1.4 DL + 1.7 LL$")
-    else:
+    # Select Mode
+    mode_select = st.radio(
+        "Select Analysis Mode:",
+        ["Service Load (1.0DL + 1.0LL)", "Ultimate / Custom Factors"],
+        horizontal=True
+    )
+    
+    col_fac1, col_fac2, col_fac3 = st.columns([1, 1, 2])
+    
+    # Logic for Factors
+    if mode_select.startswith("Service"):
         f_dl = 1.0
         f_ll = 1.0
-        tag = "M/V"
-        st.success(f"👀 **Checking Service Load:** $1.0 DL + 1.0 LL$")
+        with col_fac1:
+            st.disabled = True
+            st.number_input("Dead Load Factor (DL)", value=1.0, disabled=True, key="fdl_serv")
+        with col_fac2:
+            st.number_input("Live Load Factor (LL)", value=1.0, disabled=True, key="fll_serv")
+        tag = "M/V (Service)"
+        st.info("ℹ️ Using **Service Load** for Deflection Check.")
+        
+    else:
+        # Ultimate / Custom Mode
+        with col_fac1:
+            f_dl = st.number_input("Dead Load Factor (DL)", value=1.4, step=0.1, format="%.2f", key="fdl_ult")
+        with col_fac2:
+            f_ll = st.number_input("Live Load Factor (LL)", value=1.7, step=0.1, format="%.2f", key="fll_ult")
+        tag = "Mu/Vu (Ultimate)"
+        st.warning(f"⚡ Using **Factored Load**: {f_dl} DL + {f_ll} LL")
 
     # --- 1. Prepare & Combine Loads ---
     # 1.1 Calculate Self-Weight (Dead Load)
-    # Base SW
-    w_sw_base_kN = params['b'] * params['h'] * 24.0   # kN/m
-    # Factored SW
-    w_sw_factored_kN = w_sw_base_kN * f_dl
-    w_sw_factored_N_m = w_sw_factored_kN * 1000.0
+    w_sw_base_kN = params['b'] * params['h'] * 24.0   # kN/m (Unfactored)
+    w_sw_factored_kN = w_sw_base_kN * f_dl            # kN/m (Factored)
+    w_sw_factored_N_m = w_sw_factored_kN * 1000.0     # N/m
     
     # 1.2 Initialize bucket for Total UDL per span
-    # Key = span_index, Value = Total Magnitude (N/m)
     span_total_udl = {i: w_sw_factored_N_m for i in range(n_spans)}
     
     combined_loads_list = []
@@ -62,10 +70,10 @@ else:
                 if s_idx >= n_spans: continue 
                 
                 l_type = row['type']
-                mag_base = row['mag']   # N or N/m (Unfactored)
+                mag_base = row['mag']   # Unfactored
                 mag_factored = mag_base * f_ll # Apply Live Load Factor
                 
-                dist = row['dist'] # m
+                dist = row['dist'] 
                 current_span_len = spans[s_idx]
                 
                 # CHECK: If UDL covers FULL span -> MERGE
@@ -81,7 +89,7 @@ else:
                         'desc': f'Point/Partial (LL x {f_ll})'
                     })
             except Exception as e:
-                st.warning(f"Skipping invalid load row: {e}")
+                pass
     
     # 1.4 Add Merged UDLs to list
     for i in range(n_spans):
@@ -113,68 +121,100 @@ else:
     # ================= TAB 1: DIAGRAMS & CHECKS =================
     with tab1:
         # --- PART 1: PLOT DIAGRAMS ---
-        st.caption(f"Diagrams showing **{load_case}**")
-        fig = design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R), use_container_width=True)
 
         st.markdown("---")
 
-        # --- PART 2: ANALYSIS SUMMARY ---
-        st.subheader("📌 Analysis Summary (Max/Min Values)")
+        # --- PART 2: ANALYSIS SUMMARY & REACTIONS ---
+        st.subheader("📌 Analysis Summary")
         
+        # 2.1 Max/Min Values
         v_max = res_df['shear'].abs().max()/1000
         m_max_pos = res_df['moment'].max()/1000
         m_max_neg = res_df['moment'].min()/1000
         d_abs_max = res_df['deflection'].abs().max()
         
-        c1, c2, c3 = st.columns(3)
-        c1.metric(f"Max Shear ({tag})", f"{v_max:.2f} kN")
-        c2.metric(f"Max Moment ({tag})", f"{m_max_pos:.2f} / {m_max_neg:.2f} kNm")
-        c3.metric("Max Deflection", f"{d_abs_max:.2f} mm")
+        col_res1, col_res2, col_res3, col_res4 = st.columns(4)
+        col_res1.metric(f"Max Shear", f"{v_max:.2f} kN")
+        col_res2.metric(f"Max Moment (+)", f"{m_max_pos:.2f} kNm")
+        col_res3.metric(f"Max Moment (-)", f"{m_max_neg:.2f} kNm")
+        col_res4.metric("Max Deflection", f"{d_abs_max:.2f} mm")
         
-        # --- PART 3: CALCULATION REPORT (NEW) ---
-        with st.expander("🧮 Load Combination Calculation Report", expanded=True):
-            st.markdown("### 1. Load Factors Definition")
-            st.latex(f"Factor_{{DL}} = {f_dl}, \\quad Factor_{{LL}} = {f_ll}")
-            st.write(f"**Assumption:** Self-Weight is Dead Load (DL). User Inputs are Live Loads (LL).")
-
-            st.markdown("### 2. Self-Weight Calculation (DL)")
-            st.latex(f"w_{{sw}} = {params['b']:.2f} \\times {params['h']:.2f} \\times 24 = \\mathbf{{{w_sw_base_kN:.3f}}} \\text{{ kN/m}}")
-            st.latex(f"w_{{sw,factored}} = {f_dl} \\times {w_sw_base_kN:.3f} = \\mathbf{{{w_sw_factored_kN:.3f}}} \\text{{ kN/m}}")
-
-            st.markdown("### 3. Total Load per Span")
+        # 2.2 REACTION TABLE (NEW FEATURE)
+        st.markdown("### 📍 Support Reactions")
+        if R:
+            # Convert R dict (R0, R4...) to DataFrame
+            reaction_data = []
             
+            # Helper to find support type for a node
+            def get_sup_type(node_idx):
+                if node_idx in sup_df['node_index'].values:
+                    return sup_df[sup_df['node_index'] == node_idx]['type'].iloc[0]
+                return "Unknown"
+
+            total_reaction = 0
+            for key, val in R.items():
+                node_idx = int(key[1:]) # 'R0' -> 0
+                val_kN = val / 1000.0
+                total_reaction += val_kN
+                
+                reaction_data.append({
+                    "Node": node_idx,
+                    "Support Type": get_sup_type(node_idx),
+                    "Reaction Force (kN)": val_kN
+                })
+            
+            # Sort by Node
+            df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
+            
+            # Display Table with Formatting
+            st.dataframe(
+                df_reac.style.format({"Reaction Force (kN)": "{:.2f}"}),
+                use_container_width=True,
+                hide_index=True
+            )
+            st.caption(f"**Total Reaction:** {total_reaction:.2f} kN")
+        
+        st.markdown("---")
+
+        # --- PART 3: CALCULATION REPORT ---
+        with st.expander("🧮 Load Combination Details (Report)", expanded=False):
+            st.markdown("### 1. Load Factors")
+            st.write(f"- Dead Load Factor (DL): **{f_dl:.2f}**")
+            st.write(f"- Live Load Factor (LL): **{f_ll:.2f}**")
+            st.write(f"**Note:** Self-Weight is treated as DL. User Inputs are treated as LL.")
+
+            st.markdown("### 2. Self-Weight (DL)")
+            st.latex(f"w_{{sw}} = {params['b']} \\times {params['h']} \\times 24 = {w_sw_base_kN:.3f} \\text{{ kN/m}}")
+            st.latex(f"w_{{sw,factored}} = {w_sw_base_kN:.3f} \\times {f_dl} = \\mathbf{{{w_sw_factored_kN:.3f}}} \\text{{ kN/m}}")
+
+            st.markdown("### 3. Load Breakdown by Span")
             breakdown_data = []
             for i in range(n_spans):
-                # Calculate User part back from the total logic for display
-                # Note: This is simplified for display of UDLs
-                
-                # Get User UDL (Unfactored) for this span
+                # Calculate User part (LL)
                 user_udl_base = 0.0
                 if not loads_df.empty:
-                     # Filter strictly UDL full span
                      user_rows = loads_df[(loads_df['span_index'] == i) & (loads_df['type'] == 'U') & (loads_df['dist'] >= spans[i]-0.01)]
                      if not user_rows.empty:
-                         user_udl_base = user_rows['mag'].sum() / 1000.0 # kN/m
+                         user_udl_base = user_rows['mag'].sum() / 1000.0
                 
                 total_factored = (w_sw_base_kN * f_dl) + (user_udl_base * f_ll)
                 
                 breakdown_data.append({
                     "Span": i+1,
-                    "SW (DL)": f"{w_sw_base_kN:.3f}",
-                    "User (LL)": f"{user_udl_base:.3f}",
-                    "Equation": f"({f_dl}×DL) + ({f_ll}×LL)",
-                    "TOTAL (kN/m)": f"**{total_factored:.3f}**"
+                    "SW (DL x Factor)": f"{w_sw_base_kN:.3f} x {f_dl}",
+                    "User (LL x Factor)": f"{user_udl_base:.3f} x {f_ll}",
+                    "TOTAL UDL (kN/m)": f"**{total_factored:.3f}**"
                 })
             
             st.table(pd.DataFrame(breakdown_data))
 
     # ================= TAB 2: DESIGN & REPORT =================
     with tab2:
-        if "Ultimate" not in load_case:
-            st.warning("⚠️ **Warning:** You are currently in 'Service Load' mode. RC Design usually requires 'Ultimate Load'. Switch to Ultimate mode for standard strength design.")
+        if mode_select.startswith("Service"):
+            st.warning("⚠️ **Warning:** You are in 'Service Load' mode (Factors = 1.0). RC Design typically requires Ultimate Load factors. Please switch mode in 'Analysis Settings'.")
         
-        st.header("Reinforced Concrete Design")
+        st.header(f"Reinforced Concrete Design ({tag})")
         st.markdown(f"**Material:** f'c = {params['fc']:.0f} MPa, fy = {params['fy']:.0f} MPa | **Section:** {params['b']*100:.0f}x{params['h']*100:.0f} cm")
         
         design_res = []
