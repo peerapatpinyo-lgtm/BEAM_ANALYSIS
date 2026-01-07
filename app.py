@@ -104,7 +104,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
             design_res = []
             cum_dist = [0] + list(pd.Series(spans).cumsum())
             
-            # Simple Design Loop (Based on Max Moment per span)
+# --- ใน app.py ส่วนของ RC Design logic ---
             for i in range(len(spans)):
                 x_start = cum_dist[i]
                 x_end = cum_dist[i+1]
@@ -114,14 +114,15 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 if span_res.empty:
                     Mu_pos, Mu_neg, vu_val = 0, 0, 0
                 else:
-                    # Factor 1.4 for simple demonstration (User should use load combos in real app)
+                    # ใช้ย่อหน้าให้ตรงกัน (แนะนำใช้ 4 spaces)
                     factor = 1.4 
                     m_max = span_res['moment'].max()
                     m_min = span_res['moment'].min()
                     
-                   Mu_pos = (max(0, m_max) * factor) / 1000.0
-                   Mu_neg = (abs(min(0, m_min)) * factor) / 1000.0
-                   vu_val = (span_res['shear'].abs().max() * factor) / 1000.0
+                    # แก้ไขหน่วยจาก N-m เป็น kN-m ตรงนี้
+                    Mu_pos = (max(0, m_max) * factor) / 1000.0
+                    Mu_neg = (abs(min(0, m_min)) * factor) / 1000.0
+                    vu_val = (span_res['shear'].abs().max() * factor) / 1000.0
                 
                 des_span = rc_design.design_span_expert(
                     Mu_pos, Mu_neg, vu_val, 
@@ -233,5 +234,6 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True)
+
 
 
