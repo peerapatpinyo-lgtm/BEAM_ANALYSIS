@@ -5,16 +5,14 @@ class BeamSolver:
     def __init__(self, spans, supports, loads, E, b, h, I):
         self.spans = spans
         self.supports = supports
-        self.loads = loads # User defined loads
+        self.loads = loads
         self.E = E
         self.b = b
         self.h = h
         self.I = I
         
-        # Material Constants
-        self.DENSITY_CONCRETE = 24.0 # kN/m3 (Unit Weight)
-        
-        # Timoshenko Parameters
+        # Parameters
+        self.DENSITY = 24.0 # kN/m3 (Concrete)
         self.nu = 0.2 
         self.G = self.E / (2 * (1 + self.nu))
         self.kappa = 5/6 
@@ -23,6 +21,35 @@ class BeamSolver:
         self.nodes_x = [0] + list(np.cumsum(spans))
         self.n_nodes = len(self.nodes_x)
         self.total_length = self.nodes_x[-1]
+        
+        # Prepare Loads (User + Self Weight)
+        self.final_loads = self._prepare_loads()
+
+    def _prepare_loads(self):
+        """Combines user loads with calculated self-weight."""
+        w_sw = self.b * self.h * self.DENSITY # kN/m
+        
+        combined_loads = []
+        
+        # 1. Add Self Weight as UDL for every span
+        for i, L in enumerate(self.spans):
+            combined_loads.append({
+                'type': 'U',
+                'span_index': i,
+                'x': 0.0,
+                'dist': L,
+                'mag': w_sw,
+                'source': 'self_weight'
+            })
+            
+        # 2. Add User Loads
+        for l in self.loads:
+            # Copy to avoid modifying original
+            new_l = l.copy()
+            new_l['source'] = 'user'
+            combined_loads.append(new_l)
+            
+        return combined_loads
 
     def _get_timoshenko_stiffness(self, L):
         E, I, G, A, kappa = self.E, self.I, self.G, self.A, self.kappa
@@ -42,24 +69,7 @@ class BeamSolver:
             K_global = np.zeros((n_dof, n_dof))
             F_global = np.zeros(n_dof)
             
-            # --- 0. PREPARE TOTAL LOADS (USER + SELF WEIGHT) ---
-            # Calculate Self Weight (kN/m)
-            w_self = self.b * self.h * self.DENSITY_CONCRETE
-            
-            # Combine User Loads with Self Weight
-            # We treat Self Weight as a UDL on EVERY span
-            all_loads = self.loads.copy()
-            for i, L in enumerate(self.spans):
-                all_loads.append({
-                    'type': 'U',
-                    'span_index': i,
-                    'x': 0.0,
-                    'dist': L,
-                    'mag': w_self,
-                    'is_self_weight': True # Tag for visualization if needed
-                })
-
-            # --- 1. Stiffness Matrix ---
+            # 1. Stiffness Matrix
             for i, L in enumerate(self.spans):
                 k_local = self._get_timoshenko_stiffness(L)
                 idxs = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
@@ -67,18 +77,19 @@ class BeamSolver:
                     for c in range(4):
                         K_global[idxs[r], idxs[c]] += k_local[r, c]
 
-            # --- 2. Loads (Fixed End Forces) ---
-            for load in all_loads:
+            # 2. Process All Loads (FEM)
+            for load in self.final_loads:
                 span_idx = load.get('span_index')
-                if span_idx is None or span_idx >= len(self.spans): continue
+                if span_idx is None: continue
                 
                 L = self.spans[span_idx]
                 mag = load['mag']
-                fem = np.zeros(4) 
+                fem = np.zeros(4)
                 
                 if load['type'] == 'P':
                     a = load['x']
                     b_dist = L - a
+                    # FEM Formulas
                     fem[1] = -mag * (a * b_dist**2) / L**2
                     fem[3] = mag * (a**2 * b_dist) / L**2
                     fem[0] = -mag * (b_dist**2 * (3*a + b_dist)) / L**3
@@ -91,7 +102,7 @@ class BeamSolver:
                     
                     if x2 > x1:
                         w = mag
-                        # Integration for partial UDL FEM
+                        # Integrated FEM for Partial UDL
                         def int_term1(x): return (L**2 * x**2)/2 - (2*L * x**3)/3 + (x**4)/4
                         def int_term2(x): return (L * x**3)/3 - (x**4)/4
                         
@@ -102,14 +113,14 @@ class BeamSolver:
                         fem[3] = +(w / L**2) * val2
                         
                         total_load = w * (x2 - x1)
-                        load_centroid = (x1 + x2) / 2
-                        fem[0] = -(total_load * (L - load_centroid) + fem[1] + fem[3]) / L
+                        centroid = (x1 + x2) / 2
+                        fem[0] = -(total_load * (L - centroid) + fem[1] + fem[3]) / L
                         fem[2] = -(total_load - (-fem[0]))
-                        
+
                 idxs = [2*span_idx, 2*span_idx+1, 2*(span_idx+1), 2*(span_idx+1)+1]
                 for j in range(4): F_global[idxs[j]] += fem[j]
 
-            # --- 3. Boundary Conditions ---
+            # 3. Boundary Conditions
             fixed_dofs = []
             for s in self.supports:
                 nid = s.get('id', s.get('node_id'))
@@ -126,21 +137,22 @@ class BeamSolver:
                     d_free = np.linalg.solve(K_free, F_free)
                     d_global[free_dofs] = d_free
                 except np.linalg.LinAlgError:
-                    return None, None, {"error": "Structure Unstable (Singular Matrix)"}
-            
-            # --- 4. Reactions ---
-            # R = K*d - F_equiv
+                    return None, None, {"error": "Structure Unstable"}
+
+            # 4. Reactions
             R_global = np.dot(K_global, d_global) - F_global
             reactions = {i: R_global[2*i] for i in range(self.n_nodes)}
 
-            # --- 5. Results Generation ---
+            # 5. Method of Sections (Visualization Data)
             x_plot, v_plot, m_plot, d_plot = [], [], [], []
             
             for span_i, L_span in enumerate(self.spans):
                 x_start_node = self.nodes_x[span_i]
                 u_ele = d_global[[2*span_i, 2*span_i+1, 2*(span_i+1), 2*(span_i+1)+1]]
                 
-                for x_local in np.linspace(0, L_span, 51):
+                # Evaluation points
+                pts = np.linspace(0, L_span, 51)
+                for x_local in pts:
                     x_global = x_start_node + x_local
                     V_x, M_x = 0.0, 0.0
                     
@@ -148,39 +160,44 @@ class BeamSolver:
                     for node_i in range(span_i + 1):
                         if node_i in reactions:
                             r_pos = self.nodes_x[node_i]
-                            if r_pos <= x_global + 1e-5:
+                            if r_pos <= x_global + 1e-6:
                                 V_x += reactions[node_i]
                                 M_x += reactions[node_i] * (x_global - r_pos)
-                    
-                    # 5.2 ALL Loads (User + Self Weight) from Left
-                    for load in all_loads:
+                                
+                    # 5.2 Loads from Left (Includes SW)
+                    for load in self.final_loads:
                         l_span_idx = load['span_index']
-                        l_start = self.nodes_x[l_span_idx]
-                        if l_start > x_global: continue
+                        l_start_global = self.nodes_x[l_span_idx]
+                        
+                        if l_start_global > x_global: continue
                         
                         if load['type'] == 'P':
-                            p_loc = l_start + load['x']
-                            if p_loc <= x_global + 1e-5:
+                            p_loc_global = l_start_global + load['x']
+                            if p_loc_global <= x_global + 1e-6:
                                 V_x -= load['mag']
-                                M_x -= load['mag'] * (x_global - p_loc)
+                                M_x -= load['mag'] * (x_global - p_loc_global)
+                                
                         elif load['type'] == 'U':
-                            u_start = l_start + load['x']
-                            u_end = u_start + load['dist']
-                            eff_start = u_start
-                            eff_end = min(x_global, u_end)
-                            if eff_end > eff_start + 1e-5:
-                                force = load['mag'] * (eff_end - eff_start)
-                                cent = eff_start + (eff_end - eff_start)/2
+                            u_start_global = l_start_global + load['x']
+                            u_end_global = u_start_global + load['dist']
+                            
+                            eff_start = u_start_global
+                            eff_end = min(x_global, u_end_global)
+                            
+                            if eff_end > eff_start + 1e-6:
+                                w_len = eff_end - eff_start
+                                force = load['mag'] * w_len
+                                cent = eff_start + w_len/2
                                 V_x -= force
                                 M_x -= force * (x_global - cent)
                     
-                    # Deflection (mm)
+                    # Deflection
                     xi = x_local / L_span
                     N1 = 1 - 3*xi**2 + 2*xi**3
                     N2 = x_local * (1 - 2*xi + xi**2)
                     N3 = 3*xi**2 - 2*xi**3
                     N4 = x_local * (xi**2 - xi)
-                    def_val = (N1*u_ele[0] + N2*u_ele[1] + N3*u_ele[2] + N4*u_ele[3]) * 1000 
+                    def_val = (N1*u_ele[0] + N2*u_ele[1] + N3*u_ele[2] + N4*u_ele[3]) * 1000
 
                     x_plot.append(x_global)
                     v_plot.append(V_x)
@@ -188,47 +205,25 @@ class BeamSolver:
                     d_plot.append(def_val)
 
             df_res = pd.DataFrame({'x': x_plot, 'shear': v_plot, 'moment': m_plot, 'deflection': d_plot})
-            
-            # Save final w_self to access from outside if needed
-            self.w_self_used = w_self
-            self.all_loads_used = all_loads # For equilibrium check
-            
             return df_res, reactions, {"status": "success"}
 
         except Exception as e:
             return None, None, {"error": str(e)}
 
     def check_equilibrium(self, reactions):
-        """
-        Updated to include Self-Weight in equilibrium check
-        """
         sum_fy_load = 0
-        sum_m_load = 0 
         
-        # Use self.all_loads_used which includes SW
-        for load in getattr(self, 'all_loads_used', self.loads):
-            span_idx = load['span_index']
-            base_x = self.nodes_x[span_idx]
-            
+        for load in self.final_loads:
             if load['type'] == 'P':
-                f = load['mag']
-                x = base_x + load['x']
-                sum_fy_load += f
-                sum_m_load += f * x
+                sum_fy_load += load['mag']
             elif load['type'] == 'U':
-                w = load['mag']
-                x_start = base_x + load['x']
-                length = load['dist']
-                f = w * length
-                x_cent = x_start + length/2
-                sum_fy_load += f
-                sum_m_load += f * x_cent
+                sum_fy_load += load['mag'] * load['dist']
                 
         sum_fy_reac = sum(reactions.values())
-        diff_fy = sum_fy_reac - sum_fy_load
+        diff = sum_fy_reac - sum_fy_load
         
         return {
             "load_down": sum_fy_load,
             "react_up": sum_fy_reac,
-            "diff_fy": diff_fy
+            "diff_fy": diff
         }
