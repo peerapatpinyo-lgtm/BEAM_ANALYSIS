@@ -54,24 +54,10 @@ else:
         w_sw_base_kN = params['b'] * params['h'] * 24.0   
         w_sw_factored_kN = w_sw_base_kN * f_dl
         
-        # 5.2 Lists for Solver (Newton) and Graphics (kN)
-        solver_loads = []
-        plot_loads = []
-        
-        # Add Self-Weight to Solver and Plot
-        for i in range(n_spans):
-            # For Solver (N/m)
-            solver_loads.append({
-                'span_index': i, 'type': 'U', 
-                'mag': w_sw_factored_kN * 1000.0, 
-                'dist': spans[i]
-            })
-            # For Plotting (kN/m) - This fixes the 6600 error
-            plot_loads.append({
-                'span_index': i, 'type': 'U', 
-                'mag': w_sw_factored_kN, 
-                'dist': spans[i], 'desc': 'Self-Weight'
-            })
+        # 5.2 Initialize Lists for Solver (Newton) and Plot (kN)
+        span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
+        solver_loads_list = []
+        plot_loads_list = [] # *** สร้างแยกเพื่อแก้ปัญหาหน่วย 6600 ในกราฟ ***
         
         # 5.3 Process User-Defined Loads
         if not loads_df.empty:
@@ -81,44 +67,63 @@ else:
                     if s_idx >= n_spans: continue 
                     
                     l_type = row['type']
-                    mag_base_kN = float(row['mag'])
+                    mag_base_kN = float(row['mag']) 
+                    
+                    # แปลงหน่วยเป็น Newton (N) สำหรับ solver.py
                     mag_factored_kN = mag_base_kN * f_ll
+                    mag_factored_N = mag_factored_kN * 1000.0 
                     dist = float(row['dist']) 
                     
-                    # Add to Solver (N or N/m)
-                    solver_loads.append({
-                        'span_index': s_idx, 'type': l_type,
-                        'mag': mag_factored_kN * 1000.0, 'dist': dist
-                    })
-                    # Add to Plot (kN or kN/m) - This ensures label is 6.6
-                    plot_loads.append({
-                        'span_index': s_idx, 'type': l_type,
-                        'mag': mag_factored_kN, 'dist': dist, 'desc': 'User'
-                    })
-                except Exception: continue
+                    if l_type == 'U' and dist >= (spans[s_idx] - 0.01):
+                        span_total_udl_N[s_idx] += mag_factored_N
+                    else:
+                        # สำหรับ Solver (N)
+                        solver_loads_list.append({
+                            'span_index': s_idx, 'type': l_type, 'mag': mag_factored_N, 'dist': dist
+                        })
+                        # สำหรับ Plot (kN) - แก้ไขให้ Label ในรูปเป็น 6.6 ไม่ใช่ 6600
+                        plot_loads_list.append({
+                            'span_index': s_idx, 'type': l_type, 'mag': mag_factored_kN, 
+                            'dist': dist, 'desc': 'User Load'
+                        })
+                except Exception:
+                    continue
         
-        calc_loads_df = pd.DataFrame(solver_loads)
-        plot_loads_df = pd.DataFrame(plot_loads)
+        # 5.4 Merge combined UDLs
+        for i in range(n_spans):
+            if span_total_udl_N[i] > 0:
+                mag_N = span_total_udl_N[i]
+                solver_loads_list.append({
+                    'span_index': i, 'type': 'U', 'mag': mag_N, 'dist': spans[i]
+                })
+                # สำหรับ Plot (kN)
+                plot_loads_list.append({
+                    'span_index': i, 'type': 'U', 'mag': mag_N / 1000.0, 
+                    'dist': spans[i], 'desc': 'Total UDL'
+                })
+        
+        calc_loads_df = pd.DataFrame(solver_loads_list)
+        plot_loads_df = pd.DataFrame(plot_loads_list) # DF สำหรับส่งให้ Plotly
 
         # --- 6. BEAM SOLVER ---
         x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
-        # Convert all solver output (N, N-m) to display units (kN, kN-m)
+        # สร้าง res_df โดยแปลงหน่วยเป็น kN และ kNm เพื่อความปลอดภัยในการพล็อต
         res_df = pd.DataFrame({
             'x': x_eval,
-            'moment': M / 1000.0,   # kN-m
-            'shear': V / 1000.0,    # kN
-            'deflection': D * 1000.0 # mm
+            'moment': M / 1000.0,   # แปลง N-m เป็น kNm
+            'shear': V / 1000.0,    # แปลง N เป็น kN
+            'deflection': D * 1000.0 # m to mm
         })
         
-        # Reactions in kN
+        # Reactions ในหน่วย kN
         R_kN = {k: v / 1000.0 for k, v in R.items()}
         
         # --- 7. DISPLAY RESULTS ---
         tab1, tab2 = st.tabs(["📊 1. Analysis Results & Checks", "📝 2. RC Design & Report"])
         
         with tab1:
-            # ใช้ plot_loads_df ที่เป็นหน่วย kN ทันทีเพื่อให้ Label ในกราฟถูกต้อง
+            # *** แก้ไข: ส่ง plot_loads_df และ R_kN เข้าไปแทนของเดิมที่หน่วยผิด ***
             st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, plot_loads_df, R_kN), use_container_width=True)
             
             st.subheader("📌 Analysis Summary")
@@ -142,79 +147,115 @@ else:
             st.markdown("---")
 
             with st.expander("🧮 Detailed Load Calculation Report", expanded=True):
-                st.markdown("#### A. Self-Weight Calculation")
-                sw_table = [{"Span": i+1, "b (m)": params['b'], "h (m)": params['h'], "Factored (kN/m)": f"{w_sw_factored_kN:.2f}"} for i in range(n_spans)]
-                st.table(pd.DataFrame(sw_table))
+                st.markdown("#### A. Self-Weight Calculation (Dead Load)")
+                sw_report = []
+                for i in range(n_spans):
+                    sw_report.append({
+                        "Span": i+1,
+                        "Dimensions": f"{params['b']}m x {params['h']}m",
+                        "Formula": f"b*h * 24 kN/m³ * {f_dl}",
+                        "Factored Result": f"{w_sw_factored_kN:.2f} kN/m"
+                    })
+                st.table(pd.DataFrame(sw_report))
 
-                st.markdown("#### B. User Load Breakdown")
+                st.markdown("#### B. Load Combination Breakdown")
+                combo_report = []
+                for i in range(n_spans):
+                    combo_report.append({
+                        "Span": i+1, "Type": "Self-Weight (DL)", 
+                        "Unfactored": f"{w_sw_base_kN:.2f} kN/m", 
+                        "Factor": f"x{f_dl}", "Factored": f"{w_sw_factored_kN:.2f} kN/m"
+                    })
                 if not loads_df.empty:
-                    st.table(loads_df)
-                else:
-                    st.write("No additional loads applied.")
+                    for _, row in loads_df.iterrows():
+                        val = float(row['mag'])
+                        combo_report.append({
+                            "Span": int(row['span_index'])+1,
+                            "Type": "Point (LL)" if row['type'] == 'P' else "Uniform (LL)",
+                            "Unfactored": f"{val:.2f} kN(/m)",
+                            "Factor": f"x{f_ll}",
+                            "Factored": f"{(val * f_ll):.2f} kN(/m)"
+                        })
+                st.table(pd.DataFrame(combo_report))
 
             with st.expander("✅ Equilibrium & Deflection Checks", expanded=True):
                 ec1, ec2 = st.columns(2)
                 with ec1:
-                    st.markdown("**Static Equilibrium**")
+                    st.markdown("**Static Equilibrium ($\Sigma F_y = 0$)**")
                     sum_R = sum(R_kN.values())
-                    total_app = w_sw_factored_kN * sum(spans)
+                    total_sw = w_sw_factored_kN * sum(spans)
+                    total_user = 0
                     if not loads_df.empty:
                         for _, r in loads_df.iterrows():
-                            # P is kN, U is kN/m * length
-                            total_app += (float(r['mag']) * f_ll) * (1.0 if r['type'] == 'P' else (float(r['dist']) if r['type'] == 'U' else 1.0))
+                            if r['type'] == 'P': total_user += (float(r['mag']) * f_ll)
+                            else: total_user += (float(r['mag']) * f_ll * float(r['dist']))
+                    total_applied = total_sw + total_user
                     st.write(f"Total Reactions: **{sum_R:.2f} kN**")
-                    st.write(f"Total Applied: **{total_app:.2f} kN**")
-                    if abs(sum_R - total_app) < 0.5: st.success("Balance: PASS")
+                    st.write(f"Total Applied Loads: **{total_applied:.2f} kN**")
+                    if abs(sum_R - total_applied) < 1.0: st.success("Balance Check: PASS")
+                    else: st.warning(f"Balance Diff: {abs(sum_R - total_applied):.2f} kN")
                 
                 with ec2:
-                    st.markdown("**Deflection Check**")
+                    st.markdown("**Deflection Limit Check**")
                     limit = (max(spans) * 1000) / 240.0
-                    st.write(f"Max: {d_abs_max:.2f} mm | Limit: {limit:.2f} mm")
+                    st.write(f"Max Deflection: {d_abs_max:.2f} mm")
+                    st.write(f"Allowable (L/240): {limit:.2f} mm")
                     if d_abs_max <= limit: st.success("Deflection: PASS")
+                    else: st.error("Deflection: FAIL")
 
         # ================= TAB 2: RC DESIGN =================
         with tab2:
-            if is_service: st.warning("⚠️ Switch to Ultimate mode for Design.")
-            st.header(f"Reinforced Concrete Design ({tag})")
+            if is_service:
+                st.warning("⚠️ Warning: Strength Design requires Ultimate factors.")
             
+            st.header(f"Reinforced Concrete Design ({tag})")
             design_res = []
             span_start = 0
             for i, span_len in enumerate(spans):
                 span_end = span_start + span_len
-                # Filter results for this span
+                # กรองข้อมูลจาก res_df ที่เป็นหน่วย kN/kNm เรียบร้อยแล้ว
                 span_data = res_df[(res_df['x'] >= span_start - 1e-6) & (res_df['x'] <= span_end + 1e-6)]
                 
                 if not span_data.empty:
-                    mu_p = span_data['moment'].max()
-                    mu_n = abs(span_data['moment'].min())
+                    mu_pos = span_data['moment'].max()
+                    mu_neg = abs(span_data['moment'].min())
                     vu_max = span_data['shear'].abs().max()
                     d_eff = params['h'] - 0.05
                     
-                    # Call RC Design Module
-                    As_p, _, _, stp_p = rc_design.design_beam_flexure(mu_p, params['b'], d_eff, params['fc'], params['fy'])
-                    As_n, _, _, stp_n = rc_design.design_beam_flexure(mu_n, params['b'], d_eff, params['fc'], params['fy'])
-                    s_r, _, stp_s = rc_design.check_shear(vu_max, params['b'], d_eff, params['fc'], params['fy'])
+                    # เรียก Module Design (ส่งค่า kNm/kN เข้าไปตรงๆ)
+                    As_pos, _, _, steps_pos = rc_design.design_beam_flexure(mu_pos, params['b'], d_eff, params['fc'], params['fy'])
+                    As_neg, _, _, steps_neg = rc_design.design_beam_flexure(mu_neg, params['b'], d_eff, params['fc'], params['fy'])
+                    s_req, _, steps_shear = rc_design.check_shear(vu_max, params['b'], d_eff, params['fc'], params['fy'])
                     
-                    n_p = max(2, int(np.ceil(As_p / (np.pi * (0.016/2)**2))))
-                    n_n = max(2, int(np.ceil(As_n / (np.pi * (0.016/2)**2))))
+                    def n_bars(As): return max(2, int(np.ceil(As / (np.pi * 0.008**2)))) 
                     
-                    design_res.append({'span': i+1, 'pos': {'n': n_p}, 'neg': {'n': n_n}, 'shear': {'s': s_r}})
+                    design_res.append({
+                        'span': i+1, 'pos': {'n': n_bars(As_pos)}, 'neg': {'n': n_bars(As_neg)}, 'shear': {'s': s_req}
+                    })
                     
-                    with st.expander(f"📘 Span {i+1} Design Details"):
-                        st.write(f"Moment: +{mu_p:.2f} / -{mu_n:.2f} kNm")
-                        st.latex(stp_p[0] if stp_p else "")
-                        st.write(f"Required Shear Reinforcement spacing: {s_r*1000:.0f} mm")
+                    with st.expander(f"📘 Detailed Design: Span {i+1}", expanded=False):
+                        st.markdown(f"**Flexural Design (Mu+ = {mu_pos:.2f}, Mu- = {mu_neg:.2f} kNm)**")
+                        c1, c2 = st.columns(2)
+                        with c1: 
+                            st.write("Bottom Steel:")
+                            for s in steps_pos: st.latex(s)
+                        with c2: 
+                            st.write("Top Steel:")
+                            for s in steps_neg: st.latex(s)
+                        st.markdown("**Shear Design**")
+                        for s in steps_shear: st.latex(s)
 
                 span_start += span_len
 
             st.markdown("---")
+            st.subheader("🛠️ Detailing Preview")
             if design_res:
-                st.subheader("🛠️ Detailing Preview")
-                c_det1, c_det2 = st.columns([1, 2])
-                with c_det1:
-                    st.pyplot(section_plotter.plot_section(params['b'], params['h'], 40, 16, design_res[0]['neg']['n'], design_res[0]['pos']['n'], f"RB6@{design_res[0]['shear']['s']*1000:.0f}", params['fc'], params['fy']))
-                with c_det2:
+                col_det1, col_det2 = st.columns([1, 2])
+                with col_det1:
+                    st.pyplot(section_plotter.plot_section(params['b'], params['h'], 40, 16, design_res[0]['neg']['n'], design_res[0]['pos']['n'], "RB6@200", params['fc'], params['fy']))
+                with col_det2:
                     st.pyplot(section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'], 40))
 
     except Exception as e:
-        st.error(f"❌ Calculation Error: {e}")
+        st.error(f"❌ Error: {e}")
+        st.exception(e)
