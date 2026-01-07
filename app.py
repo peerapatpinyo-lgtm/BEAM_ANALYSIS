@@ -201,47 +201,48 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     
                     st.success(f"ใช้ตัวคูณเพิ่มน้ำหนักบรรทุก (Load Factor) = {f_design}")
                 
+                    st.divider()
                 
-                # --- [UPDATED] ส่วนแสดงผล Reaction พร้อมรายการคำนวณ ---
-                st.markdown("#### 🏁 Design Reaction Forces ($R_u$)")
+                # --- [FINAL VERSION] ส่วนแสดงผล Reaction พร้อมรายการคำนวณทุก Node ---
+                st.markdown("#### 🏁 รายการคำนวณแรงปฏิกิริยาที่จุดรองรับ (Design Reaction Forces, $R_u$)")
                 
-                col_reac_table, col_reac_calc = st.columns([6, 4])
-                
-                with col_reac_table:
-                    reac_data = []
-                    uplift_warning = False
-                    f_design = 1.4
-                    
-                    for r_id, val in reactions.items():
-                        # คำนวณค่า Factored Reaction
-                        val_service = val / 1000.0
-                        val_factored = val_service * f_design
-                        
-                        status_text = "Compression (OK)"
-                        if val < -1e-3: 
-                             status_text = "⚠️ UPLIFT"
-                             uplift_warning = True
-                        
-                        reac_data.append({
-                            "Support": f"Node {r_id}",
-                            "Service $R$ (kN)": round(val_service, 2),
-                            "Design $R_u$ (kN)": round(val_factored, 2),
-                            "Status": status_text
-                        })
-                    st.dataframe(pd.DataFrame(reac_data), use_container_width=True, hide_index=True)
+                # สร้างข้อมูลสำหรับการแสดงผลรายการคำนวณแบบ Text
+                reac_details = []
+                f_design = 1.4
+                uplift_warning = False
 
-                with col_reac_calc:
-                    st.write("**ตัวอย่างการคำนวณแรงปฏิกิริยา:**")
-                    # ดึงตัวอย่าง Node แรกมาแสดงรายการคำนวณ
-                    if reactions:
-                        first_node = list(reactions.keys())[0]
-                        r_raw = reactions[first_node] / 1000.0
-                        st.latex(rf"R_u = R_{{service}} \times 1.4")
-                        st.latex(rf"R_u = {r_raw:.2f} \times 1.4 = {r_raw * 1.4:.2f} \text{{ kN}}")
-                        st.caption(f"*(ตัวอย่างสำหรับ Support Node {first_node})*")
+                for r_id, val in reactions.items():
+                    val_service = val / 1000.0  # kN
+                    val_factored = val_service * f_design
+                    
+                    if val < -1e-3: uplift_warning = True
+                    
+                    # บันทึกรูปแบบการคำนวณ: R_u = R_service * 1.4 = Result
+                    calc_line = f"Node {r_id}: {val_service:,.2f} kN × {f_design} = **{val_factored:,.2f} kN**"
+                    reac_details.append(calc_line)
+
+                # แบ่งส่วนแสดงผล: ตารางสรุป (ซ้าย) และ รายการคำนวณบรรทัดต่อบรรทัด (ขวา)
+                col_reac_list, col_reac_math = st.columns([1, 1])
+
+                with col_reac_list:
+                    st.write("**ตารางสรุปแรงปฏิกิริยา:**")
+                    reac_df_display = pd.DataFrame([
+                        {
+                            "จุดรองรับ": f"Node {r_id}",
+                            "Service R (kN)": round(val / 1000.0, 2),
+                            "Design Ru (kN)": round((val / 1000.0) * f_design, 2)
+                        } for r_id, val in reactions.items()
+                    ])
+                    st.dataframe(reac_df_display, use_container_width=True, hide_index=True)
+
+                with col_reac_math:
+                    st.write("**สมการการคำนวณ ($R_u = R \times 1.4$):**")
+                    for line in reac_details:
+                        st.write(line)
 
                 if uplift_warning:
-                    st.warning("⚠️ **Found Uplift:** ตรวจสอบการยึดรั้งของจุดรองรับ (แรงดึงขึ้น)")
+                    st.warning("⚠️ **ตรวจพบแรงยก (Uplift):** ค่าที่เป็นลบหมายถึงแรงดึงขึ้นที่จุดรองรับ")              
+
                 
             with t2:
                 st.subheader("Reinforcement Detailing")
@@ -303,6 +304,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
