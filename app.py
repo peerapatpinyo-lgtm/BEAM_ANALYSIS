@@ -243,45 +243,46 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 if uplift_warning:
                     st.warning("⚠️ **ตรวจพบแรงยก (Uplift):** ค่าที่เป็นลบหมายถึงแรงดึงขึ้นที่จุดรองรับ")              
 
-                
                 with t2:
-                # 1. Longitudinal Section (บีบความสูงลง)
+                # 1. Longitudinal Section (บีบความสูงลงเพื่อความสมส่วน)
                 st.markdown("#### 📏 Longitudinal Section")
                 fig_long = section_plotter.plot_longitudinal_section(spans, sup_df, design_res, params['h'], 40)
-                fig_long.set_size_inches(12, 3) # บีบรูปให้เตี้ยลงเพื่อประหยัดพื้นที่
+                fig_long.set_size_inches(12, 3) 
                 st.pyplot(fig_long, use_container_width=True)
                 
-                st.markdown("---") # ใช้เส้นบางๆ แทน divider หนาๆ
+                st.markdown("---") 
                 
-                # 2. Cross Sections (จัดกลุ่มให้อยู่ในแถวเดียวกันและเล็กลง)
+                # 2. Cross Sections (จัดเรียงแบบหน้ากระดาน)
                 st.markdown("#### 🟦 Cross Sections")
                 
-                # คำนวณจำนวนคอลัมน์ตามจำนวน Span (สูงสุด 4 ต่อแถวเพื่อไม่ให้เล็กเกิน)
-                n_cols = min(len(spans), 4)
-                cols = st.columns(n_cols)
+                # กำหนดให้โชว์สูงสุด 4 รูปต่อแถว
+                n_spans = len(spans)
+                cols_per_row = 4
                 
-                for i, d in enumerate(design_res):
-                    col_idx = i % n_cols
-                    with cols[col_idx]:
-                        # แสดงหัวข้อแบบกระชับ
-                        st.caption(f"**Span {i+1}** ({params['b']}x{params['h']} m)")
-                        
-                        fig_sec = section_plotter.plot_section(
-                            params['b'], params['h'], 40, 16,
-                            d['neg']['n'], d['pos']['n'], 
-                            d['shear_stirrups'], 24, 400
-                        )
-                        # ปรับขนาดรูปตัดให้เล็กลงพอดีคอลัมน์
-                        fig_sec.set_size_inches(3, 4) 
-                        st.pyplot(fig_sec, use_container_width=True)
-                        
-                        # แสดงสถานะแบบ Compact
-                        if d['shear_status'] == 'Fail':
-                            st.error("Shear: Fail", icon="❌")
-                        else:
-                            st.info(f"Shear: {d['shear_status']}")
+                for row_idx in range(0, n_spans, cols_per_row):
+                    # สร้างชุดคอลัมน์สำหรับแถวนั้นๆ
+                    current_batch = design_res[row_idx : row_idx + cols_per_row]
+                    cols = st.columns(cols_per_row)
+                    
+                    for i, d in enumerate(current_batch):
+                        actual_idx = row_idx + i
+                        with cols[i]:
+                            st.caption(f"**Span {actual_idx+1}** ({params['b']}x{params['h']} m)")
+                            
+                            fig_sec = section_plotter.plot_section(
+                                params['b'], params['h'], 40, 16,
+                                d['neg']['n'], d['pos']['n'], 
+                                d['shear_stirrups'], 24, 400
+                            )
+                            fig_sec.set_size_inches(3, 4) 
+                            st.pyplot(fig_sec, use_container_width=True)
+                            
+                            if d['shear_status'] == 'Fail':
+                                st.error("Shear: Fail", icon="❌")
+                            else:
+                                st.info(f"Shear: {d['shear_status']}")
 
-                # 3. BBS & BOQ (บีบตารางให้เล็กลง)
+                # 3. Material Summary (ประหยัดพื้นที่ด้วย Expander)
                 st.markdown("---")
                 st.markdown("#### 📋 Material Summary")
                 
@@ -289,13 +290,12 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 vol_conc, w_steel = rc_design.get_boq(spans, params['b'], params['h'], bbs_list)
                 
                 m1, m2, m3 = st.columns(3)
-                # ใช้ Metrics แบบไม่มีพื้นที่ว่างมาก
                 m1.metric("Concrete", f"{vol_conc:.2f} m³")
                 m2.metric("Steel", f"{w_steel:.2f} kg")
-                m3.metric("Ratio", f"{w_steel/vol_conc:.1f} kg/m³")
+                m3.metric("Ratio", f"{w_steel/vol_conc:.1f} kg/m³" if vol_conc > 0 else "0 kg/m³")
                 
                 if bbs_list:
-                    with st.expander("ดูตารางเหล็กเสริม (BBS)"):
+                    with st.expander("🔍 คลิกเพื่อดูตารางเหล็กเสริม (BBS Table)"):
                         st.dataframe(pd.DataFrame(bbs_list), use_container_width=True, hide_index=True)
 
             with t3:
@@ -322,6 +322,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
