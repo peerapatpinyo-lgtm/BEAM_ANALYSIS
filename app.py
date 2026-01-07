@@ -17,250 +17,217 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS to improve UI
+# Custom Style เพื่อให้ UI ดูเป็นโปรแกรมวิศวกรรมมืออาชีพ
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e1e4e8; }
+    .reportview-container { background: #f0f2f6; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    footer {visibility: hidden;}
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🏗️ RC Beam Analysis & Design Pro (Timoshenko Theory)")
-st.markdown("---")
+st.title("🏗️ RC Beam Analysis & Design Pro")
+st.caption("Continuous Beam Analysis (Timoshenko) & Reinforced Concrete Detailing")
 
 # --- 3. SIDEBAR INPUTS ---
-# ดึงค่าพารามิเตอร์ทั้งหมดจาก sidebar
 params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
-    st.error("🚨 Structure is unstable! Please check supports (Ensure R_x, R_y, and M constraints are sufficient).")
+    st.error("🚨 ระบบโครงสร้างไม่เสถียร (Unstable Structure): โปรดตรวจสอบจุดรองรับให้มีแรงปฏิกิริยาเพียงพอ")
 else:
     # --- 4. ANALYSIS SETTINGS & LOAD FACTORS ---
     st.sidebar.markdown("---")
-    st.sidebar.subheader("📢 Load Combinations")
+    st.sidebar.subheader("⚙️ Analysis Settings")
     mode_select = st.sidebar.radio(
         "Select Analysis Mode:",
-        ["Service Load (1.0DL + 1.0LL)", "Ultimate / Custom Factors"],
+        ["Service Load (1.0DL + 1.0LL)", "Ultimate Load (Factored)"],
         index=1
     )
     
-    # กำหนด Load Factors ตามโหมดที่เลือก
+    # กำหนดค่า Factor ให้ชัดเจนเพื่อใช้ใน Report
     if mode_select.startswith("Service"):
         f_dl, f_ll = 1.0, 1.0
         tag = "Service"
     else:
         col_f1, col_f2 = st.sidebar.columns(2)
-        f_dl = col_f1.number_input("DL Factor", value=1.4, step=0.1, format="%.2f")
-        f_ll = col_f2.number_input("LL Factor", value=1.7, step=0.1, format="%.2f")
+        f_dl = col_f1.number_input("DL Factor", value=1.4, step=0.1, key="dl_f")
+        f_ll = col_f2.number_input("LL Factor", value=1.7, step=0.1, key="ll_f")
         tag = "Ultimate"
 
-    # --- 5. LOAD CALCULATIONS (CRITICAL UNIT FIX) ---
+    # --- 5. UNIT-CONSISTENT LOAD CALCULATION ---
     try:
-        # 5.1 Self-Weight Calculation
-        # b (m), h (m), Concrete Density 24 kN/m3
-        w_sw_base_kN = params['b'] * params['h'] * 24.0  
-        w_sw_factored_kN = w_sw_base_kN * f_dl
+        # 5.1 Self-Weight (kN/m)
+        # สูตร: b(m) * h(m) * 24 kN/m3
+        b_m, h_m = params['b'], params['h']
+        w_sw_base = b_m * h_m * 24.0  
+        w_sw_factored = w_sw_base * f_dl
         
-        # เตรียม List สำหรับเก็บข้อมูลโหลด 2 ชุด (เพื่อแก้ปัญหาหน่วยโชว์ผิด)
-        solver_input_list = []  # ส่งเข้า Solver (หน่วย Newton)
-        display_plot_list = []  # ส่งเข้า Plot/Report (หน่วย kN)
+        # ป้องกันปัญหา Self-weight เป็น 0.00
+        if w_sw_base <= 0:
+            st.warning("⚠️ หน้าตัดคานมีขนาดเป็น 0 หรือค่าผิดปกติ โปรดตรวจสอบหน้าตัด")
+
+        # แยกชุดข้อมูล: Solver (Newton) vs Display (kN)
+        solver_input = [] 
+        display_input = [] 
         
-        # 5.2 Process Self-Weight (UDL)
+        # 5.2 ลงข้อมูล Self-Weight ทุก Span
         for i in range(n_spans):
-            # Solver (N/m)
-            solver_input_list.append({
+            # เข้า Solver (N/m)
+            solver_input.append({
                 'span_index': i, 'type': 'U', 
-                'mag': w_sw_factored_kN * 1000.0, 
+                'mag': w_sw_factored * 1000.0, 
                 'dist': spans[i]
             })
-            # Display (kN/m)
-            display_plot_list.append({
+            # เข้า Plot/Table (kN/m) - แก้ปัญหาโชว์ 0.00
+            display_input.append({
                 'span_index': i, 'type': 'U', 
-                'mag': w_sw_factored_kN, 
+                'mag': w_sw_factored, 
                 'dist': spans[i], 'desc': 'Self-Weight'
             })
             
-        # 5.3 Process User-Defined Loads (Point Load 3.6 kN)
+        # 5.3 ลงข้อมูล User Loads (เช่น 3.6 kN)
         if not loads_df.empty:
             for _, row in loads_df.iterrows():
-                s_idx = int(row['span_index'])
-                if s_idx >= n_spans: continue
-                
-                l_type = row['type']
-                mag_raw_kN = float(row['mag']) # รับค่า 3.6 จาก UI
-                factored_kN = mag_raw_kN * f_ll
-                dist = float(row['dist'])
-                
-                # เข้า Solver (N หรือ N/m)
-                solver_input_list.append({
-                    'span_index': s_idx, 'type': l_type, 
-                    'mag': factored_kN * 1000.0, 
-                    'dist': dist
-                })
-                # เข้า Plot (kN หรือ kN/m)
-                display_plot_list.append({
-                    'span_index': s_idx, 'type': l_type, 
-                    'mag': factored_kN, 
-                    'dist': dist, 'desc': 'User Load'
-                })
+                try:
+                    s_idx = int(row['span_index'])
+                    if s_idx >= n_spans: continue
+                    
+                    l_type = row['type']
+                    mag_raw = float(row['mag']) # ค่าดิบ 3.6
+                    factored_kN = mag_raw * f_ll
+                    dist = float(row['dist'])
+                    
+                    # เข้า Solver (Newton)
+                    solver_input.append({
+                        'span_index': s_idx, 'type': l_type, 
+                        'mag': factored_kN * 1000.0, 
+                        'dist': dist
+                    })
+                    # เข้า Plot (kN) - แก้ปัญหาโชว์ 3600
+                    display_input.append({
+                        'span_index': s_idx, 'type': l_type, 
+                        'mag': factored_kN, 
+                        'dist': dist, 'desc': 'User Load'
+                    })
+                except: continue
 
-        calc_loads_df = pd.DataFrame(solver_input_list)
-        plot_loads_df = pd.DataFrame(display_plot_list)
+        # สร้าง DataFrame สำหรับส่งต่อ
+        calc_loads_df = pd.DataFrame(solver_input)
+        plot_loads_df = pd.DataFrame(display_input)
 
-        # --- 6. BEAM SOLVER EXECUTION ---
-        # Solver จะคำนวณในหน่วย SI (N, m)
-        x_eval, M_raw, V_raw, D_raw, R_raw = solver.solve_beam(spans, sup_df, calc_loads_df, params)
+        # --- 6. CORE SOLVER ---
+        # แก้ไข: รับค่า N, m ออกมาเป็น SI Unit
+        x_eval, M_n, V_n, D_m, R_n = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
-        # แปลงผลลัพธ์จาก Newton เป็น kN ทันทีเพื่อความถูกต้องของ Report
+        # แปลงผลลัพธ์จาก Newton เป็น kN ทันทีเพื่อความปลอดภัย
         res_df = pd.DataFrame({
             'x': x_eval,
-            'moment': M_raw / 1000.0,    # kNm
-            'shear': V_raw / 1000.0,     # kN
-            'deflection': D_raw * 1000.0 # mm
+            'moment': M_n / 1000.0,    # kNm
+            'shear': V_n / 1000.0,     # kN
+            'deflection': D_m * 1000.0 # mm
         })
         
-        # Support Reactions ในหน่วย kN
-        R_kN = {k: v / 1000.0 for k, v in R_raw.items()}
+        # Reactions (kN)
+        R_kN = {k: v / 1000.0 for k, v in R_n.items()}
 
-        # --- 7. TABS INTERFACE ---
-        tab1, tab2, tab3 = st.tabs(["📊 Analysis Results", "📝 Structural Design", "📋 Load Report"])
+        # --- 7. PRESENTATION (TABS) ---
+        tab1, tab2, tab3 = st.tabs(["📊 Analysis Results", "📝 RC Design Detail", "📋 Loads & Equilibrium"])
 
-        # ================= TAB 1: ANALYSIS =================
         with tab1:
-            st.subheader(f"Analysis Diagrams ({tag})")
-            # ใช้ plot_loads_df (หน่วย kN) เพื่อให้ Label ในกราฟโชว์ 3.6 ไม่ใช่ 3600
+            st.subheader(f"Internal Force Diagrams ({tag})")
+            # ใช้ plot_loads_df ที่เป็นหน่วย kN เท่านั้น
             st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, plot_loads_df, R_kN), use_container_width=True)
             
-            # สรุปค่าสูงสุด
-            c1, c2, c3, c4 = st.columns(4)
-            v_max = res_df['shear'].abs().max()
-            m_max_p = res_df['moment'].max()
-            m_max_n = res_df['moment'].min()
-            d_max = res_df['deflection'].abs().max()
-            
-            c1.metric("Max Shear", f"{v_max:.2f} kN")
-            c2.metric("Max Moment (+)", f"{m_max_p:.2f} kNm")
-            c3.metric("Max Moment (-)", f"{abs(m_max_n):.2f} kNm")
-            c4.metric("Max Deflection", f"{d_max:.2f} mm")
+            # Metrics Summary
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Max Shear (V_u)", f"{res_df['shear'].abs().max():.2f} kN")
+            m2.metric("Max Moment (+)", f"{res_df['moment'].max():.2f} kNm")
+            m3.metric("Max Moment (-)", f"{abs(res_df['moment'].min()):.2f} kNm")
+            m4.metric("Max Deflection", f"{res_df['deflection'].abs().max():.2f} mm")
 
-            st.markdown("### 📍 Support Reactions")
-            reac_list = [{"Support Node": int(str(k).replace('R', '')), "Reaction (kN)": f"{v:.2f}"} for k, v in R_kN.items()]
-            st.dataframe(pd.DataFrame(reac_list), use_container_width=True, hide_index=True)
+            st.markdown("### 📍 Support Reactions (kN)")
+            reac_df = pd.DataFrame([{"Node": int(str(k).replace('R','')), "Reaction (kN)": f"{v:.2f}"} for k, v in R_kN.items()])
+            st.table(reac_df.sort_values("Node"))
 
-        # ================= TAB 2: DESIGN =================
         with tab2:
-            st.header(f"Reinforced Concrete Design (Code: ACI/EIT)")
+            st.header("Reinforced Concrete Design")
             if is_service:
-                st.warning("⚠️ Warning: Flexural design should be performed under Ultimate Load factors.")
+                st.warning("⚠️ การออกแบบเหล็กเสริมควรใช้โหมด Ultimate Load")
 
-            design_summary = []
-            span_start = 0.0
-            
+            design_results = []
+            cur_x = 0.0
             for i, L in enumerate(spans):
-                span_end = span_start + L
-                # กรองข้อมูลช่วง Span นี้ (ป้องกัน Floating point error)
-                span_data = res_df[(res_df['x'] >= span_start - 1e-6) & (res_df['x'] <= span_end + 1e-6)]
+                # กรองข้อมูลใน Span
+                span_mask = (res_df['x'] >= cur_x - 1e-5) & (res_df['x'] <= cur_x + L + 1e-5)
+                span_data = res_df[span_mask]
                 
                 if not span_data.empty:
-                    Mu_pos = span_data['moment'].max()
-                    Mu_neg = abs(span_data['moment'].min())
-                    Vu_max = span_data['shear'].abs().max()
-                    d_eff = params['h'] - 0.05 # Effective depth (5cm covering)
+                    m_pos = span_data['moment'].max()
+                    m_neg = abs(span_data['moment'].min())
+                    v_max = span_data['shear'].abs().max()
+                    d_eff = params['h'] - 0.05
                     
-                    # เรียกใช้ Module การออกแบบ (ส่งค่าหน่วย kN, kNm เข้าไป)
-                    As_pos, _, _, steps_p = rc_design.design_beam_flexure(Mu_pos, params['b'], d_eff, params['fc'], params['fy'])
-                    As_neg, _, _, steps_n = rc_design.design_beam_flexure(Mu_neg, params['b'], d_eff, params['fc'], params['fy'])
-                    s_stirrup, _, steps_s = rc_design.check_shear(Vu_max, params['b'], d_eff, params['fc'], params['fy'])
+                    # เรียก Module ออกแบบ (หน่วย kN, kNm)
+                    as_p, _, _, stp_p = rc_design.design_beam_flexure(m_pos, params['b'], d_eff, params['fc'], params['fy'])
+                    as_n, _, _, stp_n = rc_design.design_beam_flexure(m_neg, params['b'], d_eff, params['fc'], params['fy'])
+                    s_v, _, stp_v = rc_design.check_shear(v_max, params['b'], d_eff, params['fc'], params['fy'])
                     
-                    # คำนวณจำนวนเส้นเหล็ก (DB16)
-                    bar_area = np.pi * (0.016**2) / 4 * 1e6 # mm2
-                    n_pos = max(2, int(np.ceil((As_pos * 1e6) / bar_area)))
-                    n_neg = max(2, int(np.ceil((As_neg * 1e6) / bar_area)))
-
-                    design_summary.append({
-                        'span': i+1, 'pos': {'n': n_pos, 'as': As_pos}, 
-                        'neg': {'n': n_neg, 'as': As_neg}, 'shear': {'s': s_stirrup}
-                    })
-
-                    with st.expander(f"🔍 Span {i+1} Design Calculation Detail"):
-                        col_a, col_b = st.columns(2)
-                        with col_a:
-                            st.write("**Bottom Steel (Flexure +)**")
-                            for s in steps_p: st.latex(s)
-                        with col_b:
-                            st.write("**Top Steel (Flexure -)**")
-                            for s in steps_n: st.latex(s)
-                        st.write("**Shear Reinforcement**")
-                        for s in steps_s: st.latex(s)
-
-                span_start += L
+                    # คำนวณจำนวนเส้นเหล็ก DB16
+                    n_p = max(2, int(np.ceil((as_p * 1e6) / (np.pi * 8**2))))
+                    n_n = max(2, int(np.ceil((as_n * 1e6) / (np.pi * 8**2))))
+                    
+                    design_results.append({'span': i+1, 'pos': {'n': n_p}, 'neg': {'n': n_n}, 'shear': {'s': s_v}})
+                    
+                    with st.expander(f"📑 Detailed Calculation: Span {i+1}"):
+                        c_left, c_right = st.columns(2)
+                        with c_left:
+                            st.write("**Flexure Design (Bottom)**")
+                            for s in stp_p: st.latex(s)
+                        with c_right:
+                            st.write("**Flexure Design (Top)**")
+                            for s in stp_n: st.latex(s)
+                        st.write("**Shear Design (Stirrups)**")
+                        for s in stp_v: st.latex(s)
+                cur_x += L
 
             st.markdown("---")
-            st.subheader("🛠️ Detailing & Section Preview")
-            if design_summary:
-                col_det1, col_det2 = st.columns([1, 2])
-                with col_det1:
-                    # วาดหน้าตัด Span แรก
-                    fig_sec = section_plotter.plot_section(
-                        params['b'], params['h'], 40, 16, 
-                        design_summary[0]['neg']['n'], design_summary[0]['pos']['n'], 
-                        f"RB6@{design_summary[0]['shear']['s']*1000:.0f} mm",
-                        params['fc'], params['fy']
-                    )
-                    st.pyplot(fig_sec)
-                with col_det2:
-                    # วาดหน้าตัดตามยาว
-                    fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_summary, params['h'], 40)
-                    st.pyplot(fig_long)
+            st.subheader("🛠️ Detailing Preview")
+            if design_results:
+                dcol1, dcol2 = st.columns([1, 2])
+                with dcol1:
+                    st.pyplot(section_plotter.plot_section(params['b'], params['h'], 40, 16, design_results[0]['neg']['n'], design_results[0]['pos']['n'], f"RB6@{design_results[0]['shear']['s']*1000:.0f}", params['fc'], params['fy']))
+                with dcol2:
+                    st.pyplot(section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_results, params['h'], 40))
 
-        # ================= TAB 3: LOAD REPORT =================
         with tab3:
-            st.header("🧮 Detailed Load Combination Report")
+            st.header("🧮 Load Combination & Equilibrium")
             
-            # 1. Self-weight Report
             st.subheader("1. Self-Weight (Dead Load)")
-            sw_data = {
-                "Width (b)": f"{params['b']:.2f} m",
-                "Height (h)": f"{params['h']:.2f} m",
-                "Unit Weight": "24.00 kN/m³",
-                "Load Factor (DL)": f"{f_dl:.2f}",
-                "Unfactored SW": f"{w_sw_base_kN:.2f} kN/m",
-                "Factored SW": f"{w_sw_factored_kN:.2f} kN/m"
-            }
-            st.table(pd.DataFrame([sw_data]))
-
-            # 2. User Load Report
-            st.subheader("2. Applied User Loads (Live Load)")
+            st.info(f"Section {b_m}x{h_m}m | ρ=24kN/m³ | Base = {w_sw_base:.2f} kN/m | Factored = {w_sw_factored:.2f} kN/m")
+            
+            st.subheader("2. User Loads (Live Load)")
             if not loads_df.empty:
-                report_df = loads_df.copy()
-                report_df['Factored Mag'] = report_df['mag'] * f_ll
-                report_df['Unit'] = report_df['type'].apply(lambda x: "kN" if x=='P' else "kN/m")
-                st.dataframe(report_df, use_container_width=True)
-            else:
-                st.info("No additional loads applied by user.")
-
-            # 3. Equilibrium Verification
+                st.dataframe(loads_df.assign(Factored_kN=lambda x: x['mag']*f_ll), use_container_width=True)
+            
             st.subheader("3. Global Equilibrium Check")
             total_reac = sum(R_kN.values())
-            total_applied = w_sw_factored_kN * sum(spans)
+            total_load = w_sw_factored * sum(spans)
             if not loads_df.empty:
                 for _, r in loads_df.iterrows():
-                    if r['type'] == 'P': total_applied += (r['mag'] * f_ll)
-                    else: total_applied += (r['mag'] * f_ll * r['dist'])
+                    total_load += (r['mag'] * f_ll) * (1.0 if r['type'] == 'P' else r['dist'])
             
-            ev1, ev2 = st.columns(2)
-            ev1.write(f"Sum of Reactions: **{total_reac:.2f} kN**")
-            ev2.write(f"Sum of Applied Loads: **{total_applied:.2f} kN**")
+            e_col1, e_col2 = st.columns(2)
+            e_col1.write(f"Total Reaction: **{total_reac:.2f} kN**")
+            e_col2.write(f"Total Applied: **{total_load:.2f} kN**")
             
-            if abs(total_reac - total_applied) < 0.1:
-                st.success("✅ Static Equilibrium Verified (Error < 0.1 kN)")
+            if abs(total_reac - total_load) < 0.1:
+                st.success("✅ Equilibrium Verified")
             else:
-                st.warning(f"⚠️ Balance Difference: {abs(total_reac - total_applied):.4f} kN")
+                st.error(f"❌ Equilibrium Error: {abs(total_reac - total_load):.4f} kN")
 
     except Exception as e:
-        st.error(f"❌ Critical Error in Calculation: {str(e)}")
+        st.error(f"❌ Application Error: {e}")
         st.exception(e)
 
-# Footer
 st.markdown("---")
-st.caption("Developed by Gemini RC Beam Engine | Structural Analysis & Design Tool v2.1")
+st.caption("Engineered by Gemini v3.0 | 2026 Structural Suite")
