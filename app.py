@@ -32,6 +32,8 @@ with st.sidebar:
 if not stable:
     st.error("🚨 Structure is Unstable! Please check supports (Must have at least 1 Pin/Fixed or 2 Rollers).")
 else:
+
+    # ... (Main Logic)
     # 1. Solve
     solver = BeamSolver(spans, sup_df.to_dict('records'), load_df.to_dict('records'), 
                         params['E'], params['b'], params['h'], params['I'])
@@ -40,41 +42,56 @@ else:
     if status.get("error"):
         st.error(f"Analysis Failed: {status['error']}")
     else:
-        # Perform Equilibrium Check
         eq_check = solver.check_equilibrium(reactions)
+        w_sw = solver.w_self_used # Get calculated self weight
         
         # 2. Tabs
         tab1, tab2, tab3 = st.tabs(["📊 Analysis & Checks", "🧱 RC Design & Detailing", "📋 BBS & BOQ"])
         
         # --- TAB 1: ANALYSIS ---
         with tab1:
-            st.subheader("1. Static Equilibrium Check")
+            st.info(f"ℹ️ **Calculation Note:** Self-weight of **{w_sw:.2f} kN/m** (Size {params['b']}x{params['h']}m) is automatically included in all spans.")
             
-            # Display Check Metrics
+            st.subheader("1. Static Equilibrium Check")
             c1, c2, c3, c4 = st.columns(4)
             with c1:
-                st.metric("Total Load (Down)", f"{eq_check['load_down']/1000:.2f} kN")
+                st.metric("Total Load (Down)", f"{eq_check['load_down']/1000:.2f} kN", help="Includes User Loads + Self Weight")
             with c2:
                 delta = abs(eq_check['diff_fy'])/1000
-                color = "normal" if delta < 0.01 else "inverse"
-                st.metric("Total Reaction (Up)", f"{eq_check['react_up']/1000:.2f} kN", delta_color=color)
+                st.metric("Total Reaction (Up)", f"{eq_check['react_up']/1000:.2f} kN")
             with c3:
-                st.metric("Error (ΣFy)", f"{eq_check['diff_fy']:.4f} N")
+                st.metric("Balance Error", f"{eq_check['diff_fy']:.4f} N")
             with c4:
-                check_res = "✅ OK" if abs(eq_check['diff_fy']) < 1.0 else "❌ Warning"
+                check_res = "✅ OK" if abs(eq_check['diff_fy']) < 1.0 else "❌ Unbalanced"
                 st.write(f"## {check_res}")
             
             st.divider()
             
             # Plot Diagrams
-            st.subheader("2. Diagrams (FBD, SFD, BMD, Deflection)")
+            st.subheader("2. Diagrams")
             fig = plot_analysis_results(res_df, spans, sup_df, load_df.to_dict('records'), reactions)
             st.plotly_chart(fig, use_container_width=True)
             
-            # Show Reaction Table
-            st.caption("Reaction Forces at Nodes:")
-            reac_disp = {k: f"{v/1000:.2f} kN" for k,v in reactions.items()}
-            st.json(reac_disp)
+            # Show Reaction Table (Detailed)
+            st.subheader("Reaction Forces at Supports")
+            reac_data = []
+            for nid, val in reactions.items():
+                # Find support type for this node
+                sType = "General Node"
+                for s in sup_df.to_dict('records'):
+                    if s.get('id', -1) == nid or s.get('node_id', -1) == nid:
+                        sType = s['type']
+                        break
+                
+                # Only show significant reactions (or supports)
+                if abs(val) > 0.001 or sType in ['Pin', 'Roller', 'Fixed']:
+                    reac_data.append({
+                        "Node ID": nid,
+                        "Support Type": sType,
+                        "Vertical Reaction (kN)": f"{val/1000:.2f}"
+                    })
+            
+            st.dataframe(pd.DataFrame(reac_data), hide_index=True)
 
         # --- TAB 2: DESIGN ---
         with tab2:
@@ -132,3 +149,4 @@ else:
             c1, c2 = st.columns(2)
             c1.metric("Concrete Volume", f"{vol:.2f} m³")
             c2.metric("Total Steel Weight", f"{w_steel:.2f} kg")
+
