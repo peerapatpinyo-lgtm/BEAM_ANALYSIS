@@ -5,43 +5,25 @@ import numpy as np
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
     Creates a Textbook-style structural analysis plot.
-    Features: Distributed arrows for UDL, explicit Max/Min labels, and clear axis names.
+    Clean version: No summary header, focused on diagrams.
     """
     
-    # --- 1. PREPARE SUMMARY DATA ---
-    max_shear_pos = res_df['shear'].max() / 1000
-    max_shear_neg = res_df['shear'].min() / 1000
-    
-    m_max_val = res_df['moment'].max() / 1000
-    m_min_val = res_df['moment'].min() / 1000
-    
-    # Deflection: Find absolute max
-    idx_max_def = res_df['deflection'].abs().idxmax()
-    max_def_val = res_df['deflection'].iloc[idx_max_def]
-    
-    summary_title = (
-        f"<b>ANALYSIS RESULTS</b><br>"
-        f"V<sub>max</sub> = {max(abs(max_shear_pos), abs(max_shear_neg)):.2f} kN | "
-        f"M<sub>max</sub> = {max(abs(m_max_val), abs(m_min_val)):.2f} kNm | "
-        f"Δ<sub>max</sub> = {max_def_val:.2f} mm"
-    )
-
-    # --- 2. CREATE SUBPLOTS ---
+    # --- Create Subplots ---
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
         vertical_spacing=0.08,
         subplot_titles=(
-            "<b>1. Free Body Diagram (Textbook Style)</b>", 
+            "<b>1. Free Body Diagram</b>", 
             "<b>2. Shear Force Diagram (SFD)</b>", 
             "<b>3. Bending Moment Diagram (BMD)</b>",
             "<b>4. Elastic Curve (Deflection)</b>"
         ),
-        row_heights=[0.25, 0.25, 0.25, 0.25]
+        row_heights=[0.20, 0.25, 0.25, 0.30]
     )
 
     # ==========================================
-    # ROW 1: LOAD MODEL (Textbook Style)
+    # ROW 1: LOAD MODEL
     # ==========================================
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
@@ -73,7 +55,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         
         if l['type'] == 'P':
             x_loc = start_x + l['dist']
-            # ลูกศรเดี่ยว (Single Arrow)
             fig.add_annotation(
                 x=x_loc, y=0, ax=0, ay=-50,
                 xref="x1", yref="y1",
@@ -86,27 +67,21 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             x_e = x_s + l['dist']
             h_vis = 0.25
             
-            # 1. Top Bar Line
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e], y=[h_vis, h_vis],
                 mode='lines', line=dict(color='#2980b9', width=2), hoverinfo='skip'
             ), row=1, col=1)
             
-            # 2. Distributed Arrows (Loop วาดลูกศรเรียงกัน)
-            # คำนวณจำนวนลูกศรตามความยาว (ให้สวยงาม ไม่ถี่เกินไป)
             n_arrows = max(3, int(l['dist'] * 3)) 
             arrow_x = np.linspace(x_s, x_e, n_arrows)
-            
             for ax_x in arrow_x:
                 fig.add_annotation(
-                    x=ax_x, y=0, # หัวลูกศรที่คาน
-                    ax=0, ay=-30, # หางลูกศรสูงขึ้นไป (สั้นกว่า P นิดหน่อย)
+                    x=ax_x, y=0, ax=0, ay=-30,
                     xref="x1", yref="y1",
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor="#2980b9",
                     row=1, col=1
                 )
             
-            # Label ตรงกลาง
             fig.add_annotation(
                 x=(x_s+x_e)/2, y=h_vis,
                 text=f"<b>w={mag_kN:.2f} kN/m</b>",
@@ -115,7 +90,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             )
 
     # ==========================================
-    # ROW 2: SHEAR FORCE (SFD)
+    # ROW 2: SHEAR FORCE
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
     fig.add_trace(go.Scatter(
@@ -124,9 +99,11 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
     ), row=2, col=1)
     
-    # Annotate Max/Min Shear
-    for val, name in [(max_shear_pos, "Max"), (max_shear_neg, "Min")]:
-        if abs(val) > 0.001:
+    # Max/Min Shear Labels
+    v_max = res_df['shear'].max() / 1000
+    v_min = res_df['shear'].min() / 1000
+    for val in [v_max, v_min]:
+        if abs(val) > 0.01:
             idx = (res_df['shear']/1000 - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
@@ -135,7 +112,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             )
 
     # ==========================================
-    # ROW 3: BENDING MOMENT (BMD)
+    # ROW 3: BENDING MOMENT
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
     fig.add_trace(go.Scatter(
@@ -144,14 +121,16 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
     ), row=3, col=1)
 
-    # Annotate Max/Min Moment
-    for val in [m_max_val, m_min_val]:
-        if abs(val) > 0.001:
+    # Max/Min Moment Labels
+    m_max = res_df['moment'].max() / 1000
+    m_min = res_df['moment'].min() / 1000
+    for val in [m_max, m_min]:
+        if abs(val) > 0.01:
             idx = (res_df['moment']/1000 - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
                 text=f"<b>{val:.2f}</b>", 
-                showarrow=True, arrowhead=1, ay=20 if val>0 else -20, # BMD กลับหัวใน Layout
+                showarrow=True, arrowhead=1, ay=20 if val>0 else -20,
                 font=dict(color='#27ae60'), row=3, col=1
             )
 
@@ -164,7 +143,9 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         mode='lines', name='Deflection', line=dict(color='#8e44ad', width=2)
     ), row=4, col=1)
     
-    # Annotate Max Deflection
+    idx_max_def = res_df['deflection'].abs().idxmax()
+    max_def_val = res_df['deflection'].iloc[idx_max_def]
+    
     fig.add_annotation(
         x=res_df['x'].iloc[idx_max_def], y=max_def_val,
         text=f"<b>Max: {max_def_val:.3f} mm</b>",
@@ -174,28 +155,24 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     )
 
     # ==========================================
-    # LAYOUT SETTINGS
+    # LAYOUT
     # ==========================================
-    # Vertical Grid Lines
     for x_pos in cum_dist:
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
     fig.update_layout(
-        title=dict(text=summary_title, x=0.5, y=0.98, font=dict(size=14, color="#2c3e50")),
-        height=1000, 
+        title="Structural Analysis Results",
+        height=900, 
         showlegend=False, 
         template="plotly_white", 
         hovermode="x unified",
-        margin=dict(t=80, b=60, l=60, r=20)
+        margin=dict(t=50, b=60, l=60, r=20)
     )
     
-    # Axis Names & Config
-    fig.update_yaxes(visible=False, range=[-0.5, 0.8], row=1, col=1) # Load Model fixed range
-    fig.update_yaxes(title_text="Shear V (kN)", showgrid=True, row=2, col=1)
-    fig.update_yaxes(title_text="Moment M (kNm)", autorange="reversed", showgrid=True, row=3, col=1)
-    fig.update_yaxes(title_text="Deflection δ (mm)", showgrid=True, zeroline=True, row=4, col=1)
-    
-    # X-Axis Label (Bottom only)
+    fig.update_yaxes(visible=False, range=[-0.5, 0.8], row=1, col=1)
+    fig.update_yaxes(title_text="V (kN)", showgrid=True, row=2, col=1)
+    fig.update_yaxes(title_text="M (kNm)", autorange="reversed", showgrid=True, row=3, col=1)
+    fig.update_yaxes(title_text="δ (mm)", showgrid=True, zeroline=True, row=4, col=1)
     fig.update_xaxes(title_text="Distance x (m)", row=4, col=1)
 
     return fig
