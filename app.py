@@ -119,9 +119,9 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     m_max = span_res['moment'].max()
                     m_min = span_res['moment'].min()
                     
-                    Mu_pos = max(0, m_max) * factor
-                    Mu_neg = abs(min(0, m_min)) * factor
-                    vu_val = span_res['shear'].abs().max() * factor
+                   Mu_pos = (max(0, m_max) * factor) / 1000.0
+                   Mu_neg = (abs(min(0, m_min)) * factor) / 1000.0
+                   vu_val = (span_res['shear'].abs().max() * factor) / 1000.0
                 
                 des_span = rc_design.design_span_expert(
                     Mu_pos, Mu_neg, vu_val, 
@@ -233,4 +233,5 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True)
+
 
