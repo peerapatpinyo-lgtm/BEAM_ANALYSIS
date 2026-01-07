@@ -148,7 +148,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 uplift_warning = False
                 
                 for r_id, val in reactions.items():
-                    val_disp = round(val, 2)
+                    val_disp = round(val / 1000.0, 2)
                     status_text = "Compression (OK)"
                     # Check Uplift (Assuming mainly vertical forces)
                     if val < -1e-3: 
@@ -233,3 +233,4 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True)
+
