@@ -35,7 +35,6 @@ else:
         f_dl = 1.0
         f_ll = 1.0
         with col_fac1:
-            # Fixed: Removed the invalid 'st.disabled = True' line
             st.number_input("Dead Load Factor (DL)", value=1.0, disabled=True, key="fdl_serv")
         with col_fac2:
             st.number_input("Live Load Factor (LL)", value=1.0, disabled=True, key="fll_serv")
@@ -140,17 +139,36 @@ else:
         col_res3.metric(f"Max Moment (-)", f"{m_max_neg:.2f} kNm")
         col_res4.metric("Max Deflection", f"{d_abs_max:.2f} mm")
         
-        # 2.2 REACTION TABLE
+        # 2.2 REACTION TABLE (FIXED KEYERROR)
         st.markdown("### 📍 Support Reactions")
         if R:
-            # Convert R dict (R0, R4...) to DataFrame
             reaction_data = []
             
-            # Helper to find support type for a node
-            def get_sup_type(node_idx):
-                if node_idx in sup_df['node_index'].values:
-                    return sup_df[sup_df['node_index'] == node_idx]['type'].iloc[0]
-                return "Unknown"
+            # Helper to safely find support type by location
+            def get_sup_type_safe(node_idx):
+                # 1. Calculate X position of this node
+                node_x = sum(spans[:node_idx])
+                
+                # 2. Check standard column names for position
+                # (Since we don't know if it's 'position', 'x', or 'location')
+                target_col = None
+                for col in ['position', 'x', 'location', 'dist']:
+                    if col in sup_df.columns:
+                        target_col = col
+                        break
+                
+                if target_col:
+                    # Find support at this X (allow small float error)
+                    match = sup_df[np.abs(sup_df[target_col] - node_x) < 0.01]
+                    if not match.empty:
+                        return match.iloc[0]['type']
+                
+                # Fallback: Check if 'node_index' exists
+                if 'node_index' in sup_df.columns:
+                     match = sup_df[sup_df['node_index'] == node_idx]
+                     if not match.empty: return match.iloc[0]['type']
+
+                return "Support"
 
             total_reaction = 0
             for key, val in R.items():
@@ -160,14 +178,14 @@ else:
                 
                 reaction_data.append({
                     "Node": node_idx,
-                    "Support Type": get_sup_type(node_idx),
+                    "Support Type": get_sup_type_safe(node_idx),
                     "Reaction Force (kN)": val_kN
                 })
             
             # Sort by Node
             df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
             
-            # Display Table with Formatting
+            # Display Table
             st.dataframe(
                 df_reac.style.format({"Reaction Force (kN)": "{:.2f}"}),
                 use_container_width=True,
