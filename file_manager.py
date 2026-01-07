@@ -1,20 +1,15 @@
 import json
-import pandas as pd
 
-def export_data(params, spans, sup_df, loads_df):
-    """Convert Project Data to JSON String"""
+def export_data(params, spans, sup_df, load_list):
     data = {
         "params": params,
         "spans": spans,
         "supports": sup_df.to_dict('records') if not sup_df.empty else [],
-        "loads": loads_df.to_dict('records') if (loads_df is not None and not loads_df.empty) else []
+        "loads": load_list
     }
     return json.dumps(data, indent=4)
 
 def load_data(uploaded_file):
-    """Load JSON file to Session State"""
     try:
-        data = json.load(uploaded_file)
-        return data
-    except Exception as e:
-        return None
+        return json.load(uploaded_file)
+    except: return None
