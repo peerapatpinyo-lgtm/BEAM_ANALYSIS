@@ -70,8 +70,7 @@ else:
         v_max_neg = res_df['shear'].min()/1000
         m_max_pos = res_df['moment'].max()/1000
         m_max_neg = res_df['moment'].min()/1000
-        d_max = res_df['deflection'].max() # Positive is DOWN in common FEA sign (if solver fixed) or UP?
-        # Let's check magnitude
+        # Deflection magnitude
         d_abs_max = res_df['deflection'].abs().max()
         
         # Summary Columns
@@ -90,17 +89,14 @@ else:
             
             # 1. Equilibrium Check (Sigma Fy = 0)
             with ec1:
-                st.markdown("### ⚖️ Equilibrium Check ($\Sigma F_y = 0$)")
+                st.markdown("### ⚖️ Equilibrium Check ($\\Sigma F_y = 0$)")
                 
                 # Sum Reactions
                 sum_R = sum(R.values()) / 1000.0 # kN (Up is +)
                 
-                # Sum Loads (Need to calculate based on type)
+                # Sum Loads
                 sum_Load = 0.0
                 for _, l in calc_loads_df.iterrows():
-                    # Load mag is positive in DF. 
-                    # If Point: Load = mag
-                    # If UDL: Load = mag * dist
                     force = l['mag']
                     if l['type'] == 'U':
                         force = l['mag'] * l['dist']
@@ -109,8 +105,9 @@ else:
                 sum_Load_kN = sum_Load / 1000.0
                 diff = sum_R - sum_Load_kN # Should be near 0
                 
-                st.write(f"Total Applied Load ($\downarrow$): **{sum_Load_kN:.2f} kN**")
-                st.write(f"Total Reaction ($\uparrow$): **{sum_R:.2f} kN**")
+                # FIXED: Added double backslashes for LaTeX arrows
+                st.write(f"Total Applied Load ($\\downarrow$): **{sum_Load_kN:.2f} kN**")
+                st.write(f"Total Reaction ($\\uparrow$): **{sum_R:.2f} kN**")
                 
                 if abs(diff) < 0.1:
                     st.success(f"✅ OK! Balance Error = {diff:.4f} kN")
