@@ -18,43 +18,67 @@ params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_side
 if not stable:
     st.error("🚨 Structure is unstable! Please check supports (Must have at least 3 reaction components).")
 else:
+    # --- 0. Analysis Settings (NEW) ---
+    st.markdown("### ⚙️ Analysis Settings")
+    col_mode1, col_mode2 = st.columns([1, 3])
+    with col_mode1:
+        load_case = st.radio(
+            "Select Load Case:",
+            ["Service Load (Unfactored)", "Ultimate Load (Factored)"],
+            help="Service: 1.0DL + 1.0LL (for Deflection)\nUltimate: 1.4DL + 1.7LL (for Strength Design)"
+        )
+    
+    # Define Factors based on selection
+    if "Ultimate" in load_case:
+        f_dl = 1.4
+        f_ll = 1.7
+        tag = "Mu/Vu"
+        st.info(f"⚡ **Designing with Ultimate Load:** $1.4 DL + 1.7 LL$")
+    else:
+        f_dl = 1.0
+        f_ll = 1.0
+        tag = "M/V"
+        st.success(f"👀 **Checking Service Load:** $1.0 DL + 1.0 LL$")
+
     # --- 1. Prepare & Combine Loads ---
-    # 1.1 Calculate Self-Weight
-    # Define BOTH units to prevent NameError in display later
-    w_sw_kN = params['b'] * params['h'] * 24.0   # kN/m (for Display)
-    w_sw_N_m = w_sw_kN * 1000.0                  # N/m  (for Calculation)
+    # 1.1 Calculate Self-Weight (Dead Load)
+    # Base SW
+    w_sw_base_kN = params['b'] * params['h'] * 24.0   # kN/m
+    # Factored SW
+    w_sw_factored_kN = w_sw_base_kN * f_dl
+    w_sw_factored_N_m = w_sw_factored_kN * 1000.0
     
     # 1.2 Initialize bucket for Total UDL per span
     # Key = span_index, Value = Total Magnitude (N/m)
-    span_total_udl = {i: w_sw_N_m for i in range(n_spans)}
+    span_total_udl = {i: w_sw_factored_N_m for i in range(n_spans)}
     
     combined_loads_list = []
     
-    # 1.3 Process User Loads
+    # 1.3 Process User Loads (Assumed as LIVE LOAD)
     if not loads_df.empty:
         for _, row in loads_df.iterrows():
             try:
                 s_idx = int(row['span_index'])
-                # Safe check: if span index exceeds current spans (e.g. after deleting a span)
                 if s_idx >= n_spans: continue 
                 
                 l_type = row['type']
-                mag = row['mag']   # N or N/m
-                dist = row['dist'] # m
+                mag_base = row['mag']   # N or N/m (Unfactored)
+                mag_factored = mag_base * f_ll # Apply Live Load Factor
                 
+                dist = row['dist'] # m
                 current_span_len = spans[s_idx]
                 
                 # CHECK: If UDL covers FULL span -> MERGE
                 if l_type == 'U' and dist >= (current_span_len - 0.01):
-                    span_total_udl[s_idx] += mag
+                    span_total_udl[s_idx] += mag_factored
                 else:
                     # Point Load or Partial UDL -> KEEP SEPARATE
                     combined_loads_list.append({
                         'span_index': s_idx,
                         'type': l_type,
-                        'mag': mag,
+                        'mag': mag_factored,
                         'dist': dist,
-                        'desc': 'Point/Partial Load'
+                        'desc': f'Point/Partial (LL x {f_ll})'
                     })
             except Exception as e:
                 st.warning(f"Skipping invalid load row: {e}")
@@ -67,8 +91,8 @@ else:
                 'span_index': i,
                 'type': 'U',
                 'mag': total_mag,
-                'dist': spans[i], # Full span
-                'desc': 'Total Combined UDL (SW + User)'
+                'dist': spans[i], 
+                'desc': 'Total Combined (Factored DL+LL)'
             })
             
     calc_loads_df = pd.DataFrame(combined_loads_list)
@@ -80,7 +104,7 @@ else:
         'x': x_eval,
         'moment': M,
         'shear': V,
-        'deflection': D * 1000 # Convert m to mm
+        'deflection': D * 1000 
     })
     
     # --- 3. DISPLAY RESULTS (TABS) ---
@@ -89,7 +113,7 @@ else:
     # ================= TAB 1: DIAGRAMS & CHECKS =================
     with tab1:
         # --- PART 1: PLOT DIAGRAMS ---
-        st.info(f"ℹ️ **Note:** 'Uniform Loads' in the graph now combine **Self-Weight** + **User UDL**.")
+        st.caption(f"Diagrams showing **{load_case}**")
         fig = design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -98,105 +122,65 @@ else:
         # --- PART 2: ANALYSIS SUMMARY ---
         st.subheader("📌 Analysis Summary (Max/Min Values)")
         
-        v_max_pos = res_df['shear'].max()/1000
-        v_max_neg = res_df['shear'].min()/1000
+        v_max = res_df['shear'].abs().max()/1000
         m_max_pos = res_df['moment'].max()/1000
         m_max_neg = res_df['moment'].min()/1000
         d_abs_max = res_df['deflection'].abs().max()
         
-        col_sum1, col_sum2, col_sum3 = st.columns(3)
-        col_sum1.metric("Max Shear (V+)", f"{v_max_pos:.2f} kN")
-        col_sum1.metric("Min Shear (V-)", f"{v_max_neg:.2f} kN")
-        col_sum2.metric("Max Moment (+)", f"{m_max_pos:.2f} kNm")
-        col_sum2.metric("Max Moment (-)", f"{m_max_neg:.2f} kNm")
-        col_sum3.metric("Max Deflection", f"{d_abs_max:.2f} mm")
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"Max Shear ({tag})", f"{v_max:.2f} kN")
+        c2.metric(f"Max Moment ({tag})", f"{m_max_pos:.2f} / {m_max_neg:.2f} kNm")
+        c3.metric("Max Deflection", f"{d_abs_max:.2f} mm")
         
-        # --- PART 3: ENGINEERING CHECKS ---
-        with st.expander("✅ Engineering Checks (Equilibrium & Deflection)", expanded=True):
-            ec1, ec2 = st.columns(2)
-            
-            # 1. Equilibrium Check
-            with ec1:
-                st.markdown("### ⚖️ Equilibrium Check (Sigma Fy = 0)")
-                
-                sum_R = sum(R.values()) / 1000.0 # kN
-                
-                # Sum Loads from calc_loads_df
-                sum_Load = 0.0
-                for _, l in calc_loads_df.iterrows():
-                    force = l['mag']
-                    if l['type'] == 'U':
-                        force = l['mag'] * l['dist']
-                    sum_Load += force
-                
-                sum_Load_kN = sum_Load / 1000.0
-                diff = sum_R - sum_Load_kN 
-                
-                st.write(f"Total Applied Load (↓): **{sum_Load_kN:.2f} kN**")
-                st.write(f"Total Reaction (↑): **{sum_R:.2f} kN**")
-                
-                if abs(diff) < 0.1:
-                    st.success(f"✅ OK! Balance Error = {diff:.4f} kN")
-                else:
-                    st.error(f"❌ Unbalanced! Error = {diff:.4f} kN")
+        # --- PART 3: CALCULATION REPORT (NEW) ---
+        with st.expander("🧮 Load Combination Calculation Report", expanded=True):
+            st.markdown("### 1. Load Factors Definition")
+            st.latex(f"Factor_{{DL}} = {f_dl}, \\quad Factor_{{LL}} = {f_ll}")
+            st.write(f"**Assumption:** Self-Weight is Dead Load (DL). User Inputs are Live Loads (LL).")
 
-            # 2. Deflection Control
-            with ec2:
-                st.markdown("### 📉 Deflection Control")
-                max_span_L = max(spans) * 1000 
-                allowable_def = max_span_L / 240.0
-                
-                st.write(f"Max Deflection: **{d_abs_max:.2f} mm**")
-                st.write(f"Allowable Limit (L/240): **{allowable_def:.2f} mm**")
-                
-                if d_abs_max <= allowable_def:
-                    st.success(f"✅ PASS")
-                else:
-                    st.warning(f"⚠️ EXCEEDS LIMIT")
+            st.markdown("### 2. Self-Weight Calculation (DL)")
+            st.latex(f"w_{{sw}} = {params['b']:.2f} \\times {params['h']:.2f} \\times 24 = \\mathbf{{{w_sw_base_kN:.3f}}} \\text{{ kN/m}}")
+            st.latex(f"w_{{sw,factored}} = {f_dl} \\times {w_sw_base_kN:.3f} = \\mathbf{{{w_sw_factored_kN:.3f}}} \\text{{ kN/m}}")
 
-        # --- PART 4: LOAD DETAILS ---
-        with st.expander("🧮 Load Combination Details", expanded=False):
-            st.markdown("### How Loads are Combined:")
-            # FIXED: w_sw_kN is now defined correctly at the top
-            st.write(f"**1. Self-Weight (SW):** {w_sw_kN:.3f} kN/m (Calculated automatically)")
-            
-            st.write("**2. Load Breakdown per Span:**")
+            st.markdown("### 3. Total Load per Span")
             
             breakdown_data = []
             for i in range(n_spans):
-                row = calc_loads_df[(calc_loads_df['span_index'] == i) & (calc_loads_df['type'] == 'U')]
-                if not row.empty:
-                    # Be careful: row might have multiple entries if logic failed, but our logic ensures unique 'U' per span for Total
-                    # Actually, if user puts partial UDL, it is separate. We only want the "Total Combined" one.
-                    # Let's filter by description or just take the max one to be safe, or sum them (though our logic merged them).
-                    
-                    # Better logic: Find the one with 'Total Combined' desc
-                    total_row = row[row['desc'].str.contains("Total Combined")]
-                    
-                    if not total_row.empty:
-                        total_udl = total_row.iloc[0]['mag'] / 1000.0 # kN/m
-                        user_part = total_udl - w_sw_kN
-                        breakdown_data.append({
-                            "Span": i+1,
-                            "Self-Weight": f"{w_sw_kN:.3f}",
-                            "User UDL": f"{user_part:.3f}",
-                            "TOTAL UDL (kN/m)": f"**{total_udl:.3f}**"
-                        })
-            if breakdown_data:
-                st.table(pd.DataFrame(breakdown_data))
-            else:
-                st.write("No Combined UDLs found (structure might be empty).")
+                # Calculate User part back from the total logic for display
+                # Note: This is simplified for display of UDLs
+                
+                # Get User UDL (Unfactored) for this span
+                user_udl_base = 0.0
+                if not loads_df.empty:
+                     # Filter strictly UDL full span
+                     user_rows = loads_df[(loads_df['span_index'] == i) & (loads_df['type'] == 'U') & (loads_df['dist'] >= spans[i]-0.01)]
+                     if not user_rows.empty:
+                         user_udl_base = user_rows['mag'].sum() / 1000.0 # kN/m
+                
+                total_factored = (w_sw_base_kN * f_dl) + (user_udl_base * f_ll)
+                
+                breakdown_data.append({
+                    "Span": i+1,
+                    "SW (DL)": f"{w_sw_base_kN:.3f}",
+                    "User (LL)": f"{user_udl_base:.3f}",
+                    "Equation": f"({f_dl}×DL) + ({f_ll}×LL)",
+                    "TOTAL (kN/m)": f"**{total_factored:.3f}**"
+                })
+            
+            st.table(pd.DataFrame(breakdown_data))
 
     # ================= TAB 2: DESIGN & REPORT =================
     with tab2:
-        st.header("Reinforced Concrete Design (WSD/SDM Concept)")
+        if "Ultimate" not in load_case:
+            st.warning("⚠️ **Warning:** You are currently in 'Service Load' mode. RC Design usually requires 'Ultimate Load'. Switch to Ultimate mode for standard strength design.")
+        
+        st.header("Reinforced Concrete Design")
         st.markdown(f"**Material:** f'c = {params['fc']:.0f} MPa, fy = {params['fy']:.0f} MPa | **Section:** {params['b']*100:.0f}x{params['h']*100:.0f} cm")
         
         design_res = []
         span_start = 0
         for i, span_len in enumerate(spans):
             span_end = span_start + span_len
-            
             mask = (res_df['x'] >= span_start) & (res_df['x'] <= span_end)
             span_data = res_df[mask]
             
