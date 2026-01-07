@@ -93,14 +93,14 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
         load_list = loads_df.to_dict('records') if (loads_df is not None and not loads_df.empty) else []
         
        beam_solver = solver.TimoshenkoBeamSolver(
-    spans=spans, 
-    supports=sup_list, 
-    loads=load_list, 
-    b_mm=params['b'], 
-    h_mm=params['h'], 
-    fc=params['fc']
-)
-m_max = beam_solver.solve()
+            spans=spans, 
+            supports=sup_list, 
+            loads=load_list, 
+            b_mm=params['b'], 
+            h_mm=params['h'], 
+            fc=params['fc']
+        )
+        m_max = beam_solver.solve()
         res_df, reactions, status = beam_solver.solve()
         
         if "error" in status:
@@ -252,4 +252,5 @@ m_max = beam_solver.solve()
                             for line in res['shear_logs']:
                                 st.markdown(line)
             
+
 
