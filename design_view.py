@@ -1,6 +1,7 @@
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import pandas as pd
 
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
@@ -48,10 +49,20 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             hoverinfo='name', name=f"Support"
         ), row=1, col=1)
 
-    # Loads
-    for l in loads:
-        start_x = cum_dist[l['span_index']]
+    # Loads (FIXED ITERATION HERE)
+    # Check if loads is DataFrame, convert to list of dicts for safe iteration
+    if isinstance(loads, pd.DataFrame):
+        load_iter = loads.to_dict('records')
+    else:
+        load_iter = loads
+
+    for l in load_iter:
+        span_idx = int(l['span_index'])
+        start_x = cum_dist[span_idx]
         mag_kN = l['mag'] / 1000.0
+        
+        # Check description (Self-weight vs User) to color differently if needed?
+        # Keeping it simple for now.
         
         if l['type'] == 'P':
             x_loc = start_x + l['dist']
@@ -64,6 +75,9 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
         elif l['type'] == 'U':
             x_s = start_x
+            # Support partial or full span UDL
+            # Logic: If dist matches span length, it's full. 
+            # Current Input Handler: dist is the length of load
             x_e = x_s + l['dist']
             h_vis = 0.25
             
