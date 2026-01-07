@@ -1,14 +1,8 @@
-# solver.py
 import numpy as np
 import pandas as pd
 
 class BeamSolver:
     def __init__(self, spans, supports, loads, E, b, h, I):
-        """
-        spans: list of lengths [L1, L2, ...]
-        supports: list of dicts [{'id': 0, 'type': 'Pin'}, ...]
-        loads: list of dicts [{'type': 'P', 'span_index': 0, 'x': 2.5, 'mag': 1000}, ...]
-        """
         self.spans = spans
         self.supports = supports
         self.loads = loads
@@ -17,10 +11,10 @@ class BeamSolver:
         self.h = h
         self.I = I
         
-        # Timoshenko Parameters (Assume Concrete properties for shear deformation)
+        # Timoshenko Parameters
         self.nu = 0.2 
         self.G = self.E / (2 * (1 + self.nu))
-        self.kappa = 5/6  # Shear correction factor for rectangular section
+        self.kappa = 5/6 
         self.A = self.b * self.h
 
         self.nodes_x = [0] + list(np.cumsum(spans))
@@ -28,9 +22,8 @@ class BeamSolver:
         self.total_length = self.nodes_x[-1]
 
     def _get_timoshenko_stiffness(self, L):
-        """Generates local stiffness matrix for a beam element including shear deformation."""
         E, I, G, A, kappa = self.E, self.I, self.G, self.A, self.kappa
-        phi = (12 * E * I) / (kappa * G * A * L**2) # Shear deformation parameter
+        phi = (12 * E * I) / (kappa * G * A * L**2)
         const = (E * I) / ((1 + phi) * L**3)
         
         k = np.zeros((4, 4))
@@ -47,7 +40,7 @@ class BeamSolver:
             K_global = np.zeros((n_dof, n_dof))
             F_global = np.zeros(n_dof)
             
-            # --- 1. Stiffness Matrix Assembly ---
+            # 1. Stiffness Matrix
             for i, L in enumerate(self.spans):
                 k_local = self._get_timoshenko_stiffness(L)
                 idxs = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
@@ -55,84 +48,53 @@ class BeamSolver:
                     for c in range(4):
                         K_global[idxs[r], idxs[c]] += k_local[r, c]
 
-            # --- 2. Loads (Fixed End Forces Calculation) ---
+            # 2. Loads (Fixed End Forces)
             for load in self.loads:
                 span_idx = load.get('span_index')
                 if span_idx is None or span_idx >= len(self.spans): continue
                 
                 L = self.spans[span_idx]
                 mag = load['mag']
-                fem = np.zeros(4) # [Fy1, M1, Fy2, M2]
+                fem = np.zeros(4) 
                 
                 if load['type'] == 'P':
-                    # [FIXED] Point Load Logic
-                    # a = distance from left node, b = distance from right node
-                    a = load['x'] 
+                    a = load['x']
                     b_dist = L - a
-                    
-                    # Formulas for Fixed End Moments (FEM)
-                    fem[1] = -mag * (a * b_dist**2) / L**2  # M_left
-                    fem[3] = mag * (a**2 * b_dist) / L**2   # M_right
-                    
-                    # Forces from static equilibrium of the fixed beam
-                    fem[0] = -mag * (b_dist**2 * (3*a + b_dist)) / L**3 # Fy_left
-                    fem[2] = -mag * (a**2 * (a + 3*b_dist)) / L**3      # Fy_right
+                    fem[1] = -mag * (a * b_dist**2) / L**2
+                    fem[3] = mag * (a**2 * b_dist) / L**2
+                    fem[0] = -mag * (b_dist**2 * (3*a + b_dist)) / L**3
+                    fem[2] = -mag * (a**2 * (a + 3*b_dist)) / L**3
 
                 elif load['type'] == 'U':
-                    # [UPGRADED] Partial UDL Support
-                    # Integrate FEM formulas for load starting at x1 and ending at x2
                     x1 = load['x']
                     x2 = load['x'] + load['dist']
-                    
-                    # Ensure within bounds
-                    x1 = max(0, x1)
-                    x2 = min(L, x2)
+                    x1 = max(0, x1); x2 = min(L, x2)
                     
                     if x2 > x1:
                         w = mag
-                        # Helper integrals for FEM: 
-                        # M_left = -integral(w * x * (L-x)^2 / L^2 dx)
-                        # M_right = integral(w * x^2 * (L-x) / L^2 dx)
-                        
-                        # Term 1: Integral of x(L-x)^2 = x(L^2 - 2Lx + x^2) = L^2x - 2Lx^2 + x^3
-                        # Int -> L^2*x^2/2 - 2L*x^3/3 + x^4/4
                         def int_term1(x): return (L**2 * x**2)/2 - (2*L * x**3)/3 + (x**4)/4
-                        
-                        # Term 2: Integral of x^2(L-x) = L*x^2 - x^3
-                        # Int -> L*x^3/3 - x^4/4
                         def int_term2(x): return (L * x**3)/3 - (x**4)/4
                         
                         val1 = int_term1(x2) - int_term1(x1)
                         val2 = int_term2(x2) - int_term2(x1)
                         
-                        fem[1] = -(w / L**2) * val1  # M_left
-                        fem[3] = +(w / L**2) * val2  # M_right
+                        fem[1] = -(w / L**2) * val1
+                        fem[3] = +(w / L**2) * val2
                         
-                        # Calculate Vertical Forces based on Moments + Static Load
                         total_load = w * (x2 - x1)
                         load_centroid = (x1 + x2) / 2
-                        
-                        # Take moment about Right support to find R_left
-                        # R_left * L + M_left + M_right - Total_Load * (L - centroid) = 0
-                        # R_left = (Total_Load * (L - centroid) - M_left - M_right) / L
-                        
-                        # Note: FEM moments are reaction moments on the nodes.
-                        # Equation signs: Sum M_right = 0 => R_left*L + M_left_react + M_right_react - Force*(L-cent) = 0
-                        # Here fem[1] and fem[3] are vector forces/moments acting ON THE NODE.
-                        
                         fem[0] = -(total_load * (L - load_centroid) + fem[1] + fem[3]) / L
-                        fem[2] = -(total_load - (-fem[0])) # Sum Fy = 0
+                        fem[2] = -(total_load - (-fem[0]))
                         
-                # Add to Global Force Vector
                 idxs = [2*span_idx, 2*span_idx+1, 2*(span_idx+1), 2*(span_idx+1)+1]
                 for j in range(4): F_global[idxs[j]] += fem[j]
 
-            # --- 3. Apply Boundary Conditions ---
+            # 3. Boundary Conditions
             fixed_dofs = []
             for s in self.supports:
                 nid = s.get('id', s.get('node_id'))
-                if s['type'] in ['Pin', 'Roller']: fixed_dofs.append(2*nid) # Fix Y
-                elif s['type'] == 'Fixed': fixed_dofs.extend([2*nid, 2*nid+1]) # Fix Y and Rotation
+                if s['type'] in ['Pin', 'Roller']: fixed_dofs.append(2*nid)
+                elif s['type'] == 'Fixed': fixed_dofs.extend([2*nid, 2*nid+1])
 
             free_dofs = [i for i in range(n_dof) if i not in fixed_dofs]
             d_global = np.zeros(n_dof)
@@ -140,93 +102,66 @@ class BeamSolver:
             if free_dofs:
                 K_free = K_global[np.ix_(free_dofs, free_dofs)]
                 F_free = F_global[free_dofs]
-                # Solve Kd = F
                 try:
                     d_free = np.linalg.solve(K_free, F_free)
                     d_global[free_dofs] = d_free
                 except np.linalg.LinAlgError:
-                    return None, None, {"error": "Unstable Structure (Matrix Singular)"}
+                    return None, None, {"error": "Structure Unstable"}
             
-            # --- 4. Compute Reactions ---
-            # R = K * d - F_applied (F_global contains equivalent nodal forces from loads)
-            # Reaction is the force needed to maintain the displacement (usually 0 at supports)
-            # The 'F_global' used here is the Equivalent Nodal Loads.
-            # Actual Equation: K*d = F_external + R
-            # So R = K*d - F_external
-            # Since F_global was constructed as "Forces applied TO nodes", F_external = F_global
+            # 4. Reactions
             R_global = np.dot(K_global, d_global) - F_global
             reactions = {i: R_global[2*i] for i in range(self.n_nodes)}
 
-            # --- 5. Post-Processing (Method of Sections for Diagrams) ---
+            # 5. Method of Sections (Result Arrays)
             x_plot, v_plot, m_plot, d_plot = [], [], [], []
             
             for span_i, L_span in enumerate(self.spans):
                 x_start_node = self.nodes_x[span_i]
-                
-                # Get nodal displacements for this element (for shape function)
                 u_ele = d_global[[2*span_i, 2*span_i+1, 2*(span_i+1), 2*(span_i+1)+1]]
                 
-                # Create evaluation points
-                num_pts = 51
-                x_evals = np.linspace(0, L_span, num_pts)
-                
-                for x_local in x_evals:
+                # Use finer resolution for smooth curves
+                for x_local in np.linspace(0, L_span, 51):
                     x_global = x_start_node + x_local
-                    
-                    # --- Internal Forces (V, M) using Statics (Left-hand section) ---
                     V_x, M_x = 0.0, 0.0
                     
-                    # 5.1 Sum Reactions from left
+                    # Reactions
                     for node_i in range(span_i + 1):
                         if node_i in reactions:
                             r_pos = self.nodes_x[node_i]
-                            # Include if reaction is to the left (or at current point)
                             if r_pos <= x_global + 1e-5:
                                 V_x += reactions[node_i]
                                 M_x += reactions[node_i] * (x_global - r_pos)
                     
-                    # 5.2 Sum Loads from left
+                    # Loads
                     for load in self.loads:
                         l_span_idx = load['span_index']
-                        l_span_start_x = self.nodes_x[l_span_idx]
-                        
-                        if l_span_start_x > x_global: continue # Load starts after current section
+                        l_start = self.nodes_x[l_span_idx]
+                        if l_start > x_global: continue
                         
                         if load['type'] == 'P':
-                            p_loc_global = l_span_start_x + load['x']
-                            if p_loc_global <= x_global + 1e-5:
+                            p_loc = l_start + load['x']
+                            if p_loc <= x_global + 1e-5:
                                 V_x -= load['mag']
-                                M_x -= load['mag'] * (x_global - p_loc_global)
-                                
+                                M_x -= load['mag'] * (x_global - p_loc)
                         elif load['type'] == 'U':
-                            # Global start/end of this UDL
-                            u_start_global = l_span_start_x + load['x']
-                            u_end_global = u_start_global + load['dist']
-                            
-                            # Determine overlap with current section [0, x_global]
-                            # Load acts from u_start_global to u_end_global
-                            # We only care about the portion <= x_global
-                            
-                            eff_start = u_start_global
-                            eff_end = min(x_global, u_end_global)
-                            
+                            u_start = l_start + load['x']
+                            u_end = u_start + load['dist']
+                            eff_start = u_start
+                            eff_end = min(x_global, u_end)
                             if eff_end > eff_start + 1e-5:
-                                w_len = eff_end - eff_start
-                                force = load['mag'] * w_len
-                                centroid = eff_start + w_len/2
-                                
+                                force = load['mag'] * (eff_end - eff_start)
+                                cent = eff_start + (eff_end - eff_start)/2
                                 V_x -= force
-                                M_x -= force * (x_global - centroid)
+                                M_x -= force * (x_global - cent)
                     
-                    # --- Deflection (Hermitian Interpolation) ---
+                    # Deflection (Hermitian) - Output in mm
                     xi = x_local / L_span
-                    # Shape functions
                     N1 = 1 - 3*xi**2 + 2*xi**3
                     N2 = x_local * (1 - 2*xi + xi**2)
                     N3 = 3*xi**2 - 2*xi**3
                     N4 = x_local * (xi**2 - xi)
-                    
-                    def_val = (N1*u_ele[0] + N2*u_ele[1] + N3*u_ele[2] + N4*u_ele[3]) * 1000 # convert to mm
+                    # u_ele is in meters, convert to mm
+                    def_val = (N1*u_ele[0] + N2*u_ele[1] + N3*u_ele[2] + N4*u_ele[3]) * 1000 
 
                     x_plot.append(x_global)
                     v_plot.append(V_x)
@@ -238,3 +173,49 @@ class BeamSolver:
 
         except Exception as e:
             return None, None, {"error": str(e)}
+
+    def check_equilibrium(self, reactions):
+        """
+        Calculates Sum Fy and Sum Moment to verify static equilibrium.
+        """
+        sum_fy_load = 0
+        sum_m_load = 0  # Moment about x=0
+        
+        for load in self.loads:
+            span_idx = load['span_index']
+            base_x = self.nodes_x[span_idx]
+            
+            if load['type'] == 'P':
+                f = load['mag']
+                x = base_x + load['x']
+                sum_fy_load += f
+                sum_m_load += f * x
+            elif load['type'] == 'U':
+                w = load['mag']
+                x_start = base_x + load['x']
+                length = load['dist']
+                f = w * length
+                x_cent = x_start + length/2
+                sum_fy_load += f
+                sum_m_load += f * x_cent
+                
+        sum_fy_reac = sum(reactions.values())
+        sum_m_reac = 0
+        for nid, r_val in reactions.items():
+            x_r = self.nodes_x[nid]
+            sum_m_reac += r_val * x_r
+            
+        # Add Fixed Support Moments to Moment Check (if any)
+        # Note: In this simplified 1D beam scalar model, reaction dictionary usually only carries Fy.
+        # If we wanted to check Moment Reaction strictly, we'd need to extract Moment from R_global.
+        # However, for basic check: Sum Down = Sum Up is the most critical visual check.
+        
+        diff_fy = sum_fy_reac - sum_fy_load
+        
+        return {
+            "load_down": sum_fy_load,
+            "react_up": sum_fy_reac,
+            "diff_fy": diff_fy,
+            "moment_load": sum_m_load,
+            "moment_react": sum_m_reac
+        }
