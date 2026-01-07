@@ -11,93 +11,100 @@ def get_beta1(fc):
 
 def solve_steel_section(Mu_kNm, b_m, d_m, fc, fy, is_top=False):
     """
-    Calculate required steel area with detailed steps and size recommendation
+    Calculate required steel area with FULL STEP-BY-STEP logging
     """
     logs = [] 
     
-    # 1. Init
-    Mu = abs(Mu_kNm) * 1e6 # N-mm
-    b = b_m * 1000 # mm
-    d = d_m * 1000 # mm
-    phi = 0.9 
-    beta1 = get_beta1(fc)
+    # --- 1. Setup Variables ---
+    Mu = abs(Mu_kNm) * 1e6 # Convert to N-mm
+    b = b_m * 1000         # mm
+    d = d_m * 1000         # mm
+    phi = 0.9              # Flexure factor
     
-    header = "Top Reinforcement (Negative Moment)" if is_top else "Bottom Reinforcement (Positive Moment)"
+    # Beta 1 Calculation
+    if fc <= 28: beta1 = 0.85
+    elif fc >= 55: beta1 = 0.65
+    else: beta1 = 0.85 - 0.05 * (fc - 28) / 7
+    
+    header = "🔴 Top Steel (Negative Moment)" if is_top else "🔵 Bottom Steel (Positive Moment)"
     logs.append(f"**{header}**")
-    logs.append(f"- Design Moment, Mu = {abs(Mu_kNm):.2f} kNm")
-
+    logs.append(f"- Moment $M_u$ = {abs(Mu_kNm):.2f} kNm")
+    
     if Mu == 0:
-        logs.append("- Mu = 0, Use Minimum Reinforcement.")
-        return 0, 0, 0, logs
+        logs.append("- $M_u = 0$, Use Minimum Reinforcement.")
+        # ยังต้องคำนวณ As min ต่อไป ไม่ใช่ return 0 เลย
+    
+    # --- 2. Material Constants ---
+    m = fy / (0.85 * fc)
+    logs.append(f"- Material Strength: $f_c'={fc}$ MPa, $f_y={fy}$ MPa")
+    logs.append(f"- Factor $\\beta_1$ = {beta1:.3f}")
+    logs.append(f"- Modular factor $m = f_y / (0.85 f_c')$ = {m:.2f}")
 
-    # 2. Limit State Check (Max Reinforcement / Section Size)
-    # Calculate rho_max (Tension controlled limit, strain=0.005)
-    # rho_bal = (0.85 * beta1 * fc / fy) * (600 / (600 + fy))
-    # Using 0.005 strain limit directly (approx 0.375 beta1 ...) usually safer
-    # But let's use the standard ACI max ratio:
+    # --- 3. Check Section Capacity (Rho Max) ---
     rho_bal = (0.85 * beta1 * fc / fy) * (600 / (600 + fy))
-    rho_max = 0.75 * rho_bal # Common practice limit
+    rho_max = 0.75 * rho_bal # ACI standard limit
+    As_max = rho_max * b * d
     
-    # 3. Calculate Rn required
-    Rn = Mu / (phi * b * d**2)
-    logs.append(f"- Rn (Required) = {Rn:.3f} MPa")
+    # logs.append(f"- $\\rho_{{bal}}$ = {rho_bal:.5f}, $\\rho_{{max}}$ = {rho_max:.5f}")
     
-    # Check if Section is adequate
-    # Condition: 1 - (2Rn / 0.85fc) must be >= 0
-    check_val = 1 - (2 * Rn) / (0.85 * fc)
-    
-    if check_val < 0:
-        logs.append(f"❌ **Error: Section too small!** (Concrete Crushing Risk)")
+    # --- 4. Calculate Rn & Rho Required ---
+    if Mu > 0:
+        Rn = Mu / (phi * b * d**2)
+        logs.append(f"- $R_n = M_u / (\phi b d^2)$ = {Rn:.3f} MPa")
         
-        # --- RECOMMENDED SIZE CALCULATION ---
-        # Back-calculate required d from rho_max
-        # Rn_max corresponds to rho_max
-        m = fy / (0.85 * fc)
-        Rn_max = rho_max * fy * (1 - 0.5 * rho_max * m)
+        # Check if Section is too small (Concrete Crush)
+        # Formula: 1 - 2*m*Rn/fy ... derived from 1 - 2Rn/(0.85fc)
+        term = 1 - (2 * m * Rn) / fy 
         
-        # d_req = sqrt( Mu / (phi * b * Rn_max) )
-        d_req = math.sqrt(Mu / (phi * b * Rn_max))
-        
-        # Estimate total h (d + cover + stirrup + half_bar)
-        # approx cover 40 + stirrup 9 + half_bar 8 = 57mm -> say 60mm
-        h_req = d_req + 60 
-        
-        # Round up to nearest 5 cm
-        h_suggest = math.ceil(h_req / 50) * 50 / 1000.0 # convert to m
-        
-        logs.append(f"💡 **Suggestion:**")
-        logs.append(f"   For width b = {b_m:.2f} m:")
-        logs.append(f"   Minimum effective depth (d) should be **{d_req:.0f} mm**")
-        logs.append(f"   Try increasing Height (h) to **{h_suggest:.2f} m**")
-        
-        return 0, 0, 0, logs
+        if term < 0:
+            logs.append(f"❌ **Error: Section too small!** ($2R_n > 0.85f_c'$)")
+            # Recommendation logic
+            Rn_max = rho_max * fy * (1 - 0.5 * rho_max * m)
+            d_req = math.sqrt(Mu / (phi * b * Rn_max))
+            logs.append(f"💡 Suggestion: Increase $d$ to at least **{d_req:.0f} mm**")
+            return 0, 0, 0, logs
 
-    # 4. If OK, Calculate Steel Area
-    rho_req = (0.85 * fc / fy) * (1 - math.sqrt(check_val))
-    As_req = rho_req * b * d
-    
-    # Check Min Steel
+        rho_req = (1/m) * (1 - math.sqrt(term))
+        As_calc = rho_req * b * d
+        logs.append(f"- $\\rho_{{req}}$ = {rho_req:.5f}")
+        logs.append(f"- $A_{{s,calc}}$ = {As_calc:.1f} mm²")
+    else:
+        As_calc = 0
+        
+    # --- 5. Minimum Steel Check ---
+    # ACI 318: Max of (0.25*sqrt(fc)/fy * bd) and (1.4/fy * bd)
     As_min1 = (0.25 * math.sqrt(fc) / fy) * b * d
     As_min2 = (1.4 / fy) * b * d
     As_min = max(As_min1, As_min2)
     
-    As_final = max(As_req, As_min)
-    logs.append(f"- As,req = {As_req:.1f} mm² (As,min = {As_min:.1f})")
+    logs.append(f"- $A_{{s,min}}$ (Criteria) = {As_min:.1f} mm²")
 
-    # 5. Bar Selection
+    # --- 6. Final Selection ---
+    if As_calc < As_min:
+        As_final = As_min
+        logs.append(f"👉 Control by **Minimum Steel** ($A_{{s,min}} > A_{{s,calc}}$)")
+    elif As_calc > As_max:
+        logs.append(f"❌ **Error:** Require {As_calc:.1f} > Max {As_max:.1f} (Over-reinforced!)")
+        return 0, 0, 0, logs
+    else:
+        As_final = As_calc
+        logs.append(f"👉 Control by **Calculation**")
+
+    # --- 7. Bar Selection ---
     db = 16 
     A_bar = 3.1416 * (db/2)**2
     n_bars = max(2, math.ceil(As_final / A_bar))
     As_prov = n_bars * A_bar
     
-    logs.append(f"👉 **Select {n_bars}-DB{db}** (As_prov = {As_prov:.1f} mm²)")
+    logs.append(f"✅ **Select {n_bars}-DB{db}** ($A_{{s,prov}} = {As_prov:.1f}$ mm²)")
     
-    # 6. Capacity Check
+    # --- 8. Verify Capacity (D/C Ratio) ---
     a = (As_prov * fy) / (0.85 * fc * b)
     Mn = As_prov * fy * (d - a/2)
     phi_Mn = 0.9 * Mn / 1e6
     
-    logs.append(f"- Capacity $\phi M_n$ = {phi_Mn:.2f} kNm")
+    dc_ratio = abs(Mu_kNm) / phi_Mn if phi_Mn > 0 else 0
+    logs.append(f"- Capacity $\phi M_n$ = **{phi_Mn:.2f} kNm** (Ratio: {dc_ratio:.2f})")
     
     return n_bars, As_final, phi_Mn, logs
 
