@@ -20,9 +20,9 @@ st.markdown("""
     .calc-box { background-color: #ffffff; border: 1px solid #e0e0e0; padding: 30px; border-radius: 8px; font-family: 'Sarabun', sans-serif; }
     .calc-header { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-bottom: 20px; font-weight: bold; font-size: 1.4em;}
     .sub-header { color: #555; font-weight: bold; margin-top: 15px; margin-bottom: 5px; font-size: 1.1em; text-decoration: underline;}
+    .rec-box { background-color: #f8f9fa; border-left: 5px solid #f1c40f; padding: 15px; margin-top: 20px; border-radius: 4px; }
     .pass { color: #27ae60; font-weight: bold; background-color: #eafaf1; padding: 2px 8px; border-radius: 4px; }
     .fail { color: #c0392b; font-weight: bold; background-color: #fdedec; padding: 2px 8px; border-radius: 4px; }
-    .formula { color: #333; font-style: italic; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -37,19 +37,14 @@ with st.sidebar:
     st.title("⚙️ Project Inputs")
     design_std = st.radio("Standard Code", ["ACI 318 (USA)", "EIT 1008 (Thailand)"])
     
-    # [FIX] Define distinct factors for ACI vs EIT
     if "EIT" in design_std:
-        # EIT: Typically 1.4D + 1.7L
-        # Phi: Flexure 0.90, Shear 0.85 (Difference here)
         factors = {
             'DL': 1.4, 'LL': 1.7, 
             'phi_m': 0.90, 'phi_v': 0.85, 
             'name': 'EIT Standard (วสท.)'
         }
-        current_avg_factor = 1.7 # Conservative approx for initial sorting
+        current_avg_factor = 1.7 
     else:
-        # ACI: 1.2D + 1.6L
-        # Phi: Flexure 0.90, Shear 0.75
         factors = {
             'DL': 1.2, 'LL': 1.6, 
             'phi_m': 0.90, 'phi_v': 0.75, 
@@ -57,7 +52,7 @@ with st.sidebar:
         }
         current_avg_factor = 1.6
         
-    st.info(f"Using: **{factors['name']}**\n\nLoad Factors: {factors['DL']}D + {factors['LL']}L\nPhi Shear ($\phi_v$): {factors['phi_v']}")
+    st.info(f"Using: **{factors['name']}**\n\nFactors: {factors['DL']}DL + {factors['LL']}LL")
     
     params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
     
@@ -113,13 +108,12 @@ if st.session_state.analyzed:
     full_loads = st.session_state.get('full_loads', [])
     sw_val = st.session_state.get('sw_val', 0.0)
     
-    tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Diagrams", "📝 2. Detailed Calculation", "💡 3. Improvements"])
+    # รวมเหลือ 2 Tab ตามที่คุยกัน
+    tab1, tab2 = st.tabs(["📊 1. Analysis Diagrams", "📝 2. Detailed Design & Report"])
     
     # ================= TAB 1: DIAGRAMS =================
     with tab1:
         st.markdown(f"### 🔹 Serviceability Diagrams")
-        
-        # Summary Metrics
         c1, c2, c3, c4 = st.columns(4)
         max_def = res['deflection'].abs().max()
         max_M = res['moment'].abs().max()/1000
@@ -132,7 +126,7 @@ if st.session_state.analyzed:
         fig = design_view.plot_analysis_results(res, spans, sup_df, full_loads)
         st.plotly_chart(fig, use_container_width=True)
 
-    # ================= TAB 2: DETAILED CALCULATION =================
+    # ================= TAB 2: DETAILED CALCULATION & REC =================
     with tab2:
         # Prepare Design Data
         cum_dist = [0] + list(np.cumsum(spans))
@@ -147,7 +141,6 @@ if st.session_state.analyzed:
             M_neg_serv = abs(min(0, span_df['moment'].min())) / 1000
             V_serv = span_df['shear'].abs().max() / 1000
             
-            # Factored Loads
             design_data.append({
                 "span": i+1,
                 "M_serv_pos": M_pos_serv, 
@@ -178,20 +171,24 @@ if st.session_state.analyzed:
         st.markdown('<div class="calc-box">', unsafe_allow_html=True)
         st.markdown(f'<div class="calc-header">📝 ENGINEER CALCULATION SHEET: Span {sel_span["span"]} ({f["name"]})</div>', unsafe_allow_html=True)
 
-        # --- PART 0: SYSTEM CHECK ---
+        # --- PART 0: SYSTEM CHECK (FIXED BUG HERE) ---
         st.markdown('<div class="sub-header">0. System Equilibrium Check</div>', unsafe_allow_html=True)
         total_load_y = 0
         for l in full_loads:
             if l['type'] == 'P': total_load_y += l['mag']
             elif l['type'] == 'U': total_load_y += l['mag'] * l['dist']
         
-        sum_reac = sum([abs(r['fy']) for r in reac])
+        # [FIX] Handle DataFrame safely
+        if isinstance(reac, pd.DataFrame):
+            sum_reac = reac['fy'].abs().sum()
+        else:
+            sum_reac = sum([abs(r['fy']) for r in reac])
         
         st.latex(rf"\sum F_{{load,y}} = {total_load_y/1000:.2f}\ kN")
         st.latex(rf"\sum R_y = {sum_reac/1000:.2f}\ kN")
         
-        if abs(total_load_y - sum_reac) < 1.0: 
-             st.markdown(f'<span class="pass">✅ EQUILIBRIUM OK (Diff < 1N)</span>', unsafe_allow_html=True)
+        if abs(total_load_y - sum_reac) < 1.0: # Tolerance 1N
+             st.markdown(f'<span class="pass">✅ EQUILIBRIUM OK</span>', unsafe_allow_html=True)
         else:
              st.markdown(f'<span class="fail">❌ EQUILIBRIUM ERROR</span>', unsafe_allow_html=True)
 
@@ -217,32 +214,28 @@ if st.session_state.analyzed:
         d_mm = p['h'] * 1000 - cover - 6 - db_main/2
         As_prov = n_bot * (3.1416 * (db_main/2)**2)
         
-        st.markdown(f"**Step 2.1: Factored Moment ($M_u$)** - *Using factors from {f['name']}*")
-        st.latex(rf"M_u \approx M_{{serv}} \times \text{{AvgFactor}} = {sel_span['M_serv_pos']:.2f} \times {saf_factor} = \mathbf{{{sel_span['Mu_pos']:.2f}}}\ kNm")
+        st.markdown(f"**Step 2.1: Factored Moment ($M_u$)**")
+        st.latex(rf"M_u \approx {sel_span['M_serv_pos']:.2f} \times {saf_factor} = \mathbf{{{sel_span['Mu_pos']:.2f}}}\ kNm")
 
         st.markdown("**Step 2.2: Steel Area & Effective Depth**")
-        st.latex(rf"d = h - cover - d_{{stir}} - d_b/2 = {p['h']*1000:.0f} - {cover} - 6 - {db_main/2} = {d_mm:.1f}\ mm")
-        st.latex(rf"A_{{s,prov}} = {n_bot} \times \frac{{\pi \cdot {db_main}^2}}{{4}} = \mathbf{{{As_prov:.0f}}}\ mm^2")
+        st.latex(rf"d = {p['h']*1000:.0f} - {cover} - 6 - {db_main/2} = {d_mm:.1f}\ mm")
+        st.latex(rf"A_{{s,prov}} = {n_bot} \times \pi ({db_main}/2)^2 = \mathbf{{{As_prov:.0f}}}\ mm^2")
 
         st.markdown("**Step 2.3: Minimum Steel Check ($A_{s,min}$)**")
-        st.caption("Note: ACI and EIT share similar min steel requirements for beams.")
         As_min1 = (0.25 * np.sqrt(p['fc']) / p['fy']) * b_mm * d_mm
         As_min2 = (1.4 / p['fy']) * b_mm * d_mm
         As_min = max(As_min1, As_min2)
         
-        st.latex(rf"A_{{s,min}} = \max\left(\frac{{0.25\sqrt{{f_c'}}}}{{f_y}} b_w d, \frac{{1.4}}{{f_y}} b_w d\right) = {As_min:.0f}\ mm^2")
+        st.latex(rf"A_{{s,min}} = {As_min:.0f}\ mm^2")
         if As_prov >= As_min: st.markdown(f'<span class="pass">✅ OK</span>', unsafe_allow_html=True)
         else: st.markdown(f'<span class="fail">❌ FAIL ($A_s < A_{{s,min}}$)</span>', unsafe_allow_html=True)
 
-        st.markdown("**Step 2.4: Moment Capacity Calculation ($\phi M_n$)**")
+        st.markdown("**Step 2.4: Moment Capacity ($\phi M_n$)**")
         a_depth = (As_prov * p['fy']) / (0.85 * p['fc'] * b_mm)
-        st.latex(rf"a = \frac{{A_s f_y}}{{0.85 f_c' b}} = \frac{{{As_prov:.0f} \cdot {p['fy']}}}{{0.85 \cdot {p['fc']} \cdot {b_mm:.0f}}} = {a_depth:.2f}\ mm")
-        
         Mn_kNm = As_prov * p['fy'] * (d_mm - a_depth/2) * 1e-6
         phi_Mn = f['phi_m'] * Mn_kNm
         
-        st.latex(rf"M_n = A_s f_y (d - a/2) = {As_prov:.0f} \cdot {p['fy']} ({d_mm:.1f} - {a_depth/2:.1f}) \cdot 10^{{-6}} = {Mn_kNm:.2f}\ kNm")
-        st.latex(rf"\phi M_n = {f['phi_m']} \cdot {Mn_kNm:.2f} = \mathbf{{{phi_Mn:.2f}}}\ kNm")
+        st.latex(rf"\phi M_n = {f['phi_m']} \times {Mn_kNm:.2f} = \mathbf{{{phi_Mn:.2f}}}\ kNm")
         
         if phi_Mn >= sel_span['Mu_pos']:
             st.markdown(f'<span class="pass">✅ SAFE (Ratio: {sel_span["Mu_pos"]/phi_Mn:.2f})</span>', unsafe_allow_html=True)
@@ -252,33 +245,53 @@ if st.session_state.analyzed:
         # --- PART 3: SHEAR ---
         st.markdown('<div class="sub-header">3. Shear Strength Design</div>', unsafe_allow_html=True)
         
-        st.markdown(f"**Step 3.1: Factored Shear ($V_u$) & Capacity Factors**")
-        st.markdown(f"*Using $\phi_v = {f['phi_v']}$ according to {f['name']}*")
+        st.markdown(f"**Step 3.1: Factored Shear ($V_u$)**")
         st.latex(rf"V_u = \mathbf{{{sel_span['Vu']:.2f}}}\ kN")
 
-        st.markdown("**Step 3.2: Concrete Shear Capacity ($V_c$)**")
+        st.markdown("**Step 3.2: Concrete Capacity ($V_c$)**")
         Vc_val = 0.17 * np.sqrt(p['fc']) * b_mm * d_mm / 1000.0
         phi_Vc = f['phi_v'] * Vc_val
-        st.latex(rf"V_c = 0.17\sqrt{{f_c'}} b_w d = 0.17\sqrt{{{p['fc']}}} \cdot {b_mm:.0f} \cdot {d_mm:.0f} = {Vc_val:.2f}\ kN")
         st.latex(rf"\phi V_c = {f['phi_v']} \times {Vc_val:.2f} = {phi_Vc:.2f}\ kN")
 
-        st.markdown("**Step 3.3: Steel Stirrup Capacity ($V_s$)**")
+        st.markdown("**Step 3.3: Stirrup Capacity ($V_s$)**")
         Av = 2 * (3.1416 * 3**2) # RB6 2 legs
         s_mm = s_stir * 10
         Vs_val = (Av * p['fy'] * d_mm) / s_mm / 1000.0
         phi_Vs = f['phi_v'] * Vs_val
-        
-        st.latex(rf"V_s = \frac{{A_v f_y d}}{{s}} = \frac{{{Av:.1f} \cdot {p['fy']} \cdot {d_mm:.0f}}}{{{s_mm}}} = {Vs_val:.2f}\ kN")
         st.latex(rf"\phi V_s = {f['phi_v']} \times {Vs_val:.2f} = {phi_Vs:.2f}\ kN")
 
-        st.markdown("**Step 3.4: Total Shear Capacity check**")
+        st.markdown("**Step 3.4: Total Check**")
         phi_Vn = phi_Vc + phi_Vs
-        st.latex(rf"\phi V_n = \phi V_c + \phi V_s = {phi_Vc:.2f} + {phi_Vs:.2f} = \mathbf{{{phi_Vn:.2f}}}\ kN")
+        st.latex(rf"\phi V_n = {phi_Vn:.2f}\ kN \quad (vs \ V_u = {sel_span['Vu']:.2f})")
         
         if phi_Vn >= sel_span['Vu']:
             st.markdown(f'<span class="pass">✅ SAFE</span>', unsafe_allow_html=True)
         else:
             st.markdown(f'<span class="fail">❌ UNSAFE (Reduce stirrup spacing)</span>', unsafe_allow_html=True)
+
+        # --- RECOMMENDATIONS (MOVED HERE AS REQUESTED) ---
+        st.markdown('<div class="rec-box">', unsafe_allow_html=True)
+        st.markdown("#### 💡 Senior Engineer Recommendations")
+        
+        recs = []
+        if sel_span['def_act'] > sel_span['L']*1000/240:
+            recs.append(f"⚠️ **Deflection Issue:** Actual deflection ({sel_span['def_act']:.2f} mm) exceeds limit. **Increase Beam Depth (h)** immediately.")
+        else:
+            recs.append(f"✅ **Deflection:** Within limits. Good stiffness.")
+
+        rho = As_prov / (b_mm * d_mm)
+        if rho > 0.025: recs.append(f"⚠️ **Steel Congestion:** $\\rho > 2.5\%$. Difficult to pour concrete. Consider larger section.")
+        elif rho < 0.0033: recs.append(f"⚠️ **Low Steel:** Close to minimum. Ensure $A_{{s,min}}$ is met to avoid brittle failure.")
+        else: recs.append("✅ **Steel Ratio:** Reinforcement ratio is efficient.")
+
+        if sel_span['Vu'] > phi_Vc: recs.append("⚠️ **Shear Critical:** Shear force is high. Stirrups are structural. Supervise spacing strictly.")
+        else: recs.append("✅ **Shear:** Concrete takes most load. Stirrups governed by max spacing rules.")
+
+        recs.append(f"ℹ️ **Detailing:** Ensure top bars extend past inflection points ($L/3$ or $12d_b$).")
+        
+        for r in recs:
+            st.markdown(f"- {r}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('</div>', unsafe_allow_html=True)
         
@@ -294,40 +307,3 @@ if st.session_state.analyzed:
             design_res_for_plot[sel_span['span']-1] = {'pos': {'n': n_bot}, 'neg': {'n': n_top}, 'db': db_main}
             fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res_for_plot, p['h'], cover)
             st.pyplot(fig_long, use_container_width=True)
-
-    # ================= TAB 3: RECOMMENDATIONS =================
-    with tab3:
-        st.subheader("💡 5 Professional Design Recommendations")
-        
-        # Logic for recommendations
-        recs = []
-        
-        # 1. Deflection logic
-        if sel_span['def_act'] > sel_span['L']*1000/240:
-            recs.append(f"**Critical:** Deflection ({sel_span['def_act']:.2f} mm) exceeds limit. **Increase Beam Depth (h)** immediately. Increasing steel has minimal effect on stiffness compared to depth.")
-        else:
-            recs.append(f"**Optimization:** Deflection is within limits. You might optimize by slightly reducing depth if shear allows.")
-
-        # 2. Section size logic
-        if p['b'] < p['h']*0.4:
-            recs.append(f"**Geometry:** The beam is quite slender (b/h ratio). Ensure lateral stability or increase 'b' to at least {p['h']*0.5:.2f}m for better concrete placement.")
-        
-        # 3. Steel Percentage
-        rho = As_prov / (b_mm * d_mm)
-        if rho > 0.025: # High steel
-            recs.append(f"**Congestion:** Reinforcement ratio is high (> 2.5%). Consider increasing section size to avoid honeycombing and ensure proper vibration during pouring.")
-        elif rho < 0.0033: # Very low
-            recs.append(f"**Minimums:** Reinforcement is low. Ensure you meet $A_{{s,min}}$ to prevent sudden brittle failure.")
-
-        # 4. Shear logic
-        if sel_span['Vu'] > phi_Vc:
-            recs.append("**Shear:** The concrete capacity alone is insufficient. Stirrups are structurally critical. Ensure strict supervision on stirrup spacing during construction.")
-        else:
-            recs.append("**Shear:** Concrete takes most shear force. Stirrups are likely governed by maximum spacing rules ($d/2$).")
-
-        # 5. General detailing
-        recs.append(f"**Detailing:** For **{f['name']}** compliance, ensure top bars extend past the inflection point by at least $d$ or $12d_b$.")
-
-        # Display
-        for i, r in enumerate(recs):
-            st.markdown(f"{i+1}. {r}")
