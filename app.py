@@ -180,19 +180,26 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
 
                     st.divider()
 
-                    # 3. [NEW] แสดงค่าวิกฤต (Key Design Values)
-                    st.markdown("#### 💎 Critical Values (Factored)")
+                    # 3. [UPDATED] รายการคำนวณแรงที่ใช้ในการออกแบบ (Design Forces)
+                    st.markdown("#### 💎 Design Force Calculation")
                     
-                    # คำนวณค่าสูงสุดจาก res_df (คูณ Factor 1.4 เข้าไปด้วยเพื่อให้ตรงกับที่ใช้ออกแบบ)
                     f_design = 1.4
-                    m_max_env = res_df['moment'].max() * f_design / 1000.0
-                    m_min_env = res_df['moment'].min() * f_design / 1000.0
-                    v_max_env = res_df['shear'].abs().max() * f_design / 1000.0
+                    # ดึงค่าดิบจาก Solver (หน่วย N และ N-m)
+                    raw_m_max = res_df['moment'].max() / 1000.0
+                    raw_m_min = res_df['moment'].min() / 1000.0
+                    raw_v_max = res_df['shear'].abs().max() / 1000.0
 
-                    # แสดงผลในรูปแบบ Metric 
-                    st.metric("Max Positive Moment", f"{m_max_env:.2f} kNm")
-                    st.metric("Max Negative Moment", f"{abs(m_min_env):.2f} kNm")
-                    st.metric("Max Shear Force", f"{v_max_env:.2f} kN")
+                    # แสดงรายการคำนวณทีละบรรทัด
+                    st.write(f"**1. Max Positive Moment ($M_u^+$):**")
+                    st.latex(rf"M_u = {raw_m_max:.2f} \times {f_design} = {raw_m_max * f_design:.2f} \text{{ kNm}}")
+                    
+                    st.write(f"**2. Max Negative Moment ($M_u^-$):**")
+                    st.latex(rf"M_u = {abs(raw_m_min):.2f} \times {f_design} = {abs(raw_m_min) * f_design:.2f} \text{{ kNm}}")
+                    
+                    st.write(f"**3. Max Design Shear ($V_u$):**")
+                    st.latex(rf"V_u = {raw_v_max:.2f} \times {f_design} = {raw_v_max * f_design:.2f} \text{{ kN}}")
+                    
+                    st.success(f"ใช้ตัวคูณเพิ่มน้ำหนักบรรทุก (Load Factor) = {f_design}")
                 
                 # ส่วนแสดงผล Reaction
                 st.markdown("#### 🏁 Reaction Forces")
@@ -275,6 +282,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
