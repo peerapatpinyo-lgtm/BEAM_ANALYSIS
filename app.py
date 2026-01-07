@@ -1,314 +1,134 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+from input_handler import render_all_sidebar_inputs
+from solver import BeamSolver
+from design_view import plot_analysis_results
+from rc_design import design_span_expert, generate_bbs, get_boq
+from section_plotter import plot_section, plot_longitudinal_section_detailed
+from file_manager import export_data, load_data
 
-try:
-    import input_handler
-    import solver
-    import rc_design
-    import design_view
-    import section_plotter
-except ImportError as e:
-    st.error(f"Error importing modules: {e}")
-    st.stop()
+st.set_page_config(page_title="RC Beam Expert Pro", layout="wide")
 
-st.set_page_config(page_title="Pro Beam Design", layout="wide")
-
-st.markdown("""
-<style>
-    .calc-box { background-color: #ffffff; border: 1px solid #e0e0e0; padding: 30px; border-radius: 8px; font-family: 'Sarabun', sans-serif; }
-    .calc-header { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-bottom: 20px; font-weight: bold; font-size: 1.4em;}
-    .sub-header { color: #555; font-weight: bold; margin-top: 15px; margin-bottom: 5px; font-size: 1.1em; text-decoration: underline;}
-    .rec-box { background-color: #f8f9fa; border-left: 5px solid #f1c40f; padding: 15px; margin-top: 20px; border-radius: 4px; }
-    .pass { color: #27ae60; font-weight: bold; background-color: #eafaf1; padding: 2px 8px; border-radius: 4px; }
-    .fail { color: #c0392b; font-weight: bold; background-color: #fdedec; padding: 2px 8px; border-radius: 4px; }
-</style>
-""", unsafe_allow_html=True)
-
-# --- Init Session State ---
-if 'analyzed' not in st.session_state: st.session_state.analyzed = False
-if 'avg_factor' not in st.session_state: st.session_state.avg_factor = 1.6 
-if 'full_loads' not in st.session_state: st.session_state.full_loads = [] 
-if 'sw_val' not in st.session_state: st.session_state.sw_val = 0.0
-
-# --- 1. SIDEBAR INPUTS ---
+# --- Sidebar Inputs ---
 with st.sidebar:
-    st.title("⚙️ Project Inputs")
-    design_std = st.radio("Standard Code", ["ACI 318 (USA)", "EIT 1008 (Thailand)"])
+    st.title("🏗️ RC Beam Expert")
     
-    if "EIT" in design_std:
-        factors = {'DL': 1.4, 'LL': 1.7, 'phi_m': 0.90, 'phi_v': 0.85, 'name': 'EIT Standard (วสท.)'}
-        current_avg_factor = 1.7 
-    else:
-        factors = {'DL': 1.2, 'LL': 1.6, 'phi_m': 0.90, 'phi_v': 0.75, 'name': 'ACI 318'}
-        current_avg_factor = 1.6
-        
-    st.info(f"Using: **{factors['name']}**\n\nFactors: {factors['DL']}DL + {factors['LL']}LL")
+    # Load/Save Project
+    with st.expander("📂 Project File"):
+        uploaded = st.file_uploader("Load JSON", type=["json"])
+        if uploaded:
+            data = load_data(uploaded)
+            if data:
+                # In real app, you would load these into session_state
+                st.success("Loaded! (Simulated)")
     
-    params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
+    params, n_spans, spans, sup_df, load_df, stable = render_all_sidebar_inputs()
     
-    st.divider()
-    run_btn = st.button("🚀 RUN ANALYSIS", type="primary")
+    if st.button("💾 Save Project"):
+        json_str = export_data(params, spans, sup_df, load_df.to_dict('records') if not load_df.empty else [])
+        st.download_button("Download .json", json_str, file_name="beam_project.json")
 
-# --- 2. MAIN AREA ---
-st.header(f"🏗️ RC Beam Analysis & Design Report ({factors['name']})")
-
-if run_btn:
-    if not stable:
-        st.error("🚨 Structure is unstable. Please check supports.")
+# --- Main App ---
+if not stable:
+    st.error("🚨 Structure is Unstable! Please check supports (Must have at least 1 Pin/Fixed or 2 Rollers).")
+else:
+    # 1. Solve
+    solver = BeamSolver(spans, sup_df.to_dict('records'), load_df.to_dict('records'), 
+                        params['E'], params['b'], params['h'], params['I'])
+    res_df, reactions, status = solver.solve()
+    
+    if status.get("error"):
+        st.error(f"Analysis Failed: {status['error']}")
     else:
-        # --- A. PREPARE LOADS (Include SW) ---
-        sw_mag = params['b'] * params['h'] * 24.0 * 1000 # N/m
+        # Perform Equilibrium Check
+        eq_check = solver.check_equilibrium(reactions)
         
-        loads_combined = []
-        if not loads_df.empty:
-            loads_combined = loads_df.to_dict('records')
+        # 2. Tabs
+        tab1, tab2, tab3 = st.tabs(["📊 Analysis & Checks", "🧱 RC Design & Detailing", "📋 BBS & BOQ"])
+        
+        # --- TAB 1: ANALYSIS ---
+        with tab1:
+            st.subheader("1. Static Equilibrium Check")
             
-        for i in range(n_spans):
-            loads_combined.append({
-                "id": f"sw_{i}", "type": "U", "span_index": i, "x": 0.0,
-                "mag": sw_mag, "dist": spans[i], "case": "DL (SW)"
-            })
+            # Display Check Metrics
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("Total Load (Down)", f"{eq_check['load_down']/1000:.2f} kN")
+            with c2:
+                delta = abs(eq_check['diff_fy'])/1000
+                color = "normal" if delta < 0.01 else "inverse"
+                st.metric("Total Reaction (Up)", f"{eq_check['react_up']/1000:.2f} kN", delta_color=color)
+            with c3:
+                st.metric("Error (ΣFy)", f"{eq_check['diff_fy']:.4f} N")
+            with c4:
+                check_res = "✅ OK" if abs(eq_check['diff_fy']) < 1.0 else "❌ Warning"
+                st.write(f"## {check_res}")
+            
+            st.divider()
+            
+            # Plot Diagrams
+            st.subheader("2. Diagrams (FBD, SFD, BMD, Deflection)")
+            fig = plot_analysis_results(res_df, spans, sup_df, load_df.to_dict('records'), reactions)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show Reaction Table
+            st.caption("Reaction Forces at Nodes:")
+            reac_disp = {k: f"{v/1000:.2f} kN" for k,v in reactions.items()}
+            st.json(reac_disp)
 
-        # --- B. RUN ANALYSIS ---
-        solver_service = solver.BeamSolver(spans, sup_df.to_dict('records'), loads_combined, params['E'], params['b'], params['h'], params['I'])
-        res_service, reac_raw, status = solver_service.solve()
-        
-        if "error" in status:
-            st.error(status['error'])
-            st.stop()
-
-        # --- C. NORMALIZE REACTION DATA (ROBUST FIX) ---
-        # แปลงข้อมูล Reaction ให้เป็น List of Dicts เสมอ ไม่ว่าจะมาท่าไหน (List, Dict, DataFrame, List of floats)
-        final_reac_list = []
-        
-        if isinstance(reac_raw, pd.DataFrame):
-            # Case 1: DataFrame
-            if 'fy' in reac_raw.columns:
-                final_reac_list = reac_raw.to_dict('records')
-            else:
-                 for idx, row in reac_raw.iterrows():
-                     val = row.iloc[0] if len(row) > 0 else 0
-                     final_reac_list.append({'node_id': idx, 'fy': val})
-        
-        elif isinstance(reac_raw, dict):
-            # Case 2: Dict {node_id: value}
-            for nid, val in reac_raw.items():
-                final_reac_list.append({'node_id': int(nid), 'fy': val})
+        # --- TAB 2: DESIGN ---
+        with tab2:
+            st.subheader("Reinforced Concrete Design (ACI/EIT)")
+            
+            design_res = []
+            
+            # Loop each span to design
+            cum_dist = [0] + list(pd.Series(spans).cumsum())
+            
+            cols = st.columns(len(spans))
+            for i, span_len in enumerate(spans):
+                # Extract max forces for this span
+                # Logic: Get simple max/min in span range
+                x_start, x_end = cum_dist[i], cum_dist[i+1]
+                mask = (res_df['x'] >= x_start) & (res_df['x'] <= x_end)
+                span_data = res_df[mask]
                 
-        elif isinstance(reac_raw, list):
-            # Case 3: List
-            if len(reac_raw) > 0:
-                first_item = reac_raw[0]
-                if isinstance(first_item, dict):
-                    # List of Dicts -> OK
-                    final_reac_list = reac_raw
-                elif isinstance(first_item, (int, float, np.number)):
-                    # List of Numbers -> แปลงเป็น Dict
-                    for idx, val in enumerate(reac_raw):
-                        final_reac_list.append({'node_id': idx, 'fy': val})
-            else:
-                final_reac_list = []
+                m_max = span_data['moment'].max() / 1000.0
+                m_min = span_data['moment'].min() / 1000.0
+                v_max = span_data['shear'].abs().max() / 1000.0
+                
+                # Design
+                res = design_span_expert(m_max, m_min, v_max, 
+                                       params['b'], params['h'], params['fc'], params['fy'], 
+                                       40, 16) # Cover 40mm, DB16 Main
+                design_res.append(res)
+                
+                # Display Card
+                with cols[i]:
+                    st.info(f"**Span {i+1}** (L={span_len}m)")
+                    st.write(f"**M+**: {m_max:.1f} kNm → {res['pos']['n']}-DB16")
+                    st.write(f"**M-**: {m_min:.1f} kNm → {res['neg']['n']}-DB16")
+                    st.write(f"**V**: {v_max:.1f} kN → {res['shear_stirrups']}")
+                    
+                    # Section Plot
+                    fig_sec = plot_section(params['b'], params['h'], 40, 16, 
+                                           res['neg']['n'], res['pos']['n'], res['shear_stirrups'],
+                                           params['fc'], params['fy'])
+                    st.pyplot(fig_sec)
 
-        # Final Clean Pass: Ensure keys 'node_id' and 'fy' exist
-        clean_reac = []
-        for i, r in enumerate(final_reac_list):
-            if isinstance(r, dict):
-                node = r.get('node_id', r.get('id', i))
-                fy = r.get('fy', 0.0)
-                clean_reac.append({'node_id': node, 'fy': fy})
-            else:
-                # Should not happen due to above logic, but fail-safe
-                clean_reac.append({'node_id': i, 'fy': 0.0})
+            st.divider()
+            st.subheader("Longitudinal Detailing")
+            fig_long = plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'])
+            st.pyplot(fig_long)
 
-        # --- D. SAVE STATE ---
-        st.session_state.res_service = res_service
-        st.session_state.reac_service = clean_reac # Save CLEANED data
-        st.session_state.loads_df = loads_df
-        st.session_state.full_loads = loads_combined
-        st.session_state.params = params
-        st.session_state.factors = factors
-        st.session_state.avg_factor = current_avg_factor
-        st.session_state.sw_val = sw_mag / 1000.0
-        st.session_state.analyzed = True
-
-# --- DISPLAY RESULTS ---
-if st.session_state.analyzed:
-    res = st.session_state.res_service
-    reac = st.session_state.reac_service # This is now guaranteed to be List of Dicts
-    p = st.session_state.params
-    f = st.session_state.factors
-    saf_factor = st.session_state.get('avg_factor', 1.6)
-    full_loads = st.session_state.get('full_loads', [])
-    sw_val = st.session_state.get('sw_val', 0.0)
-    
-    tab1, tab2 = st.tabs(["📊 1. Analysis Diagrams", "📝 2. Detailed Design & Report"])
-    
-    # ================= TAB 1: DIAGRAMS =================
-    with tab1:
-        st.markdown(f"### 🔹 Serviceability Diagrams & Load Model")
-        c1, c2, c3, c4 = st.columns(4)
-        max_def = res['deflection'].abs().max()
-        max_M = res['moment'].abs().max()/1000
-        max_V = res['shear'].abs().max()/1000
-        c1.metric("Max Deflection", f"{max_def:.2f} mm")
-        c2.metric("Max Moment", f"{max_M:.2f} kNm")
-        c3.metric("Max Shear", f"{max_V:.2f} kN")
-        c4.metric("Self-Weight", f"{sw_val:.2f} kN/m")
-        
-        # Plotly Graph
-        fig = design_view.plot_analysis_results(res, spans, sup_df, full_loads, reac)
-        st.plotly_chart(fig, use_container_width=True)
-
-    # ================= TAB 2: DETAILED CALCULATION & REC =================
-    with tab2:
-        cum_dist = [0] + list(np.cumsum(spans))
-        design_data = []
-        design_res_for_plot = [] 
-        
-        for i in range(len(spans)):
-            x0, x1 = cum_dist[i], cum_dist[i+1]
-            span_df = res[(res['x'] >= x0) & (res['x'] <= x1)]
+        # --- TAB 3: BOQ ---
+        with tab3:
+            st.subheader("Bill of Quantities & Bar Bending")
+            bbs = generate_bbs(design_res, spans, params['b'], params['h'], 40)
+            df_bbs = pd.DataFrame(bbs)
+            st.dataframe(df_bbs, use_container_width=True)
             
-            M_pos_serv = max(0, span_df['moment'].max()) / 1000
-            M_neg_serv = abs(min(0, span_df['moment'].min())) / 1000
-            V_serv = span_df['shear'].abs().max() / 1000
-            
-            design_data.append({
-                "span": i+1,
-                "M_serv_pos": M_pos_serv, 
-                "M_serv_neg": M_neg_serv, 
-                "V_serv": V_serv,
-                "Mu_pos": M_pos_serv * saf_factor,
-                "Mu_neg": M_neg_serv * saf_factor,
-                "Vu": V_serv * saf_factor,
-                "def_act": span_df['deflection'].abs().max(),
-                "L": spans[i]
-            })
-            design_res_for_plot.append({'pos': {'n': 3}, 'neg': {'n': 2}, 'db': 16})
-
-        sel_span = st.selectbox("Select Span to View Calculation", design_data, format_func=lambda x: f"Span {x['span']}")
-        
-        with st.expander("🛠️ Modify Reinforcement for Calculation", expanded=True):
-            with st.form("rebar_form"):
-                cc1, cc2, cc3, cc4, cc5 = st.columns(5)
-                n_top = cc1.number_input("Top Bars", 1, 10, 2)
-                n_bot = cc2.number_input("Bot Bars", 1, 10, 3)
-                db_main = cc3.selectbox("Main DB (mm)", [12, 16, 20, 25], index=1)
-                s_stir = cc4.number_input("Stirrup RB6 @ (cm)", 5, 30, 15, 5)
-                cover = cc5.number_input("Cover (mm)", 20, 50, 40)
-                st.form_submit_button("Update Calculation")
-
-        st.markdown('<div class="calc-box">', unsafe_allow_html=True)
-        st.markdown(f'<div class="calc-header">📝 ENGINEER CALCULATION SHEET: Span {sel_span["span"]} ({f["name"]})</div>', unsafe_allow_html=True)
-
-        # --- PART 0: SYSTEM CHECK ---
-        st.markdown('<div class="sub-header">0. System Equilibrium Check</div>', unsafe_allow_html=True)
-        
-        total_load_y = 0
-        for l in full_loads:
-            if l['type'] == 'P': total_load_y += l['mag']
-            elif l['type'] == 'U': total_load_y += l['mag'] * l['dist']
-            
-        # [ROBUST CALCULATION]
-        # reac is guaranteed to be a list of dicts now
-        sum_reac = sum([abs(r.get('fy', 0)) for r in reac])
-        
-        st.latex(rf"\sum F_{{load,y}} = {total_load_y/1000:.2f}\ kN")
-        st.latex(rf"\sum R_y = {sum_reac/1000:.2f}\ kN")
-        
-        if abs(total_load_y - sum_reac) < 10.0:
-             st.markdown(f'<span class="pass">✅ EQUILIBRIUM OK</span>', unsafe_allow_html=True)
-        else:
-             st.markdown(f'<span class="fail">❌ EQUILIBRIUM ERROR (Diff: {abs(total_load_y - sum_reac)/1000:.2f} kN)</span>', unsafe_allow_html=True)
-
-        # --- PART 1: DEFLECTION ---
-        st.markdown('<div class="sub-header">1. Deflection Check (Serviceability)</div>', unsafe_allow_html=True)
-        L_mm = sel_span['L'] * 1000
-        delta_allow = L_mm / 240.0
-        delta_act = sel_span['def_act']
-        st.latex(rf"\Delta_{{allow}} = L/240 = {delta_allow:.2f}\ mm, \quad \Delta_{{actual}} = \mathbf{{{delta_act:.2f}}}\ mm")
-        if delta_act <= delta_allow: st.markdown(f'<span class="pass">✅ PASS</span>', unsafe_allow_html=True)
-        else: st.markdown(f'<span class="fail">❌ FAIL</span>', unsafe_allow_html=True)
-
-        # --- PART 2: FLEXURE ---
-        st.markdown('<div class="sub-header">2. Flexural Strength Design (USD)</div>', unsafe_allow_html=True)
-        b_mm = p['b'] * 1000
-        d_mm = p['h'] * 1000 - cover - 6 - db_main/2
-        As_prov = n_bot * (3.1416 * (db_main/2)**2)
-        
-        st.markdown(f"**Step 2.1: Factored Moment**")
-        st.latex(rf"M_u = \mathbf{{{sel_span['Mu_pos']:.2f}}}\ kNm")
-
-        st.markdown("**Step 2.2: Steel Check**")
-        st.latex(rf"A_{{s,prov}} = {n_bot} \times \pi ({db_main}/2)^2 = \mathbf{{{As_prov:.0f}}}\ mm^2")
-
-        As_min1 = (0.25 * np.sqrt(p['fc']) / p['fy']) * b_mm * d_mm
-        As_min2 = (1.4 / p['fy']) * b_mm * d_mm
-        As_min = max(As_min1, As_min2)
-        st.latex(rf"A_{{s,min}} = {As_min:.0f}\ mm^2")
-        
-        if As_prov >= As_min: st.markdown(f'<span class="pass">✅ OK ($A_s > A_{{s,min}}$)</span>', unsafe_allow_html=True)
-        else: st.markdown(f'<span class="fail">❌ FAIL ($A_s < A_{{s,min}}$)</span>', unsafe_allow_html=True)
-
-        st.markdown("**Step 2.3: Capacity**")
-        a_depth = (As_prov * p['fy']) / (0.85 * p['fc'] * b_mm)
-        Mn_kNm = As_prov * p['fy'] * (d_mm - a_depth/2) * 1e-6
-        phi_Mn = f['phi_m'] * Mn_kNm
-        
-        st.latex(rf"\phi M_n = {phi_Mn:.2f}\ kNm \quad (M_u = {sel_span['Mu_pos']:.2f})")
-        
-        if phi_Mn >= sel_span['Mu_pos']: st.markdown(f'<span class="pass">✅ SAFE</span>', unsafe_allow_html=True)
-        else: st.markdown(f'<span class="fail">❌ UNSAFE</span>', unsafe_allow_html=True)
-
-        # --- PART 3: SHEAR ---
-        st.markdown('<div class="sub-header">3. Shear Strength Design</div>', unsafe_allow_html=True)
-        st.latex(rf"V_u = \mathbf{{{sel_span['Vu']:.2f}}}\ kN")
-        
-        Vc_val = 0.17 * np.sqrt(p['fc']) * b_mm * d_mm / 1000.0
-        phi_Vc = f['phi_v'] * Vc_val
-        st.latex(rf"\phi V_c = {phi_Vc:.2f}\ kN")
-
-        Av = 2 * (3.1416 * 3**2) 
-        s_mm = s_stir * 10
-        Vs_val = (Av * p['fy'] * d_mm) / s_mm / 1000.0
-        phi_Vs = f['phi_v'] * Vs_val
-        st.latex(rf"\phi V_s = {phi_Vs:.2f}\ kN \quad (@ s={s_stir} cm)")
-
-        phi_Vn = phi_Vc + phi_Vs
-        st.latex(rf"\phi V_n = {phi_Vn:.2f}\ kN")
-        
-        if phi_Vn >= sel_span['Vu']: st.markdown(f'<span class="pass">✅ SAFE</span>', unsafe_allow_html=True)
-        else: st.markdown(f'<span class="fail">❌ UNSAFE</span>', unsafe_allow_html=True)
-
-        # --- RECOMMENDATIONS ---
-        st.markdown('<div class="rec-box">', unsafe_allow_html=True)
-        st.markdown("#### 💡 Senior Engineer Recommendations")
-        recs = []
-        if sel_span['def_act'] > delta_allow: recs.append(f"⚠️ **Deflection Issue:** Increase Beam Depth (h).")
-        else: recs.append(f"✅ **Deflection:** Pass.")
-        
-        rho = As_prov / (b_mm * d_mm)
-        if rho > 0.025: recs.append(f"⚠️ **High Steel:** $\\rho > 2.5\%$. Congested.")
-        elif rho < 0.0033: recs.append(f"⚠️ **Low Steel:** Check min reinforcement.")
-        else: recs.append("✅ **Steel Ratio:** OK.")
-
-        if sel_span['Vu'] > phi_Vc: recs.append("⚠️ **High Shear:** Stirrups critical.")
-        else: recs.append("✅ **Shear:** Concrete sufficient.")
-        
-        for r in recs: st.markdown(f"- {r}")
-        st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
-        # --- PLOTS ---
-        st.markdown("---")
-        c_plot1, c_plot2 = st.columns([1, 2])
-        with c_plot1:
-            st.markdown("**Section View**")
-            fig_sec = section_plotter.plot_section(p['b'], p['h'], cover, db_main, n_top, n_bot, f"RB6@{s_stir}", p['fc'], p['fy'])
-            st.pyplot(fig_sec, use_container_width=False)
-        with c_plot2:
-            st.markdown("**Longitudinal Profile**")
-            design_res_for_plot[sel_span['span']-1] = {'pos': {'n': n_bot}, 'neg': {'n': n_top}, 'db': db_main}
-            fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res_for_plot, p['h'], cover)
-            st.pyplot(fig_long, use_container_width=True)
+            vol, w_steel = get_boq(spans, params['b'], params['h'], bbs)
+            c1, c2 = st.columns(2)
+            c1.metric("Concrete Volume", f"{vol:.2f} m³")
+            c2.metric("Total Steel Weight", f"{w_steel:.2f} kg")
