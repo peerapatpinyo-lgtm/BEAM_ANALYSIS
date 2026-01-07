@@ -25,12 +25,13 @@ st.markdown("""
     .calc-table th { background-color: #f8f9fa; border-bottom: 2px solid #ddd; padding: 8px; text-align: left; }
     .calc-table td { border-bottom: 1px solid #eee; padding: 8px; }
     .note-box { background-color: #e8f4f8; border-left: 4px solid #0077b6; padding: 10px; font-size: 0.9em; color: #444; margin-bottom: 15px; }
+    .status-pass { color: green; font-weight: bold; }
+    .status-fail { color: red; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- INIT SESSION ---
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
-if 'sw_val' not in st.session_state: st.session_state.sw_val = 0.0
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -49,7 +50,7 @@ with st.sidebar:
     st.divider()
     run_btn = st.button("🚀 EXECUTE ANALYSIS", type="primary", use_container_width=True)
 
-# --- MAIN PAGE ---
+# --- MAIN LOGIC ---
 st.title("🏗️ Advanced RC Beam Analysis & Design")
 
 if run_btn:
@@ -87,7 +88,7 @@ if run_btn:
             elif isinstance(reac_raw, dict):
                  final_reac_list = [{'node_id': int(k), 'fy': v} for k, v in reac_raw.items()]
 
-            # Store in Session
+            # Store in Session safely
             st.session_state.res = res
             st.session_state.reac = final_reac_list
             st.session_state.loads = loads_combined
@@ -95,19 +96,18 @@ if run_btn:
             st.session_state.factors = factors
             st.session_state.avg_factor = avg_factor
             st.session_state.analyzed = True
+            st.rerun() # Rerun to refresh the view immediately
 
-# ... (โค้ดส่วนบน run_btn ... เหมือนเดิม) ...
-
-# --- ส่วนแก้ไข: เพิ่มความปลอดภัยในการดึงค่า Session State ---
-# เช็ค 2 ชั้น: 1. analyzed เป็น True ไหม? และ 2. มีตัวแปร 'res' อยู่จริงไหม?
+# --- DISPLAY RESULTS ---
+# Safe Check: Ensure analyzed is True AND 'res' exists in session state
 if st.session_state.analyzed and 'res' in st.session_state:
     
-    # ดึงค่าอย่างปลอดภัย
-    res = st.session_state.res
-    reac = st.session_state.get('reac', [])
-    loads = st.session_state.get('loads', [])
-    p = st.session_state.get('params', {})
-    f = st.session_state.get('factors', {})
+    # Unpack variables using .get() to prevent AttributeErrors
+    res = st.session_state.get('res')
+    reac = st.session_state.get('reac')
+    loads = st.session_state.get('loads')
+    p = st.session_state.get('params')
+    f = st.session_state.get('factors')
     saf_factor = st.session_state.get('avg_factor', 1.6)
     
     # === TAB LAYOUT ===
@@ -115,7 +115,6 @@ if st.session_state.analyzed and 'res' in st.session_state:
     
     # --- TAB 1: ANALYSIS ---
     with tab1:
-        # TECHNICAL NOTE SECTION
         st.markdown(f"""
         <div class="note-box">
             <b>📜 Analysis Methodology Note:</b><br>
@@ -129,7 +128,7 @@ if st.session_state.analyzed and 'res' in st.session_state:
         
         with col_graph:
             st.subheader("Analysis Diagrams")
-            # เรียก Plotter
+            # Call Plotter (ensure design_view.py is updated)
             fig = design_view.plot_analysis_results(res, p.get('spans_data',[]), p.get('sup_data',[]), loads, reac)
             st.plotly_chart(fig, use_container_width=True)
             
@@ -147,7 +146,7 @@ if st.session_state.analyzed and 'res' in st.session_state:
             diff = abs(total_load_down - total_reac_up)
             status_eq = "✅ OK" if diff < 1.0 else "❌ ERROR"
             
-            # ใช้ \\ เพื่อแก้ปัญหา Unicode Error ใน f-string
+            # NOTE: Use double backslash for LaTeX in f-strings
             st.markdown(f"""
             <div style="background-color:#f9f9f9; padding:10px; border-radius:5px; font-size:0.9em;">
             <b>Global Equilibrium Check ($\\Sigma F_y = 0$)</b><br>
@@ -162,21 +161,20 @@ if st.session_state.analyzed and 'res' in st.session_state:
             
             st.markdown("**Detailed Reactions:**")
             for r in reac:
-                st.markdown(f"**Node {r['node_id']+1}:** $R_y = {r['fy']/1000:.2f}$ kN")
+                val = r['fy']/1000
+                st.markdown(f"**Node {r['node_id']+1}:** $R_y = {val:.2f}$ kN")
 
     # --- TAB 2: DESIGN & CALCULATION ---
     with tab2:
-        # Prepare Data for Design
         spans_data = p.get('spans_data', [])
         
         if len(spans_data) > 0:
             cum_dist = [0] + list(np.cumsum(spans_data))
             design_data = []
             
-            # วนลูปสร้างข้อมูลแต่ละ Span
+            # Prepare Design Data
             for i in range(len(spans_data)):
                 x0, x1 = cum_dist[i], cum_dist[i+1]
-                # Filter results for this span
                 span_df = res[(res['x'] >= x0) & (res['x'] <= x1)]
                 
                 if not span_df.empty:
@@ -187,7 +185,7 @@ if st.session_state.analyzed and 'res' in st.session_state:
                         "def_act": span_df['deflection'].abs().max(), "L": spans_data[i]
                     })
                 
-            # 2.1 INPUT BAR (Rebar Selection)
+            # 2.1 INPUT BAR
             with st.container(border=True):
                 st.markdown("#### 🛠️ Reinforcement Configuration")
                 col_sel, col_in = st.columns([1, 4])
@@ -196,7 +194,7 @@ if st.session_state.analyzed and 'res' in st.session_state:
                     if design_data:
                         sel_span = st.selectbox("Select Span", design_data, format_func=lambda x: f"Span {x['span']} (Mu={x['Mu']:.1f})")
                     else:
-                        st.warning("No span data available.")
+                        st.warning("No data.")
                         st.stop()
                         
                 with col_in:
@@ -210,9 +208,9 @@ if st.session_state.analyzed and 'res' in st.session_state:
                         c6.write("")
                         c6.form_submit_button("Update")
             
-            st.write("") # Spacer
+            st.write("")
 
-            # 2.2 CALCULATION SHEET + CROSS SECTION
+            # 2.2 CALCULATION REPORT
             col_calc, col_img = st.columns([1.5, 1])
             
             # --- Left: Detailed Calculation ---
@@ -247,7 +245,7 @@ if st.session_state.analyzed and 'res' in st.session_state:
                 st.markdown('<div class="sub-eng">2. SHEAR DESIGN</div>', unsafe_allow_html=True)
                 Vc = 0.17 * np.sqrt(p['fc']) * b_mm * d_mm / 1000
                 phi_Vc = f.get('phi_v', 0.85) * Vc
-                Av = 2 * 28.27 # RB6 (Area approx 28mm2)
+                Av = 2 * 28.27 # RB6
                 Vs = (Av * p['fy'] * d_mm) / (s_stir*10) / 1000
                 phi_Vs = f.get('phi_v', 0.85) * Vs
                 phi_Vn = phi_Vc + phi_Vs
@@ -265,7 +263,7 @@ if st.session_state.analyzed and 'res' in st.session_state:
                 if sel_span['def_act'] <= d_all: st.write(f"✅ Deflection: {sel_span['def_act']:.2f} mm < {d_all:.1f} mm")
                 else: st.write(f"❌ Deflection: {sel_span['def_act']:.2f} mm > {d_all:.1f} mm")
                 
-                st.markdown('</div>', unsafe_allow_html=True) # End Frame
+                st.markdown('</div>', unsafe_allow_html=True)
 
             # --- Right: Cross Section Image ---
             with col_img:
@@ -278,7 +276,7 @@ if st.session_state.analyzed and 'res' in st.session_state:
             st.subheader(f"Longitudinal Profile: Span {sel_span['span']}")
             fig_long = section_plotter.plot_longitudinal_detailed(sel_span['L'], p['h'], cover, n_top, n_bot, db_main, s_stir, sel_span['span'])
             st.pyplot(fig_long, use_container_width=True)
-            
+
 elif st.session_state.analyzed and 'res' not in st.session_state:
-    # กรณีนี้คือ Analyzed เป็น True แต่ข้อมูลหาย (เช่น Restart Server)
-    st.warning("⚠️ Session expired. Please click 'EXECUTE ANALYSIS' again.")
+    # Handle lost session state smoothly
+    st.warning("⚠️ Session expired or data cleared. Please click 'EXECUTE ANALYSIS' again to regenerate results.")
