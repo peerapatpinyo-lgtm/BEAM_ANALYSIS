@@ -11,81 +11,94 @@ def get_beta1(fc):
 
 def solve_steel_section(Mu_kNm, b_m, d_m, fc, fy, is_top=False):
     """
-    Calculate required steel area with detailed steps
+    Calculate required steel area with detailed steps and size recommendation
     """
-    logs = [] # List to store calculation steps
+    logs = [] 
     
     # 1. Init
     Mu = abs(Mu_kNm) * 1e6 # N-mm
     b = b_m * 1000 # mm
     d = d_m * 1000 # mm
-    phi = 0.9 # Tension controlled assumed initially
+    phi = 0.9 
     beta1 = get_beta1(fc)
     
     header = "Top Reinforcement (Negative Moment)" if is_top else "Bottom Reinforcement (Positive Moment)"
     logs.append(f"**{header}**")
     logs.append(f"- Design Moment, Mu = {abs(Mu_kNm):.2f} kNm")
-    logs.append(f"- Effective Depth, d = {d:.1f} mm")
 
     if Mu == 0:
-        logs.append("- Mu = 0, No main reinforcement required (Use Min).")
+        logs.append("- Mu = 0, Use Minimum Reinforcement.")
         return 0, 0, 0, logs
 
-    # 2. Check Capacity limits
-    # Max reinforcement ratio (Ensure strain > 0.004)
+    # 2. Limit State Check (Max Reinforcement / Section Size)
+    # Calculate rho_max (Tension controlled limit, strain=0.005)
+    # rho_bal = (0.85 * beta1 * fc / fy) * (600 / (600 + fy))
+    # Using 0.005 strain limit directly (approx 0.375 beta1 ...) usually safer
+    # But let's use the standard ACI max ratio:
     rho_bal = (0.85 * beta1 * fc / fy) * (600 / (600 + fy))
-    rho_max = 0.85 * rho_bal # Approx for epsilon_t = 0.005 (Tension controlled)
-    As_max = rho_max * b * d
+    rho_max = 0.75 * rho_bal # Common practice limit
     
-    # Min reinforcement
+    # 3. Calculate Rn required
+    Rn = Mu / (phi * b * d**2)
+    logs.append(f"- Rn (Required) = {Rn:.3f} MPa")
+    
+    # Check if Section is adequate
+    # Condition: 1 - (2Rn / 0.85fc) must be >= 0
+    check_val = 1 - (2 * Rn) / (0.85 * fc)
+    
+    if check_val < 0:
+        logs.append(f"❌ **Error: Section too small!** (Concrete Crushing Risk)")
+        
+        # --- RECOMMENDED SIZE CALCULATION ---
+        # Back-calculate required d from rho_max
+        # Rn_max corresponds to rho_max
+        m = fy / (0.85 * fc)
+        Rn_max = rho_max * fy * (1 - 0.5 * rho_max * m)
+        
+        # d_req = sqrt( Mu / (phi * b * Rn_max) )
+        d_req = math.sqrt(Mu / (phi * b * Rn_max))
+        
+        # Estimate total h (d + cover + stirrup + half_bar)
+        # approx cover 40 + stirrup 9 + half_bar 8 = 57mm -> say 60mm
+        h_req = d_req + 60 
+        
+        # Round up to nearest 5 cm
+        h_suggest = math.ceil(h_req / 50) * 50 / 1000.0 # convert to m
+        
+        logs.append(f"💡 **Suggestion:**")
+        logs.append(f"   For width b = {b_m:.2f} m:")
+        logs.append(f"   Minimum effective depth (d) should be **{d_req:.0f} mm**")
+        logs.append(f"   Try increasing Height (h) to **{h_suggest:.2f} m**")
+        
+        return 0, 0, 0, logs
+
+    # 4. If OK, Calculate Steel Area
+    rho_req = (0.85 * fc / fy) * (1 - math.sqrt(check_val))
+    As_req = rho_req * b * d
+    
+    # Check Min Steel
     As_min1 = (0.25 * math.sqrt(fc) / fy) * b * d
     As_min2 = (1.4 / fy) * b * d
     As_min = max(As_min1, As_min2)
     
-    logs.append(f"- As,min = {As_min:.1f} mm²")
-    
-    # 3. Calculate Required As using Rn method
-    Rn = Mu / (phi * b * d**2)
-    logs.append(f"- Rn = {Rn:.3f} MPa")
-    
-    try:
-        rho_req = (0.85 * fc / fy) * (1 - math.sqrt(1 - (2 * Rn) / (0.85 * fc)))
-        As_req = rho_req * b * d
-        logs.append(f"- Rho required = {rho_req:.5f}")
-        logs.append(f"- As,req (Calculation) = {As_req:.1f} mm²")
-    except ValueError:
-        logs.append(f"❌ **Error:** Section too small! (2Rn > 0.85fc)")
-        return 0, 0, 0, logs
-
-    # 4. Final As Selection
     As_final = max(As_req, As_min)
-    
-    if As_final > As_max:
-         logs.append(f"❌ **Error:** As required ({As_final:.1f}) > As,max ({As_max:.1f}). Section is over-reinforced.")
-    else:
-         logs.append(f"- As,final (Control) = {As_final:.1f} mm²")
+    logs.append(f"- As,req = {As_req:.1f} mm² (As,min = {As_min:.1f})")
 
     # 5. Bar Selection
-    db = 16 # Fixed DB16 for this example
+    db = 16 
     A_bar = 3.1416 * (db/2)**2
     n_bars = max(2, math.ceil(As_final / A_bar))
     As_prov = n_bars * A_bar
     
     logs.append(f"👉 **Select {n_bars}-DB{db}** (As_prov = {As_prov:.1f} mm²)")
     
-    # 6. Verify Capacity (Phi Mn)
+    # 6. Capacity Check
     a = (As_prov * fy) / (0.85 * fc * b)
     Mn = As_prov * fy * (d - a/2)
     phi_Mn = 0.9 * Mn / 1e6
     
-    logs.append(f"- Depth of stress block, a = {a:.1f} mm")
     logs.append(f"- Capacity $\phi M_n$ = {phi_Mn:.2f} kNm")
     
-    if phi_Mn >= abs(Mu_kNm):
-        logs.append(f"✅ **OK** ($\phi M_n \geq M_u$)")
-    else:
-        logs.append(f"❌ **NG** Capacity not enough")
-
     return n_bars, As_final, phi_Mn, logs
 
 def design_shear_detailed(Vu_kN, b_m, d_m, fc, fy):
