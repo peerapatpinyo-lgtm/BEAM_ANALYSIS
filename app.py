@@ -17,10 +17,12 @@ st.set_page_config(page_title="Pro Beam Design", layout="wide")
 
 st.markdown("""
 <style>
-    .calc-box { background-color: white; border: 1px solid #ddd; padding: 20px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-    .calc-header { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px; margin-bottom: 15px; font-weight: bold; }
-    .pass { color: green; font-weight: bold; }
-    .fail { color: red; font-weight: bold; }
+    .calc-box { background-color: white; border: 1px solid #ddd; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    .calc-header { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 8px; margin-bottom: 20px; font-weight: bold; font-size: 1.2em;}
+    .pass { color: #27ae60; font-weight: bold; background-color: #eafaf1; padding: 2px 8px; border-radius: 4px; }
+    .fail { color: #c0392b; font-weight: bold; background-color: #fdedec; padding: 2px 8px; border-radius: 4px; }
+    .warning { color: #d35400; font-weight: bold; }
+    .section-container { display: flex; justify-content: center; align-items: center; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -121,7 +123,7 @@ if st.session_state.analyzed:
         # Prepare Design Data
         cum_dist = [0] + list(np.cumsum(spans))
         design_data = []
-        # Dummy structure for visualization (assuming uniform rebar for now in plot)
+        # Dummy structure for visualization
         design_res_for_plot = [] 
         
         for i in range(len(spans)):
@@ -141,16 +143,15 @@ if st.session_state.analyzed:
                 "def_act": span_df['deflection'].abs().max(),
                 "L": spans[i]
             })
-            
-            # Default placeholder for plot
             design_res_for_plot.append({'pos': {'n': 3}, 'neg': {'n': 2}, 'db': 16})
 
         sel_span = st.selectbox("Select Span", design_data, format_func=lambda x: f"Span {x['span']}")
         
-        c_left, c_right = st.columns([1, 1.5])
+        # --- LAYOUT GRID ---
+        col_design_left, col_design_right = st.columns([1, 1.6])
         
-        with c_left:
-            st.markdown(f"#### 🛠️ Reinforcement")
+        with col_design_left:
+            st.markdown(f"#### 🛠️ Reinforcement Control")
             with st.form("rebar_form"):
                 cc1, cc2 = st.columns(2)
                 n_top = cc1.number_input("Top Bars", 1, 10, 2)
@@ -161,83 +162,106 @@ if st.session_state.analyzed:
                 cover = st.number_input("Cover (mm)", 20, 50, 40)
                 update_rb = st.form_submit_button("Update")
             
-            # Update plot data based on input
             if update_rb:
-                design_res_for_plot[sel_span['span']-1]['pos']['n'] = n_bot
-                design_res_for_plot[sel_span['span']-1]['neg']['n'] = n_top
-                design_res_for_plot[sel_span['span']-1]['db'] = db_main
+                design_res_for_plot[sel_span['span']-1] = {'pos': {'n': n_bot}, 'neg': {'n': n_top}, 'db': db_main}
 
-            # [FIX] 1. Plot Section View (บังคับไม่ให้ขยายเต็มความกว้างคอลัมน์)
-            st.markdown("**Section View:**")
-            fig_sec = section_plotter.plot_section(p['b'], p['h'], cover, db_main, n_top, n_bot, f"RB6@{s_stir}", p['fc'], p['fy'])
-            st.pyplot(fig_sec, use_container_width=False) # Important: False to keep it small
-
-            # [FIX] 2. Plot Longitudinal View (เอาคืนมาแล้ว)
-            st.markdown("**Longitudinal Profile:**")
-            # Update specific span in the full beam plot
-            design_res_for_plot[sel_span['span']-1] = {'pos': {'n': n_bot}, 'neg': {'n': n_top}, 'db': db_main}
-            fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res_for_plot, p['h'], cover)
-            st.pyplot(fig_long, use_container_width=True)
-
-        with c_right:
-            st.markdown('<div class="calc-box">', unsafe_allow_html=True)
-            st.markdown(f'<div class="calc-header">📝 DETAILED CALCULATION: Span {sel_span["span"]}</div>', unsafe_allow_html=True)
-            
-            # --- 1. Load Combination ---
-            st.markdown("**1. Design Forces (Factored)**")
-            st.latex(rf"M_u^+ = M_{{serv}} \times {saf_factor} = {sel_span['M_serv_pos']:.2f} \times {saf_factor} = \mathbf{{{sel_span['Mu_pos']:.2f}}}\ kNm")
-            st.latex(rf"V_u = V_{{serv}} \times {saf_factor} = {sel_span['V_serv']:.2f} \times {saf_factor} = \mathbf{{{sel_span['Vu']:.2f}}}\ kN")
-
-            # --- 2. Flexure Detailed ---
             st.markdown("---")
-            st.markdown("**2. Flexural Strength Check (+M)**")
+            st.markdown("**Section View:**")
             
+            # [FIX] Center the Section Plot using Columns
+            c_fill_1, c_plot, c_fill_2 = st.columns([0.15, 0.7, 0.15])
+            with c_plot:
+                fig_sec = section_plotter.plot_section(p['b'], p['h'], cover, db_main, n_top, n_bot, f"RB6@{s_stir}", p['fc'], p['fy'])
+                st.pyplot(fig_sec, use_container_width=False)
+
+        with col_design_right:
+            st.markdown('<div class="calc-box">', unsafe_allow_html=True)
+            st.markdown(f'<div class="calc-header">📝 ENGINEER CALCULATION SHEET: Span {sel_span["span"]}</div>', unsafe_allow_html=True)
+            
+            # Variables
             b_mm = p['b'] * 1000
             d_mm = p['h'] * 1000 - cover - 6 - db_main/2
             As_prov = n_bot * (3.1416 * (db_main/2)**2)
             
-            st.markdown("*(a) Effective Depth (d) & Steel Area (As)*")
-            st.latex(rf"d = {p['h']*1000:.0f} - {cover} - 6 - {db_main/2} = {d_mm:.1f}\ mm")
-            st.latex(rf"A_{{s,prov}} = {n_bot} \times \pi ({db_main}/2)^2 = \mathbf{{{As_prov:.0f}}}\ mm^2")
+            # 1. Loads
+            st.markdown("**1. Design Forces**")
+            st.latex(rf"M_u = {sel_span['Mu_pos']:.2f}\ kNm, \quad V_u = {sel_span['Vu']:.2f}\ kN")
 
-            st.markdown("*(b) Whitney Stress Block (a)*")
+            # 2. Flexure (Improved)
+            st.markdown("---")
+            st.markdown("**2. Flexural Check (+M)**")
+            
+            # (a) Min Steel Check
+            st.markdown("*(a) Minimum Reinforcement Check ($A_{s,min}$)*")
+            As_min1 = (0.25 * np.sqrt(p['fc']) / p['fy']) * b_mm * d_mm
+            As_min2 = (1.4 / p['fy']) * b_mm * d_mm
+            As_min = max(As_min1, As_min2)
+            
+            st.latex(rf"A_{{s,min}} = \max\left(\frac{{0.25\sqrt{{f_c'}}}}{{f_y}}, \frac{{1.4}}{{f_y}}\right) b_w d = {As_min:.0f}\ mm^2")
+            if As_prov >= As_min:
+                st.markdown(f'<span class="pass">✅ OK ($A_{{prov}} = {As_prov:.0f} > {As_min:.0f}$)</span>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<span class="fail">❌ FAIL (Add Rebar to meet min steel)</span>', unsafe_allow_html=True)
+            
+            # (b) Capacity
+            st.markdown("*(b) Moment Capacity ($\phi M_n$)*")
             a_depth = (As_prov * p['fy']) / (0.85 * p['fc'] * b_mm)
-            st.latex(rf"a = \frac{{{As_prov:.0f} \cdot {p['fy']}}}{{0.85 \cdot {p['fc']} \cdot {b_mm:.0f}}} = \mathbf{{{a_depth:.2f}}}\ mm")
-
-            st.markdown("*(c) Moment Capacity*")
             Mn_kNm = As_prov * p['fy'] * (d_mm - a_depth/2) * 1e-6
             phi_Mn = f['phi_m'] * Mn_kNm
             
-            st.latex(rf"M_n = {As_prov:.0f} \cdot {p['fy']} ({d_mm:.1f} - {a_depth/2:.1f}) \cdot 10^{{-6}} = {Mn_kNm:.2f}\ kNm")
-            st.latex(rf"\phi M_n = {f['phi_m']} \cdot {Mn_kNm:.2f} = \mathbf{{{phi_Mn:.2f}}}\ kNm")
+            st.latex(rf"a = {a_depth:.2f} mm, \quad \phi M_n = {f['phi_m']} \times {Mn_kNm:.2f} = \mathbf{{{phi_Mn:.2f}}}\ kNm")
             
             if phi_Mn >= sel_span['Mu_pos']:
-                st.markdown(f'<span class="pass">✅ OK (Ratio: {sel_span["Mu_pos"]/phi_Mn:.2f})</span>', unsafe_allow_html=True)
+                st.markdown(f'<span class="pass">✅ PASS (Ratio: {sel_span["Mu_pos"]/phi_Mn:.2f})</span>', unsafe_allow_html=True)
             else:
-                st.markdown(f'<span class="fail">❌ FAIL (Increase steel or depth)</span>', unsafe_allow_html=True)
+                st.markdown(f'<span class="fail">❌ FAIL (Insufficient Capacity)</span>', unsafe_allow_html=True)
 
-            # --- 3. Shear Detailed ---
+            # (c) Ductility
+            st.markdown("*(c) Ductility Check (Strain)*")
+            beta1 = 0.85 if p['fc'] <= 30 else max(0.65, 0.85 - 0.05*(p['fc']-30)/7)
+            c = a_depth / beta1
+            epsilon_t = 0.003 * (d_mm - c) / c
+            
+            st.latex(rf"c = {c:.2f} mm, \quad \epsilon_t = 0.003 \frac{{d-c}}{{c}} = \mathbf{{{epsilon_t:.4f}}}")
+            if epsilon_t >= 0.005:
+                st.markdown(f'<span class="pass">✅ OK (Tension Controlled, $\epsilon_t \geq 0.005$)</span>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<span class="fail">❌ WARNING: Brittle / Transition (Reduce Steel or Increase Depth)</span>', unsafe_allow_html=True)
+
+            # 3. Shear (Improved)
             st.markdown("---")
-            st.markdown("**3. Shear Strength Check**")
-            
-            st.markdown("*(a) Concrete Capacity (Vc)*")
-            Vc_val = 0.17 * np.sqrt(p['fc']) * b_mm * d_mm / 1000.0
-            st.latex(rf"V_c = 0.17\sqrt{{{p['fc']}}} \cdot {b_mm:.0f} \cdot {d_mm:.0f} = \mathbf{{{Vc_val:.2f}}}\ kN")
-
-            st.markdown("*(b) Steel Capacity (Vs) - RB6*")
+            st.markdown("**3. Shear Check**")
+            Vc = 0.17 * np.sqrt(p['fc']) * b_mm * d_mm / 1000.0
             Av = 2 * (3.1416 * 3**2) 
-            s_mm = s_stir * 10
-            Vs_val = (Av * p['fy'] * d_mm) / s_mm / 1000.0
+            Vs_req = (sel_span['Vu']/f['phi_v']) - Vc
             
-            st.latex(rf"V_s = \frac{{{Av:.1f} \cdot {p['fy']} \cdot {d_mm:.0f}}}{{{s_mm}}} = \mathbf{{{Vs_val:.2f}}}\ kN")
+            # Check Max Spacing
+            s_max = d_mm / 2
+            st.latex(rf"\phi V_c = {f['phi_v']*Vc:.2f}\ kN")
             
-            st.markdown("*(c) Total Capacity*")
-            phi_Vn = f['phi_v'] * (Vc_val + Vs_val)
-            st.latex(rf"\phi V_n = {f['phi_v']} ({Vc_val:.2f} + {Vs_val:.2f}) = \mathbf{{{phi_Vn:.2f}}}\ kN")
-             
-            if phi_Vn >= sel_span['Vu']:
-                 st.markdown(f'<span class="pass">✅ OK</span>', unsafe_allow_html=True)
-            else:
-                 st.markdown(f'<span class="fail">❌ FAIL (Reduce stirrup spacing)</span>', unsafe_allow_html=True)
+            if Vs_req > 0:
+                s_calc = (Av * p['fy'] * d_mm) / (Vs_req * 1000) * 10 # mm to cm roughly
+                st.markdown(f"*Strength requires spacing $\leq {s_calc/10:.1f}$ cm*")
+            
+            Vs_prov = (Av * p['fy'] * d_mm) / (s_stir*10) / 1000.0
+            phi_Vn = f['phi_v'] * (Vc + Vs_prov)
+            
+            st.latex(rf"\phi V_n = \mathbf{{{phi_Vn:.2f}}}\ kN \quad (vs \ V_u = {sel_span['Vu']:.2f})")
+            
+            shear_status = "✅ PASS" if phi_Vn >= sel_span['Vu'] else "❌ FAIL"
+            spacing_status = "✅ Spacing OK" if (s_stir*10) <= s_max else f"❌ Spacing > d/2 ({s_max/10:.1f} cm)"
+            
+            st.markdown(f"{shear_status} | {spacing_status}")
 
             st.markdown('</div>', unsafe_allow_html=True)
+        
+        # --- BOTTOM AREA: LONGITUDINAL PROFILE ---
+        st.markdown("---")
+        st.markdown("### 🏗️ Longitudinal Reinforcement Profile")
+        # Update dummy data with current user selection for visualization of current span
+        # Note: In a full app, we would store n_top/n_bot for EACH span in session_state. 
+        # Here we just visualize the current one across the board for demo or specific logic.
+        design_res_for_plot[sel_span['span']-1] = {'pos': {'n': n_bot}, 'neg': {'n': n_top}, 'db': db_main}
+        
+        fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res_for_plot, p['h'], cover)
+        st.pyplot(fig_long, use_container_width=True)
