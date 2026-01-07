@@ -105,7 +105,25 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 "dist": spans[i],
                 "case": "DL"
             })
-        
+        # ... (โค้ดก่อนหน้าใน Loop) ...
+                
+                des_span = rc_design.design_span_expert(
+                    Mu_pos, Mu_neg, vu_val, 
+                    params['b'], params['h'], 
+                    24, 400, 
+                    40, 16   
+                )
+                
+                # --- [FIX] เพิ่มบรรทัดเหล่านี้เพื่อบันทึกค่า Mu ที่ต้องการไว้เทียบ ---
+                des_span['pos']['required'] = Mu_pos  # <--- สำคัญมาก! ต้องเพิ่มบรรทัดนี้
+                des_span['neg']['required'] = Mu_neg  # <--- เพิ่มเผื่อไว้
+                des_span['shear_required'] = vu_val   # <--- เก็บค่าแรงเฉือนด้วย
+                # -----------------------------------------------------------
+
+                des_span['span_id'] = i
+                des_span['db'] = 16
+                design_res.append(des_span)
+            
         # ส่งรายการโหลดที่รวม Self-weight แล้วเข้า Solver
         beam_solver = solver.BeamSolver(spans, sup_list, final_load_list, params['E'], params['b'], params['h'], params['I'])
         res_df, reactions, status = beam_solver.solve()
@@ -385,6 +403,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
