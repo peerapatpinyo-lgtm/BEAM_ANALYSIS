@@ -50,11 +50,11 @@ else:
 
     # --- 5. LOAD CALCULATIONS & COMBINATIONS ---
     try:
-        # 5.1 Self-Weight Calculation (kN/m)
+        # 5.1 Self-Weight Calculation (Unit Weight = 24 kN/m³)
         w_sw_base_kN = params['b'] * params['h'] * 24.0   
         w_sw_factored_kN = w_sw_base_kN * f_dl
         
-        # 5.2 Initialize Total UDL per span (Converted to N/m for Solver)
+        # 5.2 Initialize Total UDL per span (Newton for Solver)
         span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
         combined_loads_list = []
         
@@ -66,8 +66,10 @@ else:
                     if s_idx >= n_spans: continue 
                     
                     l_type = row['type']
-                    mag_base_kN = float(row['mag']) # รับค่า 3.6 kN
-                    mag_factored_N = mag_base_kN * f_ll * 1000.0 # เป็น 3600 N
+                    mag_base_kN = float(row['mag']) # รับค่า 3.6 kN มา
+                    
+                    # แปลงหน่วยเป็น Newton (N) เพื่อความถูกต้องใน Matrix Stiffness (solver.py)
+                    mag_factored_N = mag_base_kN * f_ll * 1000.0 
                     dist = float(row['dist']) 
                     
                     if l_type == 'U' and dist >= (spans[s_idx] - 0.01):
@@ -76,14 +78,15 @@ else:
                         combined_loads_list.append({
                             'span_index': s_idx,
                             'type': l_type,
-                            'mag': mag_factored_N, # ส่งหน่วย N เข้า Solver
+                            'mag': mag_factored_N, 
                             'dist': dist,
                             'desc': 'User (Partial/Point)'
                         })
                 except Exception:
                     continue
         
-        # 5.4 Add Combined UDLs back
+        # 5.4 Merge combined UDLs
+        # *** จุดนี้สำคัญ: สร้าง DF แยกสำหรับการคำนวณ Solver เท่านั้น ***
         for i in range(n_spans):
             if span_total_udl_N[i] > 0:
                 combined_loads_list.append({
@@ -91,7 +94,7 @@ else:
                     'type': 'U',
                     'mag': span_total_udl_N[i],
                     'dist': spans[i],
-                    'desc': 'Total Combined UDL (Incl. SW)'
+                    'desc': 'Total Combined UDL'
                 })
         
         calc_loads_df = pd.DataFrame(combined_loads_list)
@@ -103,7 +106,7 @@ else:
             'x': x_eval,
             'moment': M,
             'shear': V,
-            'deflection': D * 1000
+            'deflection': D * 1000 # m to mm
         })
         
         # --- 7. DISPLAY RESULTS ---
@@ -113,6 +116,7 @@ else:
             st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R), use_container_width=True)
             
             st.subheader("📌 Analysis Summary")
+            # *** จุดแก้ไข: หาร 1000 เพื่อแสดงค่า kN บน Metric ***
             v_max = res_df['shear'].abs().max() / 1000.0
             m_max_pos = res_df['moment'].max() / 1000.0
             m_max_neg = res_df['moment'].min() / 1000.0
@@ -126,6 +130,7 @@ else:
 
             st.markdown("### 📍 Support Reactions")
             if R:
+                # *** จุดแก้ไข: หาร 1000 เพื่อโชว์ 3.6 ไม่ใช่ 3600 ***
                 reaction_data = [{"Node": int(str(k).replace('R', '')), "Reaction (kN)": v/1000.0} for k, v in R.items()]
                 df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
                 st.dataframe(df_reac.style.format({"Reaction (kN)": "{:.2f}"}), use_container_width=True, hide_index=True)
@@ -148,22 +153,20 @@ else:
                 combo_report = []
                 for i in range(n_spans):
                     combo_report.append({
-                        "Span": i+1,
-                        "Type": "Self-Weight (DL)",
-                        "Unfactored": f"{w_sw_base_kN:.2f} kN/m",
-                        "Factor": f"x{f_dl}",
-                        "Factored": f"{w_sw_factored_kN:.2f} kN/m"
+                        "Span": i+1, "Type": "Self-Weight (DL)", 
+                        "Unfactored": f"{w_sw_base_kN:.2f} kN/m", 
+                        "Factor": f"x{f_dl}", "Factored": f"{w_sw_factored_kN:.2f} kN/m"
                     })
                 if not loads_df.empty:
                     for _, row in loads_df.iterrows():
-                        # FIX: ตรงนี้ต้องใช้ row['mag'] ดั้งเดิม ห้ามใช้ mag_factored_N ที่ถูกคูณ 1000 ไปแล้ว
-                        unfactored_val = float(row['mag']) 
+                        # *** จุดแก้ไข: ดึงค่าดิบจาก loads_df มาโชว์ ห้ามคูณ 1000 ซ้ำ ***
+                        val = float(row['mag'])
                         combo_report.append({
                             "Span": int(row['span_index'])+1,
                             "Type": "Point (LL)" if row['type'] == 'P' else "Uniform (LL)",
-                            "Unfactored": f"{unfactored_val:.2f} kN(/m)",
+                            "Unfactored": f"{val:.2f} kN(/m)",
                             "Factor": f"x{f_ll}",
-                            "Factored": f"{(unfactored_val * f_ll):.2f} kN(/m)"
+                            "Factored": f"{(val * f_ll):.2f} kN(/m)"
                         })
                 st.table(pd.DataFrame(combo_report))
 
@@ -176,7 +179,7 @@ else:
                     total_user = 0
                     if not loads_df.empty:
                         for _, r in loads_df.iterrows():
-                            # FIX: คำนวณในหน่วย kN เพื่อเช็คดุลยภาพ
+                            # *** จุดแก้ไข: ใช้ค่าหน่วย kN มาเช็คสมดุล ***
                             if r['type'] == 'P': total_user += (float(r['mag']) * f_ll)
                             else: total_user += (float(r['mag']) * f_ll * float(r['dist']))
                     total_applied = total_sw + total_user
@@ -206,7 +209,7 @@ else:
                 span_data = res_df[(res_df['x'] >= span_start - 1e-6) & (res_df['x'] <= span_end + 1e-6)]
                 
                 if not span_data.empty:
-                    # FIX: แปลงกลับเป็น kN และ kN-m สำหรับ Module ออกแบบ
+                    # *** จุดแก้ไข: หาร 1000 ก่อนส่งเข้า Module Design ***
                     mu_pos = span_data['moment'].max() / 1000.0
                     mu_neg = abs(span_data['moment'].min()) / 1000.0
                     vu_max = span_data['shear'].abs().max() / 1000.0
@@ -246,5 +249,5 @@ else:
                     st.pyplot(section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'], 40))
 
     except Exception as e:
-        st.error(f"❌ Calculation Error: {e}")
+        st.error(f"❌ Error: {e}")
         st.exception(e)
