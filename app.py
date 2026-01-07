@@ -58,7 +58,6 @@ with col_file1:
         loaded = file_manager.load_data(uploaded_file)
         if loaded:
             st.session_state.project_data = loaded
-            # Restore load list specifically
             if 'loads' in loaded:
                 st.session_state.load_list = loaded['loads']
             st.success("Loaded!")
@@ -68,8 +67,7 @@ n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
 loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
 
 # Save Button
-if loads_df is not None: # Changed condition to allow saving even with empty loads (but geometry exists)
-    # Prepare export data
+if loads_df is not None:
     load_export = loads_df.to_dict('records') if not loads_df.empty else []
     json_str = file_manager.export_data(params, spans, sup_df, load_export)
     st.sidebar.download_button(
@@ -95,10 +93,11 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
         # --- [NEW] Self-weight Calculation ---
         sw_kn_m = params['b'] * params['h'] * 24.0  # kN/m
         
-        # รวมโหลดเดิมกับ Self-weight เข้าด้วยกัน
+        # รวมโหลดเดิมกับ Self-weight เข้าด้วยกันเป็น final_load_list เพื่อใช้คำนวณและวาดกราฟ
         final_load_list = load_list_raw.copy()
         for i in range(len(spans)):
             final_load_list.append({
+                "id": f"sw_{i}",
                 "type": "U",
                 "span_index": i,
                 "x": 0.0,
@@ -128,7 +127,11 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 if span_res.empty:
                     Mu_pos, Mu_neg, vu_val = 0, 0, 0
                 else:
-                    factor = 1.4 # Simplified Factor
+                    # ใช้ Factor แยกตามที่ตั้งใน Sidebar
+                    g_dl = params.get('gamma_dead', 1.4)
+                    g_ll = params.get('gamma_live', 1.7)
+                    factor = max(g_dl, g_ll) # Simplified factor สำหรับตัวอย่างนี้
+                    
                     # แปลงหน่วยจาก N-m เป็น kN-m เพื่อส่งให้ rc_design
                     Mu_pos = (max(0, span_res['moment'].max()) * factor) / 1000.0
                     Mu_neg = (abs(min(0, span_res['moment'].min())) * factor) / 1000.0
@@ -148,20 +151,18 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
             t1, t2, t3 = st.tabs(["📊 Analysis Results", "🏗️ Design & Detailing", "📝 Calculation Report"])
             
             with t1:
-                # 1. Improved Plot (Proportional Loads)
                 st.subheader("Structure & Diagrams")
-                fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, load_list)
+                # แก้ไข NameError: ใช้ final_load_list เพื่อแสดง Self-weight ในกราฟด้วย
+                fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, final_load_list)
                 st.plotly_chart(fig_ana, use_container_width=True)
                 
-                # 2. Improved Reaction Table
                 st.markdown("#### 🏁 Reaction Forces")
                 reac_data = []
                 uplift_warning = False
                 
                 for r_id, val in reactions.items():
-                    val_disp = round(val / 1000.0, 2)
+                    val_disp = round(val / 1000.0, 2) # แสดงผลเป็น kN
                     status_text = "Compression (OK)"
-                    # Check Uplift (Assuming mainly vertical forces)
                     if val < -1e-3: 
                          status_text = "⚠️ UPLIFT (แรงยก!)"
                          uplift_warning = True
@@ -174,20 +175,15 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     })
                 
                 st.dataframe(pd.DataFrame(reac_data), use_container_width=True, hide_index=True)
-                
                 if uplift_warning:
                     st.warning("⚠️ **Warning:** Found Uplift forces! Ensure supports are anchored properly.")
                 
             with t2:
                 st.subheader("Reinforcement Detailing")
-                
-                # Longitudinal Section
                 fig_long = section_plotter.plot_longitudinal_section(spans, sup_df, design_res, params['h'], 40)
                 st.pyplot(fig_long)
                 
                 st.divider()
-                
-                # Cross Sections
                 cols = st.columns(len(spans))
                 for i, c in enumerate(cols):
                     d = design_res[i]
@@ -205,8 +201,6 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                             st.success(f"Shear: {d['shear_status']}")
 
                 st.divider()
-
-                # --- BBS & BOQ Section ---
                 st.markdown("### 📋 Bill of Quantities & Bar Schedule")
                 
                 bbs_list = rc_design.generate_bbs(design_res, spans, params['b'], params['h'], 40)
@@ -231,7 +225,20 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     )
 
             with t3:
-                st.subheader("Design Summary Table")
+                st.subheader("📝 Detailed Calculation Basis")
+                
+                # แสดงการคำนวณ Self-weight ให้ผู้ใช้ตรวจสอบ
+                st.info(f"""
+                **1. Self-weight Analysis (Dead Load):**
+                * Section: {params['b']} m (W) x {params['h']} m (H)
+                * Concrete Density: 24.0 kN/m³
+                * Calculation: {params['b']} x {params['h']} x 24.0 = **{sw_kn_m:.2f} kN/m**
+                
+                **2. Load Combinations:**
+                * Used Factor (Gamma): {factor} (Applied to both DL and LL for this version)
+                """)
+                
+                st.write("### 3. Design Summary Table")
                 report_data = []
                 for idx, res in enumerate(design_res):
                     report_data.append({
@@ -239,13 +246,9 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Top Bars": f"{res['neg']['n']}-DB16",
                         "Bot Bars": f"{res['pos']['n']}-DB16",
                         "Stirrups": res['shear_stirrups'],
-                        "Capacity +": f"{res['pos']['capacity']:.2f} kNm",
-                        "Capacity -": f"{res['neg']['capacity']:.2f} kNm",
+                        "Moment Capacity (+)": f"{res['pos']['capacity']:.2f} kNm",
+                        "Moment Capacity (-)": f"{res['neg']['capacity']:.2f} kNm",
+                        "Crack Check": "OK" if res['pos']['crack_ok'] else "⚠️ Spacing too wide",
                         "Note": res['pos']['note']
                     })
-                st.dataframe(pd.DataFrame(report_data), use_container_width=True)
-
-
-
-
-
+                st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
