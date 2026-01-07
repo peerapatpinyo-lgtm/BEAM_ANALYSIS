@@ -161,23 +161,31 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, final_load_list)
                     st.plotly_chart(fig_ana, use_container_width=True)
                 
-                with col_loads:
+                    with col_loads:
                     st.markdown("#### 📥 Applied Loads (kN, m)")
                     
-                    # 1. แสดง Self-weight (น้ำหนักคาน)
+                    # 1. แสดง Self-weight
                     sw_val = params['b'] * params['h'] * 24.0
                     st.info(f"**Self-weight:**\n{sw_val:.2f} kN/m (All Spans)")
                     
-                    # 2. แสดง User Loads (โหลดที่ใส่เอง)
-                    if not loads_df.empty:
-                        # เตรียม DataFrame สำหรับแสดงผลแบบอ่านง่าย
+                    # 2. แสดง User Loads (เช็คตัวแปรก่อนเรียกใช้)
+                    # ใช้ st.session_state.load_list หรือเช็ค loads_df
+                    if 'loads_df' in locals() and loads_df is not None and not loads_df.empty:
                         display_loads = loads_df.copy()
-                        # ถ้า mag เป็น N ให้แปลงเป็น kN เพื่อโชว์
                         if 'mag' in display_loads.columns:
                             display_loads['mag'] = (display_loads['mag'] / 1000.0).round(2)
                         
                         st.dataframe(
                             display_loads[['type', 'span_index', 'mag', 'dist']], 
+                            use_container_width=True,
+                            hide_index=True
+                        )
+                    elif st.session_state.load_list:
+                        # กรณี loads_df หาย แต่ใน session_state ยังมีข้อมูล
+                        df_temp = pd.DataFrame(st.session_state.load_list)
+                        df_temp['mag'] = (df_temp['mag'] / 1000.0).round(2)
+                        st.dataframe(
+                            df_temp[['type', 'span_index', 'mag', 'dist']], 
                             use_container_width=True,
                             hide_index=True
                         )
@@ -282,4 +290,5 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
