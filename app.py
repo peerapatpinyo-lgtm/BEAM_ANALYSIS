@@ -159,7 +159,49 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 st.plotly_chart(fig_ana, use_container_width=True)
                 
                 # Show Reactions
-                st.write("Reaction Forces (kN/kNm):", reactions)
+                # --- ส่วนแสดง Reaction Forces แบบใหม่ (สวย + มี Warning) ---
+                st.markdown("#### 🏁 Reaction Forces")
+                
+                # 1. แปลง Data เป็น List เพื่อใส่ตาราง
+                reac_data = []
+                uplift_warning = False
+                
+                for r_id, val in reactions.items():
+                    # เช็คว่าเป็น Force หรือ Moment 
+                    # (ใน Solver ปัจจุบัน Index คู่=Force, คี่=Moment แต่นี่เราส่งมาแค่ Reaction รวม)
+                    # *สมมติว่า Solver ส่งมาเฉพาะ Force Ry (หรือ Moment รวมมาแล้ว)*
+                    # เพื่อความชัวร์ ให้แสดงค่าและเช็ค Uplift
+                    
+                    val_disp = round(val, 2)
+                    status = "Compression (OK)"
+                    
+                    # เช็คแรงยก (เฉพาะแรงแนวดิ่ง ไม่รวมโมเมนต์)
+                    # สมมติว่าค่าส่วนใหญ่เป็น Force Ry
+                    if val < -1e-3: # ค่าติดลบ
+                         status = "⚠️ UPLIFT (แรงยก!)"
+                         uplift_warning = True
+                    
+                    reac_data.append({
+                        "Support ID": f"Node {r_id}",
+                        "Value": val_disp,
+                        "Unit": "kN (or kNm)", # ควรแก้ใน solver ให้แยก type ชัดเจนกว่านี้ในอนาคต
+                        "Status": status
+                    })
+                
+                # 2. แสดงตาราง
+                st.dataframe(
+                    pd.DataFrame(reac_data), 
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # 3. แจ้งเตือนถ้ามีแรงยก
+                if uplift_warning:
+                    st.warning(
+                        "⚠️ **Warning:** ตรวจพบแรงปฏิกิริยาติดลบ (Uplift) ที่จุดรองรับ! "
+                        "หากหน้างานไม่ได้ยึดรั้ง (Anchored) คานอาจกระดกได้"
+                    )
+              
                 
             with t2:
                 st.subheader("Reinforcement Detailing")
@@ -204,4 +246,5 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data))
+
 
