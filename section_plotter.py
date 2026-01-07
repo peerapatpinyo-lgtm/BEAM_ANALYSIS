@@ -5,10 +5,10 @@ import numpy as np
 
 def plot_section(b_m, h_m, cover_mm, bar_db, n_top, n_bot, stirrup_txt, fc, fy):
     """
-    Plots the cross-section (Compact Version 2.0).
+    Plots the cross-section (Compact Version 3.0 - Fixed Scale).
     """
-    # [FIX] ลดขนาดเหลือ 2x2 นิ้ว
-    fig, ax = plt.subplots(figsize=(2.0, 2.0))
+    # [FIX] ลดขนาด Figure ลงเหลือ 2.5 x 2.5 นิ้ว
+    fig, ax = plt.subplots(figsize=(2.5, 2.5))
     
     b = b_m * 1000
     h = h_m * 1000
@@ -27,7 +27,7 @@ def plot_section(b_m, h_m, cover_mm, bar_db, n_top, n_bot, stirrup_txt, fc, fy):
                                          linewidth=1, edgecolor='darkblue', facecolor='none', linestyle='--')
         ax.add_patch(rect_st)
     
-    # Rebar Logic (Corner Priority)
+    # Rebar Logic
     def draw_bars_row(n, y_center, color):
         if n <= 0: return
         start_x = cover + stirrup_dia + (bar_db/2)
@@ -46,31 +46,40 @@ def plot_section(b_m, h_m, cover_mm, bar_db, n_top, n_bot, stirrup_txt, fc, fy):
     draw_bars_row(n_top, h - (cover + stirrup_dia + bar_db/2), '#d62728')
     draw_bars_row(n_bot, cover + stirrup_dia + bar_db/2, '#1f77b4')
             
-    # Dimensions (Minimalist)
-    ax.text(-20, h/2, f"{h:.0f}", rotation=90, va='center', fontsize=7)
-    ax.text(b/2, -40, f"{b:.0f}", ha='center', fontsize=7)
+    # Labels (Rebar info)
+    # [FIX] ปรับขนาด Font ให้เล็กตามรูป
+    ax.text(b/2, h + 30, f"{n_top}-DB{bar_db}", ha='center', fontsize=9, color='#d62728', fontweight='bold')
+    ax.text(b/2, -50, f"{n_bot}-DB{bar_db}", ha='center', fontsize=9, color='#1f77b4', fontweight='bold')
+    
+    # Dimensions
+    ax.text(-40, h/2, f"{h:.0f}", rotation=90, va='center', fontsize=8)
+    ax.text(b/2, -90, f"{b:.0f}", ha='center', fontsize=8)
 
-    # Set limits tight
-    ax.set_xlim(-30, b + 30)
-    ax.set_ylim(-50, h + 30)
+    # Set limits (Tight fit)
+    ax.set_xlim(-60, b + 60)
+    ax.set_ylim(-110, h + 80)
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # [FIX] Zero Margins
-    plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
+    plt.subplots_adjust(left=0.15, right=0.85, top=0.90, bottom=0.15)
     return fig
 
-# ... (ส่วน plot_longitudinal คงเดิม) ...
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_beam, cover=40):
-    fig, ax = plt.subplots(figsize=(12, 3))
+    """
+    Plots the longitudinal section (Side view).
+    """
+    # [FIX] รูปแนวยาวใช้ขนาดกว้างแต่เตี้ย
+    fig, ax = plt.subplots(figsize=(10, 2.5))
     cum_dist = [0] + list(pd.Series(spans).cumsum())
     total_length = cum_dist[-1]
     h_m = h_beam
     cover_m = cover / 1000.0
     
+    # Beam body
     beam_rect = patches.Rectangle((0, 0), total_length, h_m, linewidth=1.5, edgecolor='black', facecolor='#FFFFF0')
     ax.add_patch(beam_rect)
     
+    # Supports
     if 'id' in sup_df.columns: sup_types = sup_df.set_index('id')['type'].to_dict()
     else: sup_types = sup_df.set_index('node_id')['type'].to_dict()
 
@@ -85,6 +94,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_beam, cover=
         elif sType == 'Fixed':
             ax.plot([x, x], [-tri_h, h_m + tri_h], color='black', lw=3)
 
+    # Rebars
     for i, d_data in enumerate(design_res):
         x_start, x_end = cum_dist[i], cum_dist[i+1]
         span_len = spans[i]
@@ -105,7 +115,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_beam, cover=
                 ax.plot([x_sup - len_prev, x_sup + len_next], [y_top, y_top], color='#d62728', lw=3)
                 ax.text(x_sup, y_top - 0.2*h_m, f"{n_top}-DB16", ha='center', color='#d62728', fontsize=9, fontweight='bold')
 
-    ax.set_xlim(-total_length*0.1, total_length*1.1)
+    ax.set_xlim(-total_length*0.05, total_length*1.05)
     ax.set_ylim(-h_m*0.5, h_m*1.5)
     ax.set_aspect('equal')
     ax.axis('off')
