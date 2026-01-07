@@ -4,14 +4,24 @@ import pandas as pd
 def solve_beam(spans, sup_df, loads_df, params):
     """
     Solves the continuous beam using Direct Stiffness Method (FEM).
-    Corrected Sign Convention for Gravity Loads.
+    INCLUDES: Timoshenko Beam Theory (Shear Deformation).
+    INCLUDES: Correct Sign Convention for Gravity Loads.
     """
     # --- 0. Safety Check for Empty Loads ---
     if loads_df.empty or 'span_index' not in loads_df.columns:
         loads_df = pd.DataFrame(columns=['span_index', 'type', 'mag', 'dist'])
 
-    E = params['E']
-    I = params['I']
+    E = params['E'] # Pa (N/m2)
+    I = params['I'] # m4
+    b = params['b'] # m
+    h = params['h'] # m
+    
+    # --- Timoshenko Parameters ---
+    # Poisson's ratio for concrete approx 0.2
+    nu = 0.2 
+    G = E / (2 * (1 + nu))  # Shear Modulus
+    k = 5.0 / 6.0           # Shear Correction Factor for Rectangle
+    As = k * b * h          # Shear Area
     
     # 1. Setup Nodes & Elements
     n_spans = len(spans)
@@ -22,24 +32,38 @@ def solve_beam(spans, sup_df, loads_df, params):
     K_global = np.zeros((n_dof, n_dof))
     F_global = np.zeros(n_dof)
     
-    # 2. Build Stiffness Matrix (K)
+    # 2. Build Stiffness Matrix (K) with Timoshenko Factor (Phi)
     for i in range(n_spans):
         L = spans[i]
-        k = (E * I / L**3) * np.array([
-            [12, 6*L, -12, 6*L],
-            [6*L, 4*L**2, -6*L, 2*L**2],
-            [-12, -6*L, 12, -6*L],
-            [6*L, 2*L**2, -6*L, 4*L**2]
+        
+        # Phi (Shear Deformation Parameter)
+        # If Phi = 0, it behaves like Euler-Bernoulli
+        Phi = (12 * E * I) / (G * As * L**2)
+        
+        # Common Multiplier
+        const = (E * I) / ((1 + Phi) * L**3)
+        
+        # Timoshenko Stiffness Matrix Elements
+        k11 = 12
+        k12 = 6 * L
+        k22 = (4 + Phi) * L**2
+        k24 = (2 - Phi) * L**2  # Carry-over factor differs in Timoshenko
+        
+        k_ele = const * np.array([
+            [k11,   k12, -k11,   k12],
+            [k12,   k22, -k12,   k24],
+            [-k11, -k12,  k11,  -k12],
+            [k12,   k24, -k12,   k22]
         ])
         
         idx = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
         for r in range(4):
             for c in range(4):
-                K_global[idx[r], idx[c]] += k[r, c]
+                K_global[idx[r], idx[c]] += k_ele[r, c]
 
     # 3. Process Loads (Fixed End Actions - FEA)
-    # FEA represents the REACTIONS required at fixed ends to resist the load.
-    # For Downward Load: Reaction is UP (+), Moment is Standard Fixed-End Moment.
+    # Note: Using Standard FEA is generally acceptable for building frames 
+    # even with Timoshenko stiffness, as global displacement governs.
     
     fea_local = [] 
     for _ in range(n_spans):
@@ -51,45 +75,30 @@ def solve_beam(spans, sup_df, loads_df, params):
             L = spans[span_idx]
             mag = load['mag'] 
             
-            # NOTE: We calculate FEA as REACTIONS (Forces from Support ON Beam)
-            # Magnitude is positive 'mag'. 
-            # Direction is handled by formula: Downward load -> Upward Reaction (+)
-            
+            # FEA Reactions (Upward +, CCW +)
             idx = [2*span_idx, 2*span_idx+1, 2*(span_idx+1), 2*(span_idx+1)+1]
             fea = np.zeros(4)
             
             if load['type'] == 'P':
-                # Point Load P at distance a
-                # Reactions (Up is +)
                 P = mag
                 a = load['dist']
-                b = L - a
+                b_dist = L - a
                 
-                # Fy1 (Up +)
-                fea[0] = (P * b**2 * (3*a + b)) / L**3
-                # M1 (CCW +)
-                fea[1] = (P * a * b**2) / L**2
-                # Fy2 (Up +)
-                fea[2] = (P * a**2 * (a + 3*b)) / L**3
-                # M2 (CW -) -> Formula gives magnitude, we apply sign
-                fea[3] = -(P * a**2 * b) / L**2
+                fea[0] = (P * b_dist**2 * (3*a + b_dist)) / L**3
+                fea[1] = (P * a * b_dist**2) / L**2
+                fea[2] = (P * a**2 * (a + 3*b_dist)) / L**3
+                fea[3] = -(P * a**2 * b_dist) / L**2
                 
             elif load['type'] == 'U':
-                # UDL w (Full span)
                 w = mag
-                # Fy (Up +)
                 fea[0] = w * L / 2
-                # M1 (CCW +)
                 fea[1] = w * L**2 / 12
-                # Fy2 (Up +)
                 fea[2] = w * L / 2
-                # M2 (CW -)
                 fea[3] = -w * L**2 / 12
 
             fea_local[span_idx] += fea
             
             # Global Load Vector F = F_ext - FEA
-            # (We subtract the reactions to get equivalent nodal loads)
             F_global[idx[0]] -= fea[0]
             F_global[idx[1]] -= fea[1]
             F_global[idx[2]] -= fea[2]
@@ -131,7 +140,12 @@ def solve_beam(spans, sup_df, loads_df, params):
         u_ele = d_all[[2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]]
         x_local = np.linspace(0, L, plot_points_per_span)
         
+        # Recalculate Phi for Shape Function (optional/refined) or reuse
+        Phi = (12 * E * I) / (G * As * L**2)
+        
         # 5.1 Deflection
+        # Note: Ideally, Timoshenko shape functions are complex. 
+        # Using Cubic Hermite is standard for visualization unless beam is extremely deep.
         xi = x_local / L
         N1 = 1 - 3*xi**2 + 2*xi**3
         N2 = L * (xi - 2*xi**2 + xi**3)
@@ -139,19 +153,24 @@ def solve_beam(spans, sup_df, loads_df, params):
         N4 = L * (-xi**2 + xi**3)
         v_x = N1*u_ele[0] + N2*u_ele[1] + N3*u_ele[2] + N4*u_ele[3]
         
-        # 5.2 Internal Forces
-        k_ele = (E * I / L**3) * np.array([
-            [12, 6*L, -12, 6*L],
-            [6*L, 4*L**2, -6*L, 2*L**2],
-            [-12, -6*L, 12, -6*L],
-            [6*L, 2*L**2, -6*L, 4*L**2]
+        # 5.2 Internal Forces (Back-calculation from K*d + FEA)
+        # Must use the SAME Timoshenko K matrix here
+        const = (E * I) / ((1 + Phi) * L**3)
+        k11 = 12
+        k12 = 6 * L
+        k22 = (4 + Phi) * L**2
+        k24 = (2 - Phi) * L**2
+        
+        k_ele = const * np.array([
+            [k11,   k12, -k11,   k12],
+            [k12,   k22, -k12,   k24],
+            [-k11, -k12,  k11,  -k12],
+            [k12,   k24, -k12,   k22]
         ])
         
         fea_vec = fea_local[i]
         
-        # Internal forces at element ends (Nodes)
-        # These are forces FROM Node TO Element
-        # With Correct FEA (Up+), f_int will start with Upward Shear
+        # Force at Start Node
         f_int = np.dot(k_ele, u_ele) + fea_vec 
         
         Fy_start = f_int[0]
@@ -163,15 +182,8 @@ def solve_beam(spans, sup_df, loads_df, params):
         span_loads = loads_df[loads_df['span_index'] == i]
         
         for x in x_local:
-            # Shear V(x): Upward Force on Left Face is Positive
-            # V = Reaction_Left - Loads
+            # Equilibrium Method
             V_curr = Fy_start
-            
-            # Moment M(x): Sagging is Positive (Beam Convention)
-            # Standard conversion: M_beam = M_start(CCW) + V*x ...
-            # Wait, M_start is CCW (External on Node). 
-            # On Left Face of Beam: Internal Moment must balance M_start.
-            # M_start (CCW) tends to make beam Smile (Sag). So +M_start.
             M_curr = M_start + Fy_start * x
             
             if not span_loads.empty:
@@ -197,8 +209,7 @@ def solve_beam(spans, sup_df, loads_df, params):
         shear_total.extend(v_x_static)
         def_total.extend(v_x) 
 
-    # 6. Reactions (R = K*d + FEA)
-    # FEA here must be the global assembled FEA
+    # 6. Reactions
     R_vec = np.dot(K_global, d_all)
     FEA_R = np.zeros(n_dof)
     for i in range(n_spans):
@@ -212,4 +223,7 @@ def solve_beam(spans, sup_df, loads_df, params):
     R_final = R_vec + FEA_R
     reactions = {f"R{row['id']}": R_final[2*int(row['id'])] for _, row in sup_df.iterrows()}
 
+    # Return def_total as is (Positive = Down in Plotly Y-axis flip, but in engineering graph negative is usually down)
+    # The previous fix removed the *-1, assuming Plotly handles it or we want signed value.
+    # Standard: Deflection Down is Negative.
     return np.array(x_total), np.array(moment_total), np.array(shear_total), np.array(def_total), reactions
