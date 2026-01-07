@@ -35,6 +35,10 @@ st.markdown("""
     }
     h4 { color: #1F2937; margin-top: 0px; }
     .block-container { padding-top: 2rem; }
+    /* ปรับ Header ใน Sidebar */
+    [data-testid=stSidebar] h1, [data-testid=stSidebar] h2, [data-testid=stSidebar] h3 {
+        color: #2C3E50;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -49,50 +53,65 @@ if 'analysis_results' not in st.session_state:
 if 'reactions' not in st.session_state:
     st.session_state.reactions = None
 
-# --- 3. Sidebar (Inputs) ---
-params = input_handler.render_sidebar()
-
-# --- 4. Main Area ---
-st.title("🏗️ Professional RC Beam Designer")
-st.caption("Finite Element Analysis & RC Design | Pro Version 3.2")
-
-# --- Top Control Bar: Design Standard & Global Settings ---
-# ย้ายขึ้นมาไว้บนสุด เพื่อให้ Active ตลอดเวลา
-col_std1, col_std2, col_std3 = st.columns([1.5, 1.5, 3])
-with col_std1:
-    design_std = st.selectbox(
-        "📐 Design Code",
-        ["EIT Standard (Thailand)", "ACI 318-19 (International)"],
-        key="std_select" # Add key
+# ==========================================
+# --- 3. Sidebar (Settings & Inputs) ---
+# ==========================================
+with st.sidebar:
+    st.title("⚙️ Design Settings")
+    
+    # --- [MOVED HERE] Design Standard Selection ---
+    design_std = st.radio(
+        "📐 Design Code / Standard",
+        ["ACI 318-19 (International)", "EIT Standard (Thailand)"]
     )
 
-# Determine Factors based on selection (Dynamic Update)
-if design_std == "EIT Standard (Thailand)":
-    load_factor = 1.4 # Simplified conservative
-    phi_flex = 0.90
-    phi_shear = 0.85
-    std_label = "EIT (WSD/SDM)"
-else:
-    load_factor = 1.4 # In real ACI this varies, using 1.4 for demo consistency
-    phi_flex = 0.90
-    phi_shear = 0.75
-    std_label = "ACI 318-19"
+    # Determine Factors based on selection (Dynamic Update)
+    if design_std == "EIT Standard (Thailand)":
+        load_factor = 1.4 # Simplified conservative
+        phi_flex = 0.90
+        phi_shear = 0.85
+        std_label = "EIT (WSD/SDM)"
+    else:
+        load_factor = 1.4 # Simplified for demo consistency
+        phi_flex = 0.90
+        phi_shear = 0.75
+        std_label = "ACI 318-19"
 
-with col_std2:
-    st.metric("Load Factor (Simp.)", f"{load_factor}")
-with col_std3:
-    st.info(f"**Active Factors:** $\phi_{{flex}} = {phi_flex}$ | $\phi_{{shear}} = {phi_shear}$")
+    # Display active factors in Sidebar
+    st.markdown(f"""
+    <div style="background-color: #e8f4f8; padding: 10px; border-radius: 5px; border-left: 4px solid #00a8e8;">
+        <small>Active Factors:</small><br>
+        <b>Load Factor:</b> {load_factor}<br>
+        <b>ϕ (Flexure):</b> {phi_flex}<br>
+        <b>ϕ (Shear):</b> {phi_shear}
+    </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
 
-st.divider()
+    # --- Model Inputs (Existing) ---
+    st.header("1. Model Geometry")
+    params = input_handler.render_sidebar_params() # Assuming this function exists in your handler
+    n_spans, spans, sup_df, stable = input_handler.render_model_inputs_main(params) # Adjusted call
 
-# --- Model Input Section ---
-n_spans, spans, sup_df, stable = input_handler.render_model_inputs(params)
-loads_df = input_handler.render_loads(n_spans, spans, params, sup_df)
+    st.header("2. Loads Definition")
+    loads_df = input_handler.render_loads_main(n_spans, spans, params, sup_df) # Adjusted call
+
+    st.divider()
+    
+    # --- Run Analysis Button ---
+    run_analysis = st.button("🚀 Run Analysis", type="primary")
+
+# ==========================================
+# --- 4. Main Area (Results Display) ---
+# ==========================================
+st.title("🏗️ Professional RC Beam Designer")
+st.caption(f"Finite Element Analysis & RC Design | Code: {std_label} | Pro Version 3.3")
 
 # --- Run Analysis Logic ---
-if st.button("🚀 Run Analysis", type="primary"):
+if run_analysis:
     if not stable:
-        st.error("🚨 Structure is Unstable!")
+        st.error("🚨 Structure is Unstable! Please check supports.")
     else:
         with st.spinner("Computing FEM Analysis..."):
             # Prepare Loads
@@ -117,7 +136,7 @@ if st.button("🚀 Run Analysis", type="primary"):
                 # Store in Session State
                 st.session_state.analysis_results = res_df
                 st.session_state.reactions = reactions
-                st.session_state.final_load_list = final_load_list # Store loads for plotting
+                st.session_state.final_load_list = final_load_list
                 st.success("Analysis Complete!")
 
 # --- 5. Display Results (If Analysis Exists) ---
@@ -142,7 +161,7 @@ if st.session_state.analysis_results is not None:
             raw_m_neg = abs(min(0, span_res['moment'].min())) / 1000.0
             raw_v = span_res['shear'].abs().max() / 1000.0
         
-        # Apply Factor locally for Auto-Design suggestion
+        # Apply Factor locally for Initial Auto-Design suggestion
         des_span = rc_design.design_span_expert(
             raw_m_pos * load_factor, raw_m_neg * load_factor, raw_v * load_factor, 
             params['b'], params['h'], 24, 400, 40, 16
@@ -174,7 +193,7 @@ if st.session_state.analysis_results is not None:
         # Row 2: Full Width Graph
         st.markdown("#### 📈 Internal Force Diagrams")
         fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, final_load_list)
-        fig_ana.update_layout(height=500) # Increase height for better visibility
+        fig_ana.update_layout(height=500)
         st.plotly_chart(fig_ana, use_container_width=True)
         
         # Row 3: Split Tables (Reactions & Factored Forces)
@@ -201,8 +220,9 @@ if st.session_state.analysis_results is not None:
     with t2:
         # Longitudinal Profile
         st.markdown("#### 📏 Reinforcement Profile")
-        fig_long = section_plotter.plot_longitudinal_section(spans, sup_df, design_res, params['h'], 40)
-        fig_long.set_size_inches(12, 2.5)
+        # Call the updated plotter function
+        fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'])
+        fig_long.set_size_inches(12, 3) # Adjust height
         st.pyplot(fig_long, use_container_width=True)
         
         st.divider()
@@ -235,6 +255,9 @@ if st.session_state.analysis_results is not None:
                         params['b'], params['h'], new_cover, bar_size, n_top, n_bot, 
                         f"RB{stirrup_db}@{s_spacing}cm", 24, 400
                     )
+                    # --- [FIX] ปรับขนาดรูปตัดขวางให้กระชับ ---
+                    fig_sec.set_size_inches(4, 4)
+                    fig_sec.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
                     st.pyplot(fig_sec, use_container_width=True)
 
                 with c_right:
@@ -249,7 +272,7 @@ if st.session_state.analysis_results is not None:
                     b_mm, h_mm = params['b'] * 1000, params['h'] * 1000
                     
                     # 1. Flexure Math
-                    st.markdown("##### 1️⃣ Flexural Capacity ($+M$)")
+                    st.markdown(f"##### 1️⃣ Flexural Capacity (+M) | $\phi={phi_flex}$")
                     d_eff = h_mm - new_cover - stirrup_db - (bar_size/2)
                     As_prov = n_bot * (3.1416 * (bar_size/2)**2)
                     a_depth = (As_prov * fy) / (0.85 * fc * b_mm)
@@ -272,7 +295,7 @@ if st.session_state.analysis_results is not None:
                     st.divider()
 
                     # 2. Shear Math
-                    st.markdown("##### 2️⃣ Shear Capacity")
+                    st.markdown(f"##### 2️⃣ Shear Capacity | $\phi={phi_shear}$")
                     Vc = 0.17 * np.sqrt(fc) * b_mm * d_eff / 1000.0
                     Av = 2 * (3.1416 * (stirrup_db/2)**2)
                     s_mm = s_spacing * 10
