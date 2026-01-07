@@ -5,45 +5,37 @@ import numpy as np
 
 def plot_section(b_m, h_m, cover_mm, bar_db, n_top, n_bot, stirrup_txt, fc, fy):
     """
-    Plots the cross-section with CORNER BARS logic.
+    Plots the cross-section (Compact Version 2.0).
     """
-    # [FIX] ลดขนาดรูปลงอีกเหลือ (2.5, 2.5) เพื่อความกะทัดรัด
-    fig, ax = plt.subplots(figsize=(2.5, 2.5))
+    # [FIX] ลดขนาดเหลือ 2x2 นิ้ว
+    fig, ax = plt.subplots(figsize=(2.0, 2.0))
     
     b = b_m * 1000
     h = h_m * 1000
     cover = cover_mm
-    stirrup_dia = 6 # สมมติเหล็กปลอก 6mm
+    stirrup_dia = 6 
     
-    # Draw Concrete
+    # Concrete
     rect = patches.Rectangle((0, 0), b, h, linewidth=1.5, edgecolor='black', facecolor='#f9f9f9')
     ax.add_patch(rect)
     
-    # Draw Stirrup (เส้นประแสดงเหล็กปลอก)
+    # Stirrup
     inset = cover
     if b > 2*inset and h > 2*inset:
-        # มุมโค้งของเหล็กปลอก
         rect_st = patches.FancyBboxPatch((inset, inset), b-2*inset, h-2*inset,
                                          boxstyle="round,pad=0,rounding_size=10",
                                          linewidth=1, edgecolor='darkblue', facecolor='none', linestyle='--')
         ax.add_patch(rect_st)
     
-    # Function to place bars with CORNER priority
+    # Rebar Logic (Corner Priority)
     def draw_bars_row(n, y_center, color):
         if n <= 0: return
-        
-        # ระยะขอบในสุดที่จะวางเหล็กเมน (ชิดมุมเหล็กปลอก)
-        # Start = Cover + Stirrup + Radius of Main Bar
         start_x = cover + stirrup_dia + (bar_db/2)
         end_x = b - (cover + stirrup_dia + (bar_db/2))
-        
         width_avail = end_x - start_x
         
-        if n == 1:
-            # ถ้ามีเส้นเดียว วางตรงกลาง
-            xs = [b/2]
+        if n == 1: xs = [b/2]
         else:
-            # ถ้ามีหลายเส้น แบ่งระยะเท่ากัน (เส้นแรกและท้ายสุดจะอยู่ที่มุมพอดี)
             gap = width_avail / (n - 1)
             xs = [start_x + i*gap for i in range(n)]
             
@@ -51,29 +43,24 @@ def plot_section(b_m, h_m, cover_mm, bar_db, n_top, n_bot, stirrup_txt, fc, fy):
             circle = patches.Circle((cx, y_center), bar_db/2, color=color, zorder=5, ec='black', lw=0.5)
             ax.add_patch(circle)
 
-    # วางเหล็กบน (Top Bars)
     draw_bars_row(n_top, h - (cover + stirrup_dia + bar_db/2), '#d62728')
-            
-    # วางเหล็กล่าง (Bot Bars)
     draw_bars_row(n_bot, cover + stirrup_dia + bar_db/2, '#1f77b4')
             
-    # Labels
-    ax.text(b/2, h + 25, f"{n_top}-DB{bar_db}", ha='center', fontsize=8, color='#d62728', fontweight='bold')
-    ax.text(b/2, -40, f"{n_bot}-DB{bar_db}", ha='center', fontsize=8, color='#1f77b4', fontweight='bold')
-    
-    # Dimensions
-    ax.text(-30, h/2, f"{h:.0f}", rotation=90, va='center', fontsize=7)
-    ax.text(b/2, -70, f"{b:.0f}", ha='center', fontsize=7)
+    # Dimensions (Minimalist)
+    ax.text(-20, h/2, f"{h:.0f}", rotation=90, va='center', fontsize=7)
+    ax.text(b/2, -40, f"{b:.0f}", ha='center', fontsize=7)
 
-    ax.set_xlim(-50, b + 50)
-    ax.set_ylim(-90, h + 50)
+    # Set limits tight
+    ax.set_xlim(-30, b + 30)
+    ax.set_ylim(-50, h + 30)
     ax.set_aspect('equal')
     ax.axis('off')
     
-    plt.subplots_adjust(left=0.05, right=0.95, top=0.90, bottom=0.10)
+    # [FIX] Zero Margins
+    plt.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
     return fig
 
-# ... (ส่วน plot_longitudinal คงเดิม ไม่ต้องแก้) ...
+# ... (ส่วน plot_longitudinal คงเดิม) ...
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_beam, cover=40):
     fig, ax = plt.subplots(figsize=(12, 3))
     cum_dist = [0] + list(pd.Series(spans).cumsum())
