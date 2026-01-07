@@ -267,16 +267,27 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     for i, d in enumerate(current_batch):
                         actual_idx = row_idx + i
                         with cols[i]:
-                            st.caption(f"**Span {actual_idx+1}** ({params['b']}x{params['h']} m)")
-                            
+                            # --- ปรับปรุงการแสดงผลให้ชิดกัน ---
                             fig_sec = section_plotter.plot_section(
                                 params['b'], params['h'], 40, 16,
                                 d['neg']['n'], d['pos']['n'], 
                                 d['shear_stirrups'], 24, 400
                             )
-                            fig_sec.set_size_inches(3, 4) 
+                            
+                            # 1. ใส่หัวข้อลงไปในรูปเลย (เพื่อความชิด)
+                            fig_sec.suptitle(f"Span {actual_idx+1}", fontsize=12, fontweight='bold', y=0.95)
+                            fig_sec.text(0.5, 0.88, f"({params['b']}x{params['h']} m)", ha='center', fontsize=9)
+                            
+                            # 2. ปรับขนาดและตัดขอบขาวทิ้ง (Tighten Up)
+                            fig_sec.set_size_inches(3, 3.5) # ปรับให้สัดส่วนดูเป็นจตุรัสมากขึ้น
+                            fig_sec.subplots_adjust(top=0.85, bottom=0.05, left=0.1, right=0.9)
+                            
+                            # 3. แสดงผล (ใช้หัวข้อในตัวรูป ไม่ใช้ st.caption แล้ว)
                             st.pyplot(fig_sec, use_container_width=True)
                             
+                            # แสดงสถานะเหล็กปลอกแบบกระชับ
+                            status_color = "green" if d['shear_status'] != 'Fail' else "red"
+                            st.markdown(f"<p style='text-align:center; color:{status_color}; font-size:14px; margin-top:-20px;'><b>Shear: {d['shear_status']}</b></p>", unsafe_allow_html=True)     
                             if d['shear_status'] == 'Fail':
                                 st.error("Shear: Fail", icon="❌")
                             else:
@@ -322,6 +333,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
