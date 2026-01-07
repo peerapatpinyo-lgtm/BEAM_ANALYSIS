@@ -5,179 +5,152 @@ import numpy as np
 
 def plot_analysis_results(res, spans, sup_df, loads, reactions):
     """
-    Revised based on Engineering Textbooks:
-    1. Equilibrium Check: Ensures Shear starts/ends exactly at Reaction values.
-    2. Load Representation: Uses 'Distributed Arrows' instead of solid blocks.
-    3. Clear Separation: Supports, Beam, and Reactions are distinct.
+    World-Class Engineering Visualization
+    - Correct Vector directions for Loads (Pointing Down to Beam)
+    - Full Axis Labeling (SI Units)
+    - Clean Aesthetic matching Technical Publications
     """
     cum_dist = [0] + list(np.cumsum(spans))
     total_len = cum_dist[-1]
     
-    # --- PRE-PROCESSING FOR PRECISION (Textbook Equilibrium) ---
-    # Force the shear diagram endpoints to match reactions exactly for visualization
-    # This fixes the "7.50 vs 7.47" numerical error issue visually
+    # Pre-process for exact visualization
     y_shear = res['shear'].values / 1000.0
     y_moment = res['moment'].values / 1000.0
-    
+    y_def = res['deflection'].values
+
     # Define Subplots
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
         vertical_spacing=0.08,
         subplot_titles=(
-            "1. Free Body Diagram (Load Model)", 
+            "1. Free Body Diagram (FBD)", 
             "2. Shear Force Diagram (SFD)", 
             "3. Bending Moment Diagram (BMD)", 
-            "4. Deflection"
+            "4. Deflection Diagram"
         ),
-        row_heights=[0.3, 0.23, 0.23, 0.24]
+        row_heights=[0.3, 0.22, 0.22, 0.26]
     )
 
     # --- ROW 1: FREE BODY DIAGRAM (FBD) ---
-    # 1.1 The Beam (Strong Black Line)
+    # 1.1 The Beam (Neutral Axis)
     fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], mode='lines', 
                              line=dict(color='black', width=5), hoverinfo='skip'), row=1, col=1)
 
-    # 1.2 Supports (Standard Triangle Symbols at Bottom)
+    # 1.2 Supports (Pinned/Roller)
     for s in sup_df.to_dict('records'):
         x_s = cum_dist[s['id']] if s['id'] < len(cum_dist) else 0
         fig.add_trace(go.Scatter(
-            x=[x_s], y=[-0.05], # Slightly below beam
+            x=[x_s], y=[-0.02], # Touching bottom of beam
             mode='markers+text',
-            marker=dict(symbol='triangle-up', size=15, color='#34495e'), # Triangle Up for Pin/Roller base
+            marker=dict(symbol='triangle-up', size=16, color='#2c3e50', line=dict(width=1, color='black')),
             text=[f"{s.get('type','Sup')}"], textposition="bottom center",
             hoverinfo='none', showlegend=False
         ), row=1, col=1)
 
-    # 1.3 Reactions (Green Arrows Pointing Up from further below)
+    # 1.3 Reactions (Green Arrows UP)
     for r in reactions:
         x_r = cum_dist[r['node_id']] if r['node_id'] < len(cum_dist) else 0
         val = r.get('fy', 0) / 1000.0
-        
-        # Reaction Vector
+        # Annotation: Head at (x, 0), Tail below
         fig.add_annotation(
-            x=x_r, y=-0.25, ax=0, ay=40, # Arrow points UP towards the support
-            text=f"R = {val:.2f} kN", 
+            x=x_r, y=-0.15, ax=0, ay=40, # ay positive moves tail DOWN relative to head? No, text relative to point.
+            # Let's use strict coordinates for Engineering precision
+            # Workaround: Pointing UP to the support
+            text=f"R={val:.2f} kN", 
             showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor='#27ae60',
-            font=dict(color='#27ae60', size=12, weight='bold'),
             row=1, col=1
         )
 
-    # 1.4 Loads (Textbook Style: Arrows on Top)
+    # 1.4 Loads (CORRECTED: Pointing DOWN to Beam)
     for l in loads:
         x_pos = l['x']
         mag = l['mag'] / 1000.0
         
         if l['type'] == 'P':
-            # Point Load (Single Red Arrow Down)
+            # Point Load: Head at (x, 0), Tail above
             fig.add_annotation(
-                x=x_pos, y=0.25, ax=0, ay=-40, # Points DOWN to beam
-                text=f"P = {mag:.2f} kN", 
-                showarrow=True, arrowhead=2, arrowcolor='#c0392b', font=dict(color='#c0392b'),
+                x=x_pos, y=0, ax=0, ay=-50, # ay negative = tail is ABOVE head
+                text=f"P={mag:.2f} kN", 
+                showarrow=True, arrowhead=2, arrowcolor='#c0392b', 
                 row=1, col=1
             )
         
         elif l['type'] == 'U':
-            # UDL (Distributed Arrows)
+            # Uniform Load: 
+            # 1. Draw a "Load Line" floating above
+            load_h = 0.25 # Height of load representation
             x_end = x_pos + l['dist']
             
-            # 1. Draw Top Line
+            # The horizontal bar of the UDL
             fig.add_trace(go.Scatter(
-                x=[x_pos, x_end], y=[0.25, 0.25], 
+                x=[x_pos, x_end], y=[load_h, load_h], 
                 mode='lines', line=dict(color='#e67e22', width=2), hoverinfo='skip'
             ), row=1, col=1)
             
-            # 2. Draw Multiple Arrows (Vector Field)
-            n_arrows = max(3, int(l['dist'] * 2)) # At least 3 arrows or 2 per meter
+            # The vertical arrows (Comb pattern)
+            n_arrows = max(3, int(l['dist'] * 3))
             x_arrows = np.linspace(x_pos, x_end, n_arrows)
             for xa in x_arrows:
                 fig.add_annotation(
-                    x=xa, y=0.25, ax=0, ay=25, # Arrow pointing DOWN from line to beam
-                    text="", showarrow=True, arrowhead=1, arrowwidth=1.5, arrowcolor='#e67e22', arrowsize=0.8,
+                    x=xa, y=0, # Head at beam
+                    ax=0, ay=-40, # Tail above beam (approx at load_h)
+                    showarrow=True, arrowhead=1, arrowwidth=1.5, arrowcolor='#e67e22', arrowsize=0.8,
                     row=1, col=1
                 )
             
-            # 3. Label in Center
+            # Label
             fig.add_annotation(
-                x=(x_pos+x_end)/2, y=0.35, 
-                text=f"w = {mag:.2f} kN/m", showarrow=False, font=dict(color='#e67e22', size=12),
+                x=(x_pos+x_end)/2, y=load_h, ax=0, ay=-20,
+                text=f"w={mag:.2f} kN/m", font=dict(color='#e67e22'), showarrow=False,
                 row=1, col=1
             )
 
-    # --- ROW 2: SHEAR FORCE DIAGRAM (SFD) ---
+    # --- ROW 2: SHEAR (SFD) ---
     fig.add_trace(go.Scatter(x=res['x'], y=y_shear, mode='lines', fill='tozeroy', 
                              line=dict(color='#e74c3c', width=2), name='Shear'), row=2, col=1)
     
-    # Label Max/Min with correct sign logic
-    v_max = y_shear.max()
-    v_min = y_shear.min()
-    
-    # Locate peaks
-    idx_max = y_shear.argmax()
-    idx_min = y_shear.argmin()
-    
-    fig.add_annotation(x=res.iloc[idx_max]['x'], y=v_max, text=f"{v_max:.2f}", 
-                       showarrow=True, arrowhead=1, ax=0, ay=-20, row=2, col=1)
-    fig.add_annotation(x=res.iloc[idx_min]['x'], y=v_min, text=f"{v_min:.2f}", 
-                       showarrow=True, arrowhead=1, ax=0, ay=20, row=2, col=1)
+    # Peak Labels
+    v_max, v_min = y_shear.max(), y_shear.min()
+    fig.add_annotation(x=res.iloc[y_shear.argmax()]['x'], y=v_max, text=f"{v_max:.2f}", showarrow=True, ax=0, ay=-20, row=2, col=1)
+    fig.add_annotation(x=res.iloc[y_shear.argmin()]['x'], y=v_min, text=f"{v_min:.2f}", showarrow=True, ax=0, ay=20, row=2, col=1)
 
-    # --- ROW 3: BENDING MOMENT DIAGRAM (BMD) ---
+    # --- ROW 3: MOMENT (BMD) ---
     fig.add_trace(go.Scatter(x=res['x'], y=y_moment, mode='lines', fill='tozeroy', 
                              line=dict(color='#2980b9', width=2), name='Moment'), row=3, col=1)
     
-    # Annotate Max Moment
-    m_max_abs = np.max(np.abs(y_moment))
-    # Find index of max abs moment
+    # Peak Label
     idx_m = np.argmax(np.abs(y_moment))
     m_val = y_moment[idx_m]
+    fig.add_annotation(x=res.iloc[idx_m]['x'], y=m_val, text=f"{m_val:.2f}", showarrow=True, ax=0, ay=30 if m_val > 0 else -30, row=3, col=1)
     
-    fig.add_annotation(
-        x=res.iloc[idx_m]['x'], y=m_val, 
-        text=f"M_max = {m_val:.2f}", 
-        showarrow=True, arrowhead=1, ax=0, ay=30 if m_val > 0 else -30, # Adjust label position based on sign
-        row=3, col=1
-    )
-    
-    # Civil Engineering Convention: Plot Positive Moment on Tension Side (Bottom)
-    # So we invert the Y-axis.
-    fig.update_yaxes(autorange="reversed", title_text="Moment (kNm)", row=3, col=1)
+    # Invert Y (Engineering Convention)
+    fig.update_yaxes(autorange="reversed", row=3, col=1)
 
     # --- ROW 4: DEFLECTION ---
-    y_def = res['deflection'].values
     fig.add_trace(go.Scatter(x=res['x'], y=y_def, mode='lines', 
                              line=dict(color='#8e44ad', width=2), name='Deflection'), row=4, col=1)
-    
-    d_max = np.min(y_def) if np.min(y_def) < 0 else np.max(y_def) # Usually deflection is negative (down)
-    idx_d = np.argmin(y_def)
-    
-    fig.add_annotation(
-        x=res.iloc[idx_d]['x'], y=d_max, 
-        text=f"Δ_max = {d_max:.2f} mm", 
-        showarrow=True, arrowhead=2, ax=0, ay=40, row=4, col=1
-    )
+    d_max = np.min(y_def)
+    fig.add_annotation(x=res.iloc[np.argmin(y_def)]['x'], y=d_max, text=f"{d_max:.2f} mm", showarrow=True, ax=0, ay=40, row=4, col=1)
 
-    # --- GLOBAL LAYOUT STYLING ---
-    fig.update_layout(
-        height=1000, 
-        showlegend=False, 
-        plot_bgcolor='white', 
-        margin=dict(l=60, r=20, t=40, b=40),
-        hovermode="x unified"
-    )
+    # --- LAYOUT & AXIS LABELS ---
+    fig.update_layout(height=1100, showlegend=False, plot_bgcolor='white', margin=dict(t=40, b=40, l=80, r=20))
     
-    # Add Grid Lines at Supports
+    # 1. FBD Axes (Hidden Y, Show X)
+    fig.update_yaxes(showticklabels=False, showgrid=False, zeroline=False, row=1, col=1)
+    
+    # 2. SFD Axes
+    fig.update_yaxes(title_text="Shear Force (kN)", showgrid=True, gridcolor='#eee', zeroline=True, zerolinewidth=2, zerolinecolor='black', row=2, col=1)
+    
+    # 3. BMD Axes
+    fig.update_yaxes(title_text="Moment (kNm)", showgrid=True, gridcolor='#eee', zeroline=True, zerolinewidth=2, zerolinecolor='black', row=3, col=1)
+    
+    # 4. Deflection Axes
+    fig.update_yaxes(title_text="Deflection (mm)", showgrid=True, gridcolor='#eee', zeroline=True, zerolinewidth=1, zerolinecolor='black', row=4, col=1)
+    fig.update_xaxes(title_text="Distance along Beam (m)", showgrid=True, row=4, col=1)
+
+    # Add Support Lines
     for x_line in cum_dist:
         fig.add_vline(x=x_line, line_width=1, line_dash="dash", line_color="gray", opacity=0.5)
-
-    # Axis Formatting
-    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='#eee', zeroline=True, zerolinecolor='#333', title_text="Position (m)", row=4, col=1)
-    
-    # Y-Axes: Show Zero Line clearly
-    for r in [2, 3, 4]:
-        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#eee', 
-                         zeroline=True, zerolinewidth=1.5, zerolinecolor='black', row=r, col=1)
-
-    # Hide Y-ticks on FBD for cleaner look
-    fig.update_yaxes(showticklabels=False, row=1, col=1)
 
     return fig
