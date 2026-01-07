@@ -18,34 +18,56 @@ params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_side
 if not stable:
     st.error("🚨 Structure is unstable! Please check supports (Must have at least 3 reaction components).")
 else:
-    # --- 1. Prepare Loads (User Loads + Self Weight) ---
-    # Self-Weight (Concrete ~ 24 kN/m3)
-    w_sw_kN = params['b'] * params['h'] * 24.0
+    # --- 1. Prepare & Combine Loads (Logic Update) ---
+    # Goal: Merge Self-Weight + User Full-Span UDL into one single load entry
     
-    calc_loads_list = []
+    # 1.1 Calculate Self-Weight (Concrete ~ 24 kN/m3) -> N/m
+    w_sw_N_m = params['b'] * params['h'] * 24.0 * 1000 
     
-    # 1.1 Add Self-Weight
-    for i in range(n_spans):
-        calc_loads_list.append({
-            'span_index': i,
-            'type': 'U',
-            'mag': w_sw_kN * 1000, # N/m
-            'dist': spans[i],      # Full span
-            'desc': 'Self-Weight'
-        })
-        
-    # 1.2 Add User Loads
+    # 1.2 Initialize dictionaries to hold Total UDL per span
+    # Key = span_index, Value = Total Magnitude (N/m)
+    span_total_udl = {i: w_sw_N_m for i in range(n_spans)}
+    
+    combined_loads_list = []
+    
+    # 1.3 Process User Loads
     if not loads_df.empty:
         for _, row in loads_df.iterrows():
-            calc_loads_list.append({
-                'span_index': row['span_index'],
-                'type': row['type'],
-                'mag': row['mag'], 
-                'dist': row['dist'],
-                'desc': 'User Load'
+            s_idx = int(row['span_index'])
+            l_type = row['type']
+            mag = row['mag']   # N or N/m
+            dist = row['dist'] # m
+            
+            current_span_len = spans[s_idx]
+            
+            # CHECK: If it is UDL and covers the FULL span (or close to it)
+            if l_type == 'U' and dist >= (current_span_len - 0.01):
+                # MERGE IT: Add to the existing bucket
+                span_total_udl[s_idx] += mag
+            else:
+                # KEEP SEPARATE: Point loads or partial UDLs
+                combined_loads_list.append({
+                    'span_index': s_idx,
+                    'type': l_type,
+                    'mag': mag,
+                    'dist': dist,
+                    'desc': 'Point/Partial Load'
+                })
+    
+    # 1.4 Add the Merged UDLs to the final list
+    for i in range(n_spans):
+        total_mag = span_total_udl[i]
+        if total_mag > 0:
+            combined_loads_list.append({
+                'span_index': i,
+                'type': 'U',
+                'mag': total_mag,
+                'dist': spans[i], # Full span
+                'desc': 'Total Combined UDL (SW + User)'
             })
             
-    calc_loads_df = pd.DataFrame(calc_loads_list)
+    # Create final DataFrame for Solver
+    calc_loads_df = pd.DataFrame(combined_loads_list)
 
     # --- 2. Solve Beam ---
     x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
@@ -62,17 +84,16 @@ else:
     
     # ================= TAB 1: DIAGRAMS & CHECKS =================
     with tab1:
-        # --- PART 1: PLOT DIAGRAMS (Moved to Top) ---
-        st.info(f"ℹ️ **Note:** Analysis uses **Timoshenko Beam Theory** (Service Load). Includes Self-Weight.")
+        # --- PART 1: PLOT DIAGRAMS ---
+        st.info(f"ℹ️ **Note:** 'Uniform Loads' in the graph now combine **Self-Weight** + **User UDL**.")
         fig = design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R)
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("---")
 
-        # --- PART 2: ANALYSIS SUMMARY (Max/Min) ---
+        # --- PART 2: ANALYSIS SUMMARY ---
         st.subheader("📌 Analysis Summary (Max/Min Values)")
         
-        # Calculate Global Extremes
         v_max_pos = res_df['shear'].max()/1000
         v_max_neg = res_df['shear'].min()/1000
         m_max_pos = res_df['moment'].max()/1000
@@ -82,10 +103,8 @@ else:
         col_sum1, col_sum2, col_sum3 = st.columns(3)
         col_sum1.metric("Max Shear (V+)", f"{v_max_pos:.2f} kN")
         col_sum1.metric("Min Shear (V-)", f"{v_max_neg:.2f} kN")
-        
-        col_sum2.metric("Max Moment (Sagging +)", f"{m_max_pos:.2f} kNm")
-        col_sum2.metric("Max Moment (Hogging -)", f"{m_max_neg:.2f} kNm")
-        
+        col_sum2.metric("Max Moment (+)", f"{m_max_pos:.2f} kNm")
+        col_sum2.metric("Max Moment (-)", f"{m_max_neg:.2f} kNm")
         col_sum3.metric("Max Deflection", f"{d_abs_max:.2f} mm")
         
         # --- PART 3: ENGINEERING CHECKS ---
@@ -98,6 +117,7 @@ else:
                 
                 sum_R = sum(R.values()) / 1000.0 # kN
                 
+                # Sum Loads from the calc_loads_df (already combined)
                 sum_Load = 0.0
                 for _, l in calc_loads_df.iterrows():
                     force = l['mag']
@@ -108,7 +128,6 @@ else:
                 sum_Load_kN = sum_Load / 1000.0
                 diff = sum_R - sum_Load_kN 
                 
-                # FIXED: Used standard Unicode arrows instead of LaTeX to prevent errors
                 st.write(f"Total Applied Load (↓): **{sum_Load_kN:.2f} kN**")
                 st.write(f"Total Reaction (↑): **{sum_R:.2f} kN**")
                 
@@ -120,35 +139,39 @@ else:
             # 2. Deflection Control
             with ec2:
                 st.markdown("### 📉 Deflection Control")
-                max_span_L = max(spans) * 1000 # mm
+                max_span_L = max(spans) * 1000 
                 allowable_def = max_span_L / 240.0
                 
                 st.write(f"Max Deflection: **{d_abs_max:.2f} mm**")
                 st.write(f"Allowable Limit (L/240): **{allowable_def:.2f} mm**")
                 
                 if d_abs_max <= allowable_def:
-                    st.success(f"✅ PASS ( < L/240 )")
+                    st.success(f"✅ PASS")
                 else:
-                    st.warning(f"⚠️ EXCEEDS LIMIT (Consider increasing Depth 'h')")
+                    st.warning(f"⚠️ EXCEEDS LIMIT")
 
-        # --- PART 4: CALCULATION DETAILS ---
-        with st.expander("🧮 Reaction Calculation Details", expanded=False):
-            st.markdown("### 1. Self-Weight")
-            st.markdown(f"*The slope in the Shear Diagram is caused by this Uniform Load.*")
-            # FIXED: Used raw string for LaTeX or avoided backslash in f-string completely
-            st.latex(f"w_{{sw}} = {params['b']:.2f} \\times {params['h']:.2f} \\times 24 = \\mathbf{{{w_sw_kN:.3f}}} \\text{{ kN/m}}")
+        # --- PART 4: LOAD DETAILS ---
+        with st.expander("🧮 Load Combination Details", expanded=False):
+            st.markdown("### How Loads are Combined:")
+            st.write(f"**1. Self-Weight (SW):** {w_sw_N_m/1000:.2f} kN/m (Calculated automatically)")
             
-            st.markdown("### 2. Reaction Forces (Ry)")
-            st.latex(r"\{R\} = [K]\{d\} - \{F_{equiv}\}")
+            st.write("**2. Load Breakdown per Span:**")
             
-            if R:
-                r_data = []
-                for node_idx in sorted([int(k[1:]) for k in R.keys()]):
-                    key = f"R{node_idx}"
-                    if key in R:
-                        val = R[key] / 1000.0 
-                        r_data.append({"Node": node_idx, "Reaction (kN)": f"{val:.3f}"})
-                st.table(pd.DataFrame(r_data))
+            # Show breakdown table
+            breakdown_data = []
+            for i in range(n_spans):
+                # Find the Combined UDL for this span in the dataframe
+                row = calc_loads_df[(calc_loads_df['span_index'] == i) & (calc_loads_df['type'] == 'U')]
+                if not row.empty:
+                    total_udl = row.iloc[0]['mag'] / 1000.0 # kN/m
+                    user_part = total_udl - (w_sw_N_m/1000.0)
+                    breakdown_data.append({
+                        "Span": i+1,
+                        "Self-Weight (kN/m)": f"{w_sw_N_m/1000:.2f}",
+                        "User UDL (kN/m)": f"{user_part:.2f}",
+                        "TOTAL UDL (kN/m)": f"**{total_udl:.2f}**"
+                    })
+            st.table(pd.DataFrame(breakdown_data))
         
     # ================= TAB 2: DESIGN & REPORT =================
     with tab2:
@@ -171,7 +194,7 @@ else:
             
             d = params['h'] - 0.05
             
-            # Design Functions
+            # Design
             As_pos, rho_pos, _, steps_pos = rc_design.design_beam_flexure(mu_pos, params['b'], d, params['fc'], params['fy'])
             As_neg, rho_neg, _, steps_neg = rc_design.design_beam_flexure(mu_neg, params['b'], d, params['fc'], params['fy'])
             s_req, _, steps_shear = rc_design.check_shear(vu_max, params['b'], d, params['fc'], params['fy'])
