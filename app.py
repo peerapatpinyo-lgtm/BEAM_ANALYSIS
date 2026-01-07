@@ -220,16 +220,27 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     )
 
             with t3:
-                st.subheader("Design Summary Table")
-                report_data = []
-                for idx, res in enumerate(design_res):
-                    report_data.append({
-                        "Span": idx+1,
-                        "Top Bars": f"{res['neg']['n']}-DB16",
-                        "Bot Bars": f"{res['pos']['n']}-DB16",
-                        "Stirrups": res['shear_stirrups'],
-                        "Capacity +": f"{res['pos']['capacity']:.2f} kNm",
-                        "Capacity -": f"{res['neg']['capacity']:.2f} kNm",
-                        "Note": res['pos']['note']
-                    })
-                st.dataframe(pd.DataFrame(report_data), use_container_width=True)
+                st.subheader("📝 Detailed Calculation Report")
+                st.caption("Step-by-step design calculation per ACI 318 / EIT Standard")
+                
+                # Create tabs for each span
+                span_tabs = st.tabs([f"Span {i+1}" for i in range(len(spans))])
+                
+                for i, tab in enumerate(span_tabs):
+                    res = design_res[i]
+                    with tab:
+                        # 1. Flexure Positive
+                        with st.expander("🔵 Positive Moment Design (Bottom Steel)", expanded=True):
+                            for line in res['pos']['logs']:
+                                st.markdown(line)
+                        
+                        # 2. Flexure Negative
+                        with st.expander("🔴 Negative Moment Design (Top Steel)", expanded=False):
+                            for line in res['neg']['logs']:
+                                st.markdown(line)
+                                
+                        # 3. Shear
+                        with st.expander("✂️ Shear Design (Stirrups)", expanded=False):
+                            for line in res['shear_logs']:
+                                st.markdown(line)
+            
