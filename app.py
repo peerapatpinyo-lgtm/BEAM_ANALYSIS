@@ -147,7 +147,8 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 des_span['db'] = 16
                 design_res.append(des_span)
             
-            # --- 5. Visualization Results ---
+
+# --- 5. Visualization Results ---
             t1, t2, t3 = st.tabs(["📊 Analysis Results", "🏗️ Design & Detailing", "📝 Calculation Report"])
             
             with t1:
@@ -161,29 +162,20 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     fig_ana = design_view.plot_analysis_results(res_df, spans, sup_df, final_load_list)
                     st.plotly_chart(fig_ana, use_container_width=True)
                 
-                    with col_loads:
+                with col_loads:
                     st.markdown("#### 📥 Applied Loads (kN, m)")
                     
                     # 1. แสดง Self-weight
                     sw_val = params['b'] * params['h'] * 24.0
                     st.info(f"**Self-weight:**\n{sw_val:.2f} kN/m (All Spans)")
                     
-                    # 2. แสดง User Loads (เช็คตัวแปรก่อนเรียกใช้)
-                    # ใช้ st.session_state.load_list หรือเช็ค loads_df
-                    if 'loads_df' in locals() and loads_df is not None and not loads_df.empty:
-                        display_loads = loads_df.copy()
-                        if 'mag' in display_loads.columns:
-                            display_loads['mag'] = (display_loads['mag'] / 1000.0).round(2)
-                        
-                        st.dataframe(
-                            display_loads[['type', 'span_index', 'mag', 'dist']], 
-                            use_container_width=True,
-                            hide_index=True
-                        )
-                    elif st.session_state.load_list:
-                        # กรณี loads_df หาย แต่ใน session_state ยังมีข้อมูล
+                    # 2. แสดง User Loads
+                    # ดึงข้อมูลจาก Session State โดยตรงเพื่อป้องกัน AttributeError
+                    if st.session_state.load_list:
                         df_temp = pd.DataFrame(st.session_state.load_list)
-                        df_temp['mag'] = (df_temp['mag'] / 1000.0).round(2)
+                        # แปลงหน่วยแสดงผลเป็น kN
+                        df_temp['mag'] = (df_temp['mag'].astype(float) / 1000.0).round(2)
+                        
                         st.dataframe(
                             df_temp[['type', 'span_index', 'mag', 'dist']], 
                             use_container_width=True,
@@ -194,7 +186,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
 
                 st.divider()
                 
-                # ส่วนแสดงผล Reaction ด้านล่าง
+                # ส่วนแสดงผล Reaction
                 st.markdown("#### 🏁 Reaction Forces")
                 reac_data = []
                 uplift_warning = False
@@ -211,7 +203,6 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Reaction (kN)": val_disp,
                         "Status": status_text
                     })
-                
                 st.dataframe(pd.DataFrame(reac_data), use_container_width=True, hide_index=True)
                 if uplift_warning:
                     st.warning("⚠️ **Found Uplift:** ตรวจสอบการยึดรั้งของจุดรองรับ")
@@ -240,7 +231,6 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
 
                 st.divider()
                 st.markdown("### 📋 Bill of Quantities & Bar Schedule")
-                
                 bbs_list = rc_design.generate_bbs(design_res, spans, params['b'], params['h'], 40)
                 vol_conc, w_steel = rc_design.get_boq(spans, params['b'], params['h'], bbs_list)
                 
@@ -250,33 +240,21 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 ratio = w_steel / vol_conc if vol_conc > 0 else 0
                 m3.metric("Steel Ratio", f"{ratio:.1f} kg/m³")
                 
-                st.write("**Bar Bending Schedule (BBS)**")
                 if bbs_list:
-                    st.dataframe(
-                        pd.DataFrame(bbs_list),
-                        column_config={
-                            "No. of Bars": st.column_config.NumberColumn(format="%d"),
-                            "Length (m)": st.column_config.NumberColumn(format="%.2f"),
-                            "Total Wt (kg)": st.column_config.NumberColumn(format="%.2f"),
-                        },
-                        use_container_width=True, hide_index=True
-                    )
+                    st.dataframe(pd.DataFrame(bbs_list), use_container_width=True, hide_index=True)
 
             with t3:
                 st.subheader("📝 Detailed Calculation Basis")
-                
-                # แสดงการคำนวณ Self-weight ให้ผู้ใช้ตรวจสอบ
                 st.info(f"""
                 **1. Self-weight Analysis (Dead Load):**
                 * Section: {params['b']} m (W) x {params['h']} m (H)
                 * Concrete Density: 24.0 kN/m³
                 * Calculation: {params['b']} x {params['h']} x 24.0 = **{sw_kn_m:.2f} kN/m**
                 
-                **2. Load Combinations:**
-                * Used Factor (Gamma): {factor} (Applied to both DL and LL for this version)
+                **2. Design Factors:**
+                * Gamma ($\gamma$): {factor}
                 """)
                 
-                st.write("### 3. Design Summary Table")
                 report_data = []
                 for idx, res in enumerate(design_res):
                     report_data.append({
@@ -284,9 +262,8 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Top Bars": f"{res['neg']['n']}-DB16",
                         "Bot Bars": f"{res['pos']['n']}-DB16",
                         "Stirrups": res['shear_stirrups'],
-                        "Moment Capacity (+)": f"{res['pos']['capacity']:.2f} kNm",
-                        "Moment Capacity (-)": f"{res['neg']['capacity']:.2f} kNm",
-                        "Crack Check": "OK" if res['pos']['crack_ok'] else "⚠️ Spacing too wide",
+                        "Capacity (+)": f"{res['pos']['capacity']:.2f} kNm",
+                        "Capacity (-)": f"{res['neg']['capacity']:.2f} kNm",
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
