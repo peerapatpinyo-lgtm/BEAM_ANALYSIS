@@ -2,114 +2,98 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-def plot_section(b, h, cover, db, n_top, n_bot, stir_label, fc, fy):
-    """ 
-    Engineering Cross Section 
+def plot_section(b_m, h_m, cover_mm, db_mm, n_top, n_bot, stir_info, fc, fy):
     """
-    fig, ax = plt.subplots(figsize=(4, 5)) # Slightly compact to fit side-by-side
+    วาด Cross Section ของคาน
+    """
+    b = b_m * 1000  # Convert to mm
+    h = h_m * 1000
+    cover = cover_mm
     
-    # Convert m to mm for drawing
-    B, H = b*1000, h*1000
-    c = cover
+    fig, ax = plt.subplots(figsize=(4, 5))
     
-    # 1. Concrete
-    rect = patches.Rectangle((0, 0), B, H, linewidth=2, edgecolor='black', facecolor='#f9f9f9')
+    # 1. Concrete Face
+    rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#333', facecolor='#f0f0f0')
     ax.add_patch(rect)
     
-    # 2. Stirrup
-    db_stir = 6
-    w_s = B - 2*c
-    h_s = H - 2*c
-    stir = patches.Rectangle((c, c), w_s, h_s, linewidth=2, edgecolor='blue', facecolor='none')
-    ax.add_patch(stir)
+    # 2. Stirrup (Assume RB6 or RB9)
+    stir_dia = 6 # mm
+    s_w = b - 2*cover
+    s_h = h - 2*cover
+    stirrup = patches.Rectangle((cover, cover), s_w, s_h, 
+                                linewidth=2, edgecolor='#e74c3c', facecolor='none', linestyle='-')
+    ax.add_patch(stirrup)
     
-    # 3. Main Bars (Logic: Always at Corners first)
-    # Top
-    y_top = H - c - db/2 - db_stir
-    if n_top < 2: n_top = 2 # Minimum safety
-    x_tops = np.linspace(c + db_stir + db/2, B - c - db_stir - db/2, n_top)
-    
-    for x in x_tops:
-        circle = patches.Circle((x, y_top), db/2, edgecolor='black', facecolor='red', zorder=5)
+    # 3. Rebars (Bottom)
+    # Calculate spacing
+    if n_bot > 1:
+        gap_bot = (s_w - stir_dia*2 - db_mm) / (n_bot - 1)
+    else:
+        gap_bot = 0
+        
+    for i in range(n_bot):
+        cx = cover + stir_dia + db_mm/2 + i*gap_bot
+        cy = cover + stir_dia + db_mm/2
+        circle = patches.Circle((cx, cy), db_mm/2, edgecolor='black', facecolor='#2980b9')
         ax.add_patch(circle)
         
-    # Bot
-    y_bot = c + db_stir + db/2
-    if n_bot < 2: n_bot = 2
-    x_bots = np.linspace(c + db_stir + db/2, B - c - db_stir - db/2, n_bot)
-    
-    for x in x_bots:
-        circle = patches.Circle((x, y_bot), db/2, edgecolor='black', facecolor='red', zorder=5)
+    # 4. Rebars (Top)
+    if n_top > 1:
+        gap_top = (s_w - stir_dia*2 - db_mm) / (n_top - 1)
+    else:
+        gap_top = 0
+        
+    for i in range(n_top):
+        cx = cover + stir_dia + db_mm/2 + i*gap_top
+        cy = h - (cover + stir_dia + db_mm/2)
+        circle = patches.Circle((cx, cy), db_mm/2, edgecolor='black', facecolor='#2980b9')
         ax.add_patch(circle)
+        
+    # Annotations
+    ax.text(b/2, h/2, f"{b:.0f}x{h:.0f} mm", ha='center', va='center', fontsize=12, color='#7f8c8d')
+    ax.text(b/2, -50, f"Bot: {n_bot}-DB{db_mm}\nTop: {n_top}-DB{db_mm}", ha='center', va='top', fontsize=10)
+    ax.text(b/2, h+20, f"Stirrup: {stir_info}", ha='center', va='bottom', fontsize=10, color='red')
 
-    # 4. Annotations
-    ax.text(B/2, H+20, f"{int(B)}", ha='center', fontsize=11)
-    ax.text(-20, H/2, f"{int(H)}", va='center', rotation=90, fontsize=11)
-    
-    ax.text(B/2, H/2, f"{n_top}-DB{db} (Top)\n{n_bot}-DB{db} (Bot)\n{stir_label}", 
-            ha='center', va='center', bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'), fontsize=9)
-
-    ax.set_xlim(-50, B+50)
-    ax.set_ylim(-50, H+50)
+    ax.set_xlim(-50, b+50)
+    ax.set_ylim(-150, h+100)
     ax.set_aspect('equal')
     ax.axis('off')
+    
     return fig
 
-def plot_longitudinal_detailed(span_len, h, cover, n_top, n_bot, db, s_stir, span_id):
+def plot_longitudinal_detailed(L_m, h_m, cover_mm, n_top, n_bot, db_mm, s_stir_cm, span_id):
     """
-    Clean Longitudinal Profile
-    - Fix: Stirrups won't overlap into a blob.
-    - Fix: Clean dimension lines.
+    วาดรูปด้านข้างคาน (Longitudinal)
     """
-    L_mm = span_len * 1000
-    h_mm = h * 1000
+    L = L_m * 1000
+    h = h_m * 1000
     
-    # Create Figure (Wide aspect)
-    fig, ax = plt.subplots(figsize=(10, 3.5))
+    fig, ax = plt.subplots(figsize=(10, 3))
     
-    # 1. Beam Body
-    ax.plot([0, L_mm], [0, 0], 'k-', linewidth=1.5)
-    ax.plot([0, L_mm], [h_mm, h_mm], 'k-', linewidth=1.5)
-    ax.plot([0, 0], [0, h_mm], 'k--', linewidth=1)
-    ax.plot([L_mm, L_mm], [0, h_mm], 'k--', linewidth=1)
+    # Concrete Beam
+    rect = patches.Rectangle((0, 0), L, h, linewidth=2, edgecolor='black', facecolor='white')
+    ax.add_patch(rect)
     
-    # 2. Main Bars (Red)
-    ax.plot([cover, L_mm-cover], [h_mm-cover-10, h_mm-cover-10], 'r-', linewidth=2, label='Top')
-    ax.plot([cover, L_mm-cover], [cover+10, cover+10], 'r-', linewidth=2, label='Bot')
+    # Top Bar (Simplified)
+    ax.plot([50, L-50], [h-cover_mm-10, h-cover_mm-10], color='blue', linewidth=3, label='Top Bar')
     
-    # 3. Stirrups (Blue - Thinner & Clean)
-    s_mm = s_stir * 10
-    # Avoid drawing if spacing is too dense relative to pixel size, but for matplotlib vector it's fine.
-    # Just make them thinner and distinct.
-    x_stir = np.arange(cover + 50, L_mm - cover - 50, s_mm)
+    # Bot Bar
+    ax.plot([50, L-50], [cover_mm+10, cover_mm+10], color='blue', linewidth=3, label='Bot Bar')
     
-    # Use vlines for better performance and look
-    ax.vlines(x_stir, ymin=cover, ymax=h_mm-cover, colors='blue', linewidth=0.6, alpha=0.7)
+    # Stirrups
+    s_mm = s_stir_cm * 10
+    n_stir = int((L - 100) / s_mm)
+    for i in range(n_stir + 1):
+        x = 50 + i*s_mm
+        ax.plot([x, x], [cover_mm, h-cover_mm], color='red', linewidth=1, linestyle='--')
+        
+    ax.text(L/2, h/2, f"SPAN {span_id} (L={L_m:.2f}m)", ha='center', fontsize=14, alpha=0.3)
     
-    # 4. Dimensions & Labels
-    # Mid-span Text
-    ax.text(L_mm/2, h_mm + 50, f"Span {span_id}: L = {span_len:.2f} m", 
-            ha='center', fontsize=12, fontweight='bold', color='#333')
+    # Dimensions
+    ax.annotate(f"{L_m:.2f} m", xy=(L/2, -50), ha='center')
     
-    # Rebar Labels (with Leader Lines)
-    ax.annotate(f"{n_top}-DB{db}", xy=(L_mm*0.2, h_mm-cover), xytext=(L_mm*0.2, h_mm+100),
-                arrowprops=dict(arrowstyle='->', color='red'), color='red', fontsize=10)
-    
-    ax.annotate(f"{n_bot}-DB{db}", xy=(L_mm*0.2, cover), xytext=(L_mm*0.2, -80),
-                arrowprops=dict(arrowstyle='->', color='red'), color='red', fontsize=10)
-    
-    # Stirrup Label (Point to one stirrup)
-    if len(x_stir) > 0:
-        idx = len(x_stir)//2
-        ax.annotate(f"RB6@{s_stir}cm", xy=(x_stir[idx], h_mm/2), xytext=(x_stir[idx]+150, h_mm/2),
-                    arrowprops=dict(arrowstyle='->', color='blue'), color='blue', fontsize=10, bbox=dict(facecolor='white', edgecolor='none'))
-
-    # Supports
-    ax.plot(0, -20, marker='^', color='black', markersize=10, clip_on=False)
-    ax.plot(L_mm, -20, marker='^', color='black', markersize=10, clip_on=False)
-
-    ax.set_ylim(-150, h_mm + 200)
-    ax.set_xlim(-200, L_mm + 200)
+    ax.set_xlim(-200, L+200)
+    ax.set_ylim(-100, h+100)
+    ax.set_aspect('equal')
     ax.axis('off')
-    
     return fig
