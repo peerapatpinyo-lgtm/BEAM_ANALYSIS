@@ -5,11 +5,14 @@ class BeamSolver:
     def __init__(self, spans, supports, loads, E, b, h, I):
         self.spans = spans
         self.supports = supports
-        self.loads = loads
+        self.loads = loads # User defined loads
         self.E = E
         self.b = b
         self.h = h
         self.I = I
+        
+        # Material Constants
+        self.DENSITY_CONCRETE = 24.0 # kN/m3 (Unit Weight)
         
         # Timoshenko Parameters
         self.nu = 0.2 
@@ -31,7 +34,6 @@ class BeamSolver:
         k[1, 0] = 6 * L;     k[1, 1] = (4 + phi)*L**2;  k[1, 2] = -6 * L;      k[1, 3] = (2 - phi)*L**2
         k[2, 0] = -12;       k[2, 1] = -6 * L;          k[2, 2] = 12;          k[2, 3] = -6 * L
         k[3, 0] = 6 * L;     k[3, 1] = (2 - phi)*L**2;  k[3, 2] = -6 * L;      k[3, 3] = (4 + phi)*L**2
-        
         return k * const
 
     def solve(self):
@@ -40,7 +42,24 @@ class BeamSolver:
             K_global = np.zeros((n_dof, n_dof))
             F_global = np.zeros(n_dof)
             
-            # 1. Stiffness Matrix
+            # --- 0. PREPARE TOTAL LOADS (USER + SELF WEIGHT) ---
+            # Calculate Self Weight (kN/m)
+            w_self = self.b * self.h * self.DENSITY_CONCRETE
+            
+            # Combine User Loads with Self Weight
+            # We treat Self Weight as a UDL on EVERY span
+            all_loads = self.loads.copy()
+            for i, L in enumerate(self.spans):
+                all_loads.append({
+                    'type': 'U',
+                    'span_index': i,
+                    'x': 0.0,
+                    'dist': L,
+                    'mag': w_self,
+                    'is_self_weight': True # Tag for visualization if needed
+                })
+
+            # --- 1. Stiffness Matrix ---
             for i, L in enumerate(self.spans):
                 k_local = self._get_timoshenko_stiffness(L)
                 idxs = [2*i, 2*i+1, 2*(i+1), 2*(i+1)+1]
@@ -48,8 +67,8 @@ class BeamSolver:
                     for c in range(4):
                         K_global[idxs[r], idxs[c]] += k_local[r, c]
 
-            # 2. Loads (Fixed End Forces)
-            for load in self.loads:
+            # --- 2. Loads (Fixed End Forces) ---
+            for load in all_loads:
                 span_idx = load.get('span_index')
                 if span_idx is None or span_idx >= len(self.spans): continue
                 
@@ -72,6 +91,7 @@ class BeamSolver:
                     
                     if x2 > x1:
                         w = mag
+                        # Integration for partial UDL FEM
                         def int_term1(x): return (L**2 * x**2)/2 - (2*L * x**3)/3 + (x**4)/4
                         def int_term2(x): return (L * x**3)/3 - (x**4)/4
                         
@@ -89,7 +109,7 @@ class BeamSolver:
                 idxs = [2*span_idx, 2*span_idx+1, 2*(span_idx+1), 2*(span_idx+1)+1]
                 for j in range(4): F_global[idxs[j]] += fem[j]
 
-            # 3. Boundary Conditions
+            # --- 3. Boundary Conditions ---
             fixed_dofs = []
             for s in self.supports:
                 nid = s.get('id', s.get('node_id'))
@@ -106,25 +126,25 @@ class BeamSolver:
                     d_free = np.linalg.solve(K_free, F_free)
                     d_global[free_dofs] = d_free
                 except np.linalg.LinAlgError:
-                    return None, None, {"error": "Structure Unstable"}
+                    return None, None, {"error": "Structure Unstable (Singular Matrix)"}
             
-            # 4. Reactions
+            # --- 4. Reactions ---
+            # R = K*d - F_equiv
             R_global = np.dot(K_global, d_global) - F_global
             reactions = {i: R_global[2*i] for i in range(self.n_nodes)}
 
-            # 5. Method of Sections (Result Arrays)
+            # --- 5. Results Generation ---
             x_plot, v_plot, m_plot, d_plot = [], [], [], []
             
             for span_i, L_span in enumerate(self.spans):
                 x_start_node = self.nodes_x[span_i]
                 u_ele = d_global[[2*span_i, 2*span_i+1, 2*(span_i+1), 2*(span_i+1)+1]]
                 
-                # Use finer resolution for smooth curves
                 for x_local in np.linspace(0, L_span, 51):
                     x_global = x_start_node + x_local
                     V_x, M_x = 0.0, 0.0
                     
-                    # Reactions
+                    # 5.1 Reactions from Left
                     for node_i in range(span_i + 1):
                         if node_i in reactions:
                             r_pos = self.nodes_x[node_i]
@@ -132,8 +152,8 @@ class BeamSolver:
                                 V_x += reactions[node_i]
                                 M_x += reactions[node_i] * (x_global - r_pos)
                     
-                    # Loads
-                    for load in self.loads:
+                    # 5.2 ALL Loads (User + Self Weight) from Left
+                    for load in all_loads:
                         l_span_idx = load['span_index']
                         l_start = self.nodes_x[l_span_idx]
                         if l_start > x_global: continue
@@ -154,13 +174,12 @@ class BeamSolver:
                                 V_x -= force
                                 M_x -= force * (x_global - cent)
                     
-                    # Deflection (Hermitian) - Output in mm
+                    # Deflection (mm)
                     xi = x_local / L_span
                     N1 = 1 - 3*xi**2 + 2*xi**3
                     N2 = x_local * (1 - 2*xi + xi**2)
                     N3 = 3*xi**2 - 2*xi**3
                     N4 = x_local * (xi**2 - xi)
-                    # u_ele is in meters, convert to mm
                     def_val = (N1*u_ele[0] + N2*u_ele[1] + N3*u_ele[2] + N4*u_ele[3]) * 1000 
 
                     x_plot.append(x_global)
@@ -169,6 +188,11 @@ class BeamSolver:
                     d_plot.append(def_val)
 
             df_res = pd.DataFrame({'x': x_plot, 'shear': v_plot, 'moment': m_plot, 'deflection': d_plot})
+            
+            # Save final w_self to access from outside if needed
+            self.w_self_used = w_self
+            self.all_loads_used = all_loads # For equilibrium check
+            
             return df_res, reactions, {"status": "success"}
 
         except Exception as e:
@@ -176,12 +200,13 @@ class BeamSolver:
 
     def check_equilibrium(self, reactions):
         """
-        Calculates Sum Fy and Sum Moment to verify static equilibrium.
+        Updated to include Self-Weight in equilibrium check
         """
         sum_fy_load = 0
-        sum_m_load = 0  # Moment about x=0
+        sum_m_load = 0 
         
-        for load in self.loads:
+        # Use self.all_loads_used which includes SW
+        for load in getattr(self, 'all_loads_used', self.loads):
             span_idx = load['span_index']
             base_x = self.nodes_x[span_idx]
             
@@ -200,22 +225,10 @@ class BeamSolver:
                 sum_m_load += f * x_cent
                 
         sum_fy_reac = sum(reactions.values())
-        sum_m_reac = 0
-        for nid, r_val in reactions.items():
-            x_r = self.nodes_x[nid]
-            sum_m_reac += r_val * x_r
-            
-        # Add Fixed Support Moments to Moment Check (if any)
-        # Note: In this simplified 1D beam scalar model, reaction dictionary usually only carries Fy.
-        # If we wanted to check Moment Reaction strictly, we'd need to extract Moment from R_global.
-        # However, for basic check: Sum Down = Sum Up is the most critical visual check.
-        
         diff_fy = sum_fy_reac - sum_fy_load
         
         return {
             "load_down": sum_fy_load,
             "react_up": sum_fy_reac,
-            "diff_fy": diff_fy,
-            "moment_load": sum_m_load,
-            "moment_react": sum_m_reac
+            "diff_fy": diff_fy
         }
