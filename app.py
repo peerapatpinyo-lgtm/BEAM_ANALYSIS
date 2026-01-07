@@ -40,7 +40,7 @@ else:
             st.number_input("Live Load Factor (LL)", value=1.0, disabled=True, key="fll_serv")
         tag = "M/V (Service)"
         st.info("ℹ️ Using **Service Load** for Deflection Check.")
-        
+        is_service = True
     else:
         # Ultimate / Custom Mode
         with col_fac1:
@@ -49,6 +49,7 @@ else:
             f_ll = st.number_input("Live Load Factor (LL)", value=1.7, step=0.1, format="%.2f", key="fll_ult")
         tag = "Mu/Vu (Ultimate)"
         st.warning(f"⚡ Using **Factored Load**: {f_dl} DL + {f_ll} LL")
+        is_service = False
 
     # --- 1. Prepare & Combine Loads ---
     # 1.1 Calculate Self-Weight (Dead Load)
@@ -85,7 +86,7 @@ else:
                         'type': l_type,
                         'mag': mag_factored,
                         'dist': dist,
-                        'desc': f'Point/Partial (LL x {f_ll})'
+                        'desc': 'User (Partial/Point)'
                     })
             except Exception as e:
                 pass
@@ -99,7 +100,7 @@ else:
                 'type': 'U',
                 'mag': total_mag,
                 'dist': spans[i], 
-                'desc': 'Total Combined (Factored DL+LL)'
+                'desc': 'Total Combined UDL'
             })
             
     calc_loads_df = pd.DataFrame(combined_loads_list)
@@ -134,103 +135,144 @@ else:
         d_abs_max = res_df['deflection'].abs().max()
         
         col_res1, col_res2, col_res3, col_res4 = st.columns(4)
-        col_res1.metric(f"Max Shear", f"{v_max:.2f} kN")
+        col_res1.metric(f"Max Shear ({tag})", f"{v_max:.2f} kN")
         col_res2.metric(f"Max Moment (+)", f"{m_max_pos:.2f} kNm")
         col_res3.metric(f"Max Moment (-)", f"{m_max_neg:.2f} kNm")
         col_res4.metric("Max Deflection", f"{d_abs_max:.2f} mm")
         
-        # 2.2 REACTION TABLE (FIXED KEYERROR)
+        # 2.2 REACTION TABLE
         st.markdown("### 📍 Support Reactions")
         if R:
             reaction_data = []
             
-            # Helper to safely find support type by location
+            # Helper to safely find support type
             def get_sup_type_safe(node_idx):
-                # 1. Calculate X position of this node
                 node_x = sum(spans[:node_idx])
-                
-                # 2. Check standard column names for position
-                # (Since we don't know if it's 'position', 'x', or 'location')
                 target_col = None
                 for col in ['position', 'x', 'location', 'dist']:
                     if col in sup_df.columns:
                         target_col = col
                         break
-                
                 if target_col:
-                    # Find support at this X (allow small float error)
                     match = sup_df[np.abs(sup_df[target_col] - node_x) < 0.01]
-                    if not match.empty:
-                        return match.iloc[0]['type']
-                
-                # Fallback: Check if 'node_index' exists
+                    if not match.empty: return match.iloc[0]['type']
                 if 'node_index' in sup_df.columns:
                      match = sup_df[sup_df['node_index'] == node_idx]
                      if not match.empty: return match.iloc[0]['type']
-
                 return "Support"
 
             total_reaction = 0
             for key, val in R.items():
-                node_idx = int(key[1:]) # 'R0' -> 0
+                node_idx = int(key[1:]) 
                 val_kN = val / 1000.0
                 total_reaction += val_kN
-                
                 reaction_data.append({
                     "Node": node_idx,
                     "Support Type": get_sup_type_safe(node_idx),
                     "Reaction Force (kN)": val_kN
                 })
             
-            # Sort by Node
             df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
+            st.dataframe(df_reac.style.format({"Reaction Force (kN)": "{:.2f}"}), use_container_width=True, hide_index=True)
             
-            # Display Table
-            st.dataframe(
-                df_reac.style.format({"Reaction Force (kN)": "{:.2f}"}),
-                use_container_width=True,
-                hide_index=True
-            )
-            st.caption(f"**Total Reaction:** {total_reaction:.2f} kN")
-        
         st.markdown("---")
+        
+        # --- PART 3: ENGINEERING CHECKS (RESTORED) ---
+        with st.expander("✅ Engineering Checks (Equilibrium & Deflection)", expanded=True):
+            ec1, ec2 = st.columns(2)
+            
+            # 1. Equilibrium Check
+            with ec1:
+                st.markdown("### ⚖️ Equilibrium Check (Sigma Fy = 0)")
+                
+                sum_R_kN = sum(R.values()) / 1000.0
+                
+                # Sum Factored Applied Loads from calc_loads_df
+                sum_Load_kN = 0.0
+                for _, l in calc_loads_df.iterrows():
+                    force = l['mag']
+                    if l['type'] == 'U':
+                        force = l['mag'] * l['dist']
+                    sum_Load_kN += force
+                sum_Load_kN /= 1000.0
+                
+                diff = sum_R_kN - sum_Load_kN 
+                
+                st.write(f"Total Factored Load (↓): **{sum_Load_kN:.2f} kN**")
+                st.write(f"Total Reaction (↑): **{sum_R_kN:.2f} kN**")
+                
+                if abs(diff) < 0.1:
+                    st.success(f"✅ PASS (Diff = {diff:.4f} kN)")
+                else:
+                    st.error(f"❌ FAIL (Diff = {diff:.4f} kN)")
 
-        # --- PART 3: CALCULATION REPORT ---
-        with st.expander("🧮 Load Combination Details (Report)", expanded=False):
-            st.markdown("### 1. Load Factors")
-            st.write(f"- Dead Load Factor (DL): **{f_dl:.2f}**")
-            st.write(f"- Live Load Factor (LL): **{f_ll:.2f}**")
-            st.write(f"**Note:** Self-Weight is treated as DL. User Inputs are treated as LL.")
+            # 2. Deflection Control
+            with ec2:
+                st.markdown("### 📉 Deflection Control (Service Limit)")
+                if not is_service:
+                    st.info("⚠️ Currently using **Ultimate Load**. Deflection checks are typically done with **Service Load**. Switch mode to 'Service' for accurate check.")
+                
+                max_span_L = max(spans) * 1000 
+                allowable_def = max_span_L / 240.0
+                
+                st.write(f"Max Deflection: **{d_abs_max:.2f} mm**")
+                st.write(f"Allowable Limit (L/240): **{allowable_def:.2f} mm**")
+                
+                # Only strictly Pass/Fail if in Service mode, otherwise just show warning
+                if d_abs_max <= allowable_def:
+                    st.success(f"✅ PASS")
+                else:
+                    if is_service:
+                        st.error(f"❌ EXCEEDS LIMIT")
+                    else:
+                        st.warning(f"⚠️ Value exceeds limit (But using Factored Load)")
 
-            st.markdown("### 2. Self-Weight (DL)")
-            st.latex(f"w_{{sw}} = {params['b']} \\times {params['h']} \\times 24 = {w_sw_base_kN:.3f} \\text{{ kN/m}}")
-            st.latex(f"w_{{sw,factored}} = {w_sw_base_kN:.3f} \\times {f_dl} = \\mathbf{{{w_sw_factored_kN:.3f}}} \\text{{ kN/m}}")
-
-            st.markdown("### 3. Load Breakdown by Span")
-            breakdown_data = []
+        # --- PART 4: DETAILED LOAD TABLE (NEW) ---
+        with st.expander("🧮 Load Breakdown & Calculation (Detailed)", expanded=False):
+            st.markdown("### 1. Load List Table")
+            
+            detailed_loads = []
+            
+            # 1. Loop for Self Weight
             for i in range(n_spans):
-                # Calculate User part (LL)
-                user_udl_base = 0.0
-                if not loads_df.empty:
-                     user_rows = loads_df[(loads_df['span_index'] == i) & (loads_df['type'] == 'U') & (loads_df['dist'] >= spans[i]-0.01)]
-                     if not user_rows.empty:
-                         user_udl_base = user_rows['mag'].sum() / 1000.0
-                
-                total_factored = (w_sw_base_kN * f_dl) + (user_udl_base * f_ll)
-                
-                breakdown_data.append({
+                detailed_loads.append({
                     "Span": i+1,
-                    "SW (DL x Factor)": f"{w_sw_base_kN:.3f} x {f_dl}",
-                    "User (LL x Factor)": f"{user_udl_base:.3f} x {f_ll}",
-                    "TOTAL UDL (kN/m)": f"**{total_factored:.3f}**"
+                    "Source": "Self-Weight (SW)",
+                    "Type": "DL",
+                    "Base Value": f"{w_sw_base_kN:.3f} kN/m",
+                    "Factor": f"x {f_dl}",
+                    "Factored Value": f"**{w_sw_factored_kN:.3f}** kN/m"
                 })
             
-            st.table(pd.DataFrame(breakdown_data))
+            # 2. Loop for User Loads
+            if not loads_df.empty:
+                for _, row in loads_df.iterrows():
+                    if row['span_index'] < n_spans:
+                        l_type_str = "Point Load (P)" if row['type'] == 'P' else "Uniform Load (w)"
+                        unit = "kN" if row['type'] == 'P' else "kN/m"
+                        mag_base = row['mag'] / 1000.0 # to kN
+                        mag_factored = mag_base * f_ll
+                        
+                        detailed_loads.append({
+                            "Span": int(row['span_index'])+1,
+                            "Source": "User Input",
+                            "Type": "LL",
+                            "Base Value": f"{mag_base:.3f} {unit}",
+                            "Factor": f"x {f_ll}",
+                            "Factored Value": f"**{mag_factored:.3f}** {unit}"
+                        })
+            
+            # Convert to DF and Show
+            df_details = pd.DataFrame(detailed_loads)
+            st.table(df_details)
+            
+            st.markdown("---")
+            st.caption("Note: 'Factored Value' is what enters the matrix solver.")
 
     # ================= TAB 2: DESIGN & REPORT =================
     with tab2:
-        if mode_select.startswith("Service"):
-            st.warning("⚠️ **Warning:** You are in 'Service Load' mode (Factors = 1.0). RC Design typically requires Ultimate Load factors. Please switch mode in 'Analysis Settings'.")
+        if is_service:
+            st.warning("⚠️ **Warning:** You are in 'Service Load' mode. Switch to 'Ultimate Load' for Strength Design.")
         
         st.header(f"Reinforced Concrete Design ({tag})")
         st.markdown(f"**Material:** f'c = {params['fc']:.0f} MPa, fy = {params['fy']:.0f} MPa | **Section:** {params['b']*100:.0f}x{params['h']*100:.0f} cm")
