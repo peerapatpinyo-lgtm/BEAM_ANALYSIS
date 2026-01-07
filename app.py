@@ -170,21 +170,29 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     st.info(f"**Self-weight:**\n{sw_val:.2f} kN/m (All Spans)")
                     
                     # 2. แสดง User Loads
-                    # ดึงข้อมูลจาก Session State โดยตรงเพื่อป้องกัน AttributeError
                     if st.session_state.load_list:
                         df_temp = pd.DataFrame(st.session_state.load_list)
-                        # แปลงหน่วยแสดงผลเป็น kN
                         df_temp['mag'] = (df_temp['mag'].astype(float) / 1000.0).round(2)
-                        
                         st.dataframe(
                             df_temp[['type', 'span_index', 'mag', 'dist']], 
-                            use_container_width=True,
-                            hide_index=True
+                            use_container_width=True, hide_index=True
                         )
-                    else:
-                        st.write("No additional loads applied.")
 
-                st.divider()
+                    st.divider()
+
+                    # 3. [NEW] แสดงค่าวิกฤต (Key Design Values)
+                    st.markdown("#### 💎 Critical Values (Factored)")
+                    
+                    # คำนวณค่าสูงสุดจาก res_df (คูณ Factor 1.4 เข้าไปด้วยเพื่อให้ตรงกับที่ใช้ออกแบบ)
+                    f_design = 1.4
+                    m_max_env = res_df['moment'].max() * f_design / 1000.0
+                    m_min_env = res_df['moment'].min() * f_design / 1000.0
+                    v_max_env = res_df['shear'].abs().max() * f_design / 1000.0
+
+                    # แสดงผลในรูปแบบ Metric 
+                    st.metric("Max Positive Moment", f"{m_max_env:.2f} kNm")
+                    st.metric("Max Negative Moment", f"{abs(m_min_env):.2f} kNm")
+                    st.metric("Max Shear Force", f"{v_max_env:.2f} kN")
                 
                 # ส่วนแสดงผล Reaction
                 st.markdown("#### 🏁 Reaction Forces")
@@ -267,5 +275,6 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
