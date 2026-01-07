@@ -243,7 +243,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 if uplift_warning:
                     st.warning("⚠️ **ตรวจพบแรงยก (Uplift):** ค่าที่เป็นลบหมายถึงแรงดึงขึ้นที่จุดรองรับ")              
 
-                with t2:
+            with t2:
                 # 1. Longitudinal Section (บีบความสูงลงเพื่อความสมส่วน)
                 st.markdown("#### 📏 Longitudinal Section")
                 fig_long = section_plotter.plot_longitudinal_section(spans, sup_df, design_res, params['h'], 40)
@@ -322,6 +322,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
