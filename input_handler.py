@@ -62,7 +62,14 @@ def render_model_inputs(params):
         stable = False
         
     return n_spans, spans, pd.DataFrame(sup_data), stable
-
+    
+def get_self_weight_load(b, h):
+    # คอนกรีตเสริมเหล็กหนักประมาณ 2400 kg/m3 
+    # แรงโน้มถ่วง g ≈ 9.81 m/s2 -> 2400 * 9.81 = 23,544 N/m3 (หรือประมาณ 24 kN/m3)
+    gamma_concrete = 24.0 # kN/m3
+    w_sw = b * h * gamma_concrete # kN/m
+    return w_sw
+    
 def render_loads(n_spans, spans, params, sup_df):
     st.header("2. Loads Definition")
     
