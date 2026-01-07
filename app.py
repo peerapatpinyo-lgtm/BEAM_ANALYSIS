@@ -140,7 +140,7 @@ else:
 
             st.markdown("---")
 
-            # 7.4 Detailed Calculation Reports (Requested: SW & Load Combinations)
+            # 7.4 Detailed Calculation Reports (SW & Load Combinations)
             with st.expander("🧮 Detailed Load Calculation Report", expanded=True):
                 st.markdown("#### A. Self-Weight Calculation (Dead Load)")
                 sw_report = []
@@ -155,18 +155,26 @@ else:
 
                 st.markdown("#### B. Load Combination Breakdown")
                 combo_report = []
+                # First, Include Self-Weight as part of the combination
+                for i in range(n_spans):
+                    combo_report.append({
+                        "Span": i+1,
+                        "Type": "Self-Weight (DL)",
+                        "Unfactored": f"{w_sw_base_kN:.2f} kN/m",
+                        "Factor": f"x{f_dl}",
+                        "Factored": f"{w_sw_factored_kN:.2f} kN/m"
+                    })
+                # Second, Include User Loads
                 if not loads_df.empty:
                     for _, row in loads_df.iterrows():
                         combo_report.append({
                             "Span": int(row['span_index'])+1,
-                            "Type": "Point" if row['type'] == 'P' else "Uniform",
+                            "Type": "Point (LL)" if row['type'] == 'P' else "Uniform (LL)",
                             "Unfactored": f"{row['mag']/1000:.2f} kN(/m)",
-                            "Factor (LL)": f"x{f_ll}",
+                            "Factor": f"x{f_ll}",
                             "Factored": f"{row['mag']*f_ll/1000:.2f} kN(/m)"
                         })
-                    st.table(pd.DataFrame(combo_report))
-                else:
-                    st.write("No additional user loads defined.")
+                st.table(pd.DataFrame(combo_report))
 
             # 7.5 Engineering Checks
             with st.expander("✅ Equilibrium & Deflection Checks", expanded=True):
@@ -174,7 +182,6 @@ else:
                 with ec1:
                     st.markdown("**Static Equilibrium ($\Sigma F_y = 0$)**")
                     sum_R = sum(R.values()) / 1000.0
-                    # Summing all applied loads
                     total_sw = w_sw_factored_kN * sum(spans)
                     total_user = 0
                     if not loads_df.empty:
@@ -198,7 +205,7 @@ else:
         # ================= TAB 2: RC DESIGN =================
         with tab2:
             if is_service:
-                st.warning("⚠️ **Warning:** Strength Design requires 'Ultimate Load' factors. Switch mode to proceed with reliable reinforcement design.")
+                st.warning("⚠️ **Warning:** Strength Design requires 'Ultimate Load' factors. Switch mode to proceed.")
             
             st.header(f"Reinforced Concrete Design ({tag})")
             
@@ -214,7 +221,6 @@ else:
                     vu_max = span_data['shear'].abs().max() / 1000
                     d_eff = params['h'] - 0.05
                     
-                    # Call RC Design Module
                     As_pos, _, _, steps_pos = rc_design.design_beam_flexure(mu_pos, params['b'], d_eff, params['fc'], params['fy'])
                     As_neg, _, _, steps_neg = rc_design.design_beam_flexure(mu_neg, params['b'], d_eff, params['fc'], params['fy'])
                     s_req, _, steps_shear = rc_design.check_shear(vu_max, params['b'], d_eff, params['fc'], params['fy'])
@@ -250,4 +256,4 @@ else:
 
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
-        st.write("Please check your input values (e.g. Span Lengths, Support positions, or Load definitions).")
+        st.write("Check your module files or input values.")
