@@ -92,15 +92,28 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
         sup_list = sup_df.to_dict('records') if not sup_df.empty else []
         load_list = loads_df.to_dict('records') if (loads_df is not None and not loads_df.empty) else []
         
-       beam_solver = solver.TimoshenkoBeamSolver(
-            spans=spans, 
-            supports=sup_list, 
-            loads=load_list, 
-            b_mm=params['b'], 
-            h_mm=params['h'], 
-            fc=params['fc']
-        )
-        m_max = beam_solver.solve()
+# --- ส่วนการเรียกใช้ Solver ใน app.py ---
+
+# มักจะอยู่ในบล็อก if st.button(...) หรือ logic การคำนวณหลัก
+try:
+    # 1. สร้าง Instance ของ Solver (ระวังย่อหน้า 4 spaces ให้เท่ากับบรรทัดก่อนหน้า)
+    beam_solver = solver.TimoshenkoBeamSolver(
+        spans=spans, 
+        supports=sup_list, 
+        loads=load_list, 
+        b_mm=params['b'], 
+        h_mm=params['h'], 
+        fc=params['fc']
+    )
+    
+    # 2. ทำการ Solve หาค่าแรงภายใน
+    m_max_kNm = beam_solver.solve()
+    
+    st.success(f"Analysis Completed using Timoshenko Beam Theory")
+    st.write(f"Max Bending Moment: {m_max_kNm:.2f} kNm")
+
+except Exception as e:
+    st.error(f"Calculation Error: {str(e)}")
         res_df, reactions, status = beam_solver.solve()
         
         if "error" in status:
@@ -252,5 +265,6 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                             for line in res['shear_logs']:
                                 st.markdown(line)
             
+
 
 
