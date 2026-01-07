@@ -4,126 +4,112 @@ import numpy as np
 
 def plot_section(b, h, cover, db, n_top, n_bot, stir_label, fc, fy):
     """ 
-    Engineering Cross Section
-    - Corner bars are MANDATORY
-    - Clean look
+    Engineering Cross Section 
     """
-    fig, ax = plt.subplots(figsize=(5, 6))
+    fig, ax = plt.subplots(figsize=(4, 5)) # Slightly compact to fit side-by-side
     
-    # Units: mm
+    # Convert m to mm for drawing
     B, H = b*1000, h*1000
     c = cover
     
-    # 1. Concrete Face
-    rect = patches.Rectangle((0, 0), B, H, linewidth=2, edgecolor='black', facecolor='white')
+    # 1. Concrete
+    rect = patches.Rectangle((0, 0), B, H, linewidth=2, edgecolor='black', facecolor='#f9f9f9')
     ax.add_patch(rect)
     
-    # 2. Stirrup Line (Assume RB6 or RB9)
-    db_stir = 6 # mm estimation
+    # 2. Stirrup
+    db_stir = 6
     w_s = B - 2*c
     h_s = H - 2*c
-    stir = patches.Rectangle((c, c), w_s, h_s, linewidth=2, edgecolor='#0000FF', facecolor='none', linestyle='-')
+    stir = patches.Rectangle((c, c), w_s, h_s, linewidth=2, edgecolor='blue', facecolor='none')
     ax.add_patch(stir)
     
-    # Hook detail (Schematic)
-    ax.plot([c+10, c-5], [H-c-10, H-c+5], color='blue', linewidth=2)
-    
-    # 3. Rebars Logic (MUST BE AT CORNERS)
-    # Top Bars
+    # 3. Main Bars (Logic: Always at Corners first)
+    # Top
     y_top = H - c - db/2 - db_stir
-    if n_top >= 2:
-        # Linspace ensures bars are at start and end (corners) of the effective width
-        x_tops = np.linspace(c + db_stir + db/2, B - c - db_stir - db/2, n_top)
-    else:
-        x_tops = [B/2] # Single bar (rare)
-
+    if n_top < 2: n_top = 2 # Minimum safety
+    x_tops = np.linspace(c + db_stir + db/2, B - c - db_stir - db/2, n_top)
+    
     for x in x_tops:
-        circle = patches.Circle((x, y_top), db/2, edgecolor='black', facecolor='#FF0000', zorder=10)
+        circle = patches.Circle((x, y_top), db/2, edgecolor='black', facecolor='red', zorder=5)
         ax.add_patch(circle)
         
-    # Bot Bars
+    # Bot
     y_bot = c + db_stir + db/2
-    if n_bot >= 2:
-        x_bots = np.linspace(c + db_stir + db/2, B - c - db_stir - db/2, n_bot)
-    else:
-        x_bots = [B/2]
-
+    if n_bot < 2: n_bot = 2
+    x_bots = np.linspace(c + db_stir + db/2, B - c - db_stir - db/2, n_bot)
+    
     for x in x_bots:
-        circle = patches.Circle((x, y_bot), db/2, edgecolor='black', facecolor='#FF0000', zorder=10)
+        circle = patches.Circle((x, y_bot), db/2, edgecolor='black', facecolor='red', zorder=5)
         ax.add_patch(circle)
 
-    # 4. Dimensions & Labels
-    ax.text(B/2, H + 20, f"{int(B)}", ha='center', va='bottom', fontsize=12)
-    ax.text(-20, H/2, f"{int(H)}", ha='right', va='center', rotation=90, fontsize=12)
+    # 4. Annotations
+    ax.text(B/2, H+20, f"{int(B)}", ha='center', fontsize=11)
+    ax.text(-20, H/2, f"{int(H)}", va='center', rotation=90, fontsize=11)
     
-    # Leader lines
-    ax.annotate(f"{n_top}-DB{db}", xy=(x_tops[0], y_top), xytext=(-50, H),
-                arrowprops=dict(arrowstyle='->'), fontsize=10)
-    ax.annotate(f"{n_bot}-DB{db}", xy=(x_bots[0], y_bot), xytext=(-50, 0),
-                arrowprops=dict(arrowstyle='->'), fontsize=10)
-    
-    ax.text(B/2, -40, f"Stirrup: {stir_label}", ha='center', color='blue', fontsize=10)
+    ax.text(B/2, H/2, f"{n_top}-DB{db} (Top)\n{n_bot}-DB{db} (Bot)\n{stir_label}", 
+            ha='center', va='center', bbox=dict(facecolor='white', alpha=0.8, edgecolor='none'), fontsize=9)
 
-    ax.set_xlim(-80, B + 80)
-    ax.set_ylim(-80, H + 80)
+    ax.set_xlim(-50, B+50)
+    ax.set_ylim(-50, H+50)
     ax.set_aspect('equal')
     ax.axis('off')
     return fig
 
 def plot_longitudinal_detailed(span_len, h, cover, n_top, n_bot, db, s_stir, span_id):
     """
-    CAD-Style Longitudinal Profile
-    - Aspect Ratio fixed
-    - Dimension lines
+    Clean Longitudinal Profile
+    - Fix: Stirrups won't overlap into a blob.
+    - Fix: Clean dimension lines.
     """
     L_mm = span_len * 1000
     h_mm = h * 1000
     
-    # Aspect ratio correction: If beam is too long, we scale X to fit
-    # But user wants "real look". Let's keep aspect but wide figure.
-    fig, ax = plt.subplots(figsize=(12, 4))
+    # Create Figure (Wide aspect)
+    fig, ax = plt.subplots(figsize=(10, 3.5))
     
-    # 1. Beam Outline
-    ax.plot([0, L_mm], [0, 0], 'k-', linewidth=2) # Bot
-    ax.plot([0, L_mm], [h_mm, h_mm], 'k-', linewidth=2) # Top
-    ax.plot([0, 0], [0, h_mm], 'k--', linewidth=1) # Left Sup line
-    ax.plot([L_mm, L_mm], [0, h_mm], 'k--', linewidth=1) # Right Sup line
+    # 1. Beam Body
+    ax.plot([0, L_mm], [0, 0], 'k-', linewidth=1.5)
+    ax.plot([0, L_mm], [h_mm, h_mm], 'k-', linewidth=1.5)
+    ax.plot([0, 0], [0, h_mm], 'k--', linewidth=1)
+    ax.plot([L_mm, L_mm], [0, h_mm], 'k--', linewidth=1)
     
-    # 2. Main Steel (Offset by cover)
-    # Top
-    ax.plot([cover, L_mm-cover], [h_mm-cover-10, h_mm-cover-10], 'r-', linewidth=3, label='Top')
-    # Bot
-    ax.plot([cover, L_mm-cover], [cover+10, cover+10], 'r-', linewidth=3, label='Bot')
+    # 2. Main Bars (Red)
+    ax.plot([cover, L_mm-cover], [h_mm-cover-10, h_mm-cover-10], 'r-', linewidth=2, label='Top')
+    ax.plot([cover, L_mm-cover], [cover+10, cover+10], 'r-', linewidth=2, label='Bot')
     
-    # 3. Stirrups (Draw actual lines based on spacing)
+    # 3. Stirrups (Blue - Thinner & Clean)
     s_mm = s_stir * 10
-    # Start offset
-    curr_x = cover + 50
-    while curr_x < (L_mm - cover):
-        ax.plot([curr_x, curr_x], [cover, h_mm-cover], 'b-', linewidth=1)
-        curr_x += s_mm
-        
-    # 4. Dimensions
-    # Span Text
-    ax.text(L_mm/2, h_mm/2, f"L = {span_len:.2f} m", ha='center', va='center', 
-            fontsize=12, bbox=dict(facecolor='white', edgecolor='none'))
+    # Avoid drawing if spacing is too dense relative to pixel size, but for matplotlib vector it's fine.
+    # Just make them thinner and distinct.
+    x_stir = np.arange(cover + 50, L_mm - cover - 50, s_mm)
     
-    # Stirrup Label
-    ax.annotate(f"RB6@{s_stir}cm", xy=(L_mm/4, h_mm/2), xytext=(L_mm/4, h_mm/2 + 100),
-                arrowprops=dict(arrowstyle='->', color='blue'), color='blue', ha='center')
+    # Use vlines for better performance and look
+    ax.vlines(x_stir, ymin=cover, ymax=h_mm-cover, colors='blue', linewidth=0.6, alpha=0.7)
     
-    # Main Bar Labels
-    ax.text(cover, h_mm+20, f"{n_top}-DB{db}", color='red', ha='left', va='bottom', fontsize=11, fontweight='bold')
-    ax.text(cover, -20, f"{n_bot}-DB{db}", color='red', ha='left', va='top', fontsize=11, fontweight='bold')
+    # 4. Dimensions & Labels
+    # Mid-span Text
+    ax.text(L_mm/2, h_mm + 50, f"Span {span_id}: L = {span_len:.2f} m", 
+            ha='center', fontsize=12, fontweight='bold', color='#333')
+    
+    # Rebar Labels (with Leader Lines)
+    ax.annotate(f"{n_top}-DB{db}", xy=(L_mm*0.2, h_mm-cover), xytext=(L_mm*0.2, h_mm+100),
+                arrowprops=dict(arrowstyle='->', color='red'), color='red', fontsize=10)
+    
+    ax.annotate(f"{n_bot}-DB{db}", xy=(L_mm*0.2, cover), xytext=(L_mm*0.2, -80),
+                arrowprops=dict(arrowstyle='->', color='red'), color='red', fontsize=10)
+    
+    # Stirrup Label (Point to one stirrup)
+    if len(x_stir) > 0:
+        idx = len(x_stir)//2
+        ax.annotate(f"RB6@{s_stir}cm", xy=(x_stir[idx], h_mm/2), xytext=(x_stir[idx]+150, h_mm/2),
+                    arrowprops=dict(arrowstyle='->', color='blue'), color='blue', fontsize=10, bbox=dict(facecolor='white', edgecolor='none'))
 
     # Supports
-    ax.plot([0], [-20], marker='^', markersize=10, color='black', clip_on=False)
-    ax.plot([L_mm], [-20], marker='^', markersize=10, color='black', clip_on=False)
+    ax.plot(0, -20, marker='^', color='black', markersize=10, clip_on=False)
+    ax.plot(L_mm, -20, marker='^', color='black', markersize=10, clip_on=False)
 
-    # Clean up
-    ax.set_ylim(-150, h_mm + 150)
+    ax.set_ylim(-150, h_mm + 200)
     ax.set_xlim(-200, L_mm + 200)
     ax.axis('off')
-    ax.set_title(f"LONGITUDINAL PROFILE: SPAN {span_id}", loc='left')
     
     return fig
