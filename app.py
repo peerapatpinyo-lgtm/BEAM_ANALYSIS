@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import matplotlib.pyplot as plt
 
 # Import modules
 try:
@@ -20,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for compact layout
 st.markdown("""
 <style>
     .stButton>button {
@@ -35,6 +36,8 @@ st.markdown("""
         border-radius: 5px;
         border: 1px solid #dee2e6;
     }
+    .block-container {padding-top: 1rem;}
+    div[data-testid="stVerticalBlock"] > div {padding-top: 0.5rem; padding-bottom: 0.5rem;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -93,7 +96,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
         # --- [NEW] Self-weight Calculation ---
         sw_kn_m = params['b'] * params['h'] * 24.0  # kN/m
         
-        # รวมโหลดเดิมกับ Self-weight เข้าด้วยกันเป็น final_load_list เพื่อใช้คำนวณและวาดกราฟ
+        # รวมโหลดเดิมกับ Self-weight เข้าด้วยกันเป็น final_load_list
         final_load_list = load_list_raw.copy()
         for i in range(len(spans)):
             final_load_list.append({
@@ -105,24 +108,6 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 "dist": spans[i],
                 "case": "DL"
             })
-        # ... (โค้ดก่อนหน้าใน Loop) ...
-                
-                des_span = rc_design.design_span_expert(
-                    Mu_pos, Mu_neg, vu_val, 
-                    params['b'], params['h'], 
-                    24, 400, 
-                    40, 16   
-                )
-                
-                # --- [FIX] เพิ่มบรรทัดเหล่านี้เพื่อบันทึกค่า Mu ที่ต้องการไว้เทียบ ---
-                des_span['pos']['required'] = Mu_pos  # <--- สำคัญมาก! ต้องเพิ่มบรรทัดนี้
-                des_span['neg']['required'] = Mu_neg  # <--- เพิ่มเผื่อไว้
-                des_span['shear_required'] = vu_val   # <--- เก็บค่าแรงเฉือนด้วย
-                # -----------------------------------------------------------
-
-                des_span['span_id'] = i
-                des_span['db'] = 16
-                design_res.append(des_span)
             
         # ส่งรายการโหลดที่รวม Self-weight แล้วเข้า Solver
         beam_solver = solver.BeamSolver(spans, sup_list, final_load_list, params['E'], params['b'], params['h'], params['I'])
@@ -148,7 +133,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     # ใช้ Factor แยกตามที่ตั้งใน Sidebar
                     g_dl = params.get('gamma_dead', 1.4)
                     g_ll = params.get('gamma_live', 1.7)
-                    factor = max(g_dl, g_ll) # Simplified factor สำหรับตัวอย่างนี้
+                    factor = max(g_dl, g_ll) # Simplified factor
                     
                     # แปลงหน่วยจาก N-m เป็น kN-m เพื่อส่งให้ rc_design
                     Mu_pos = (max(0, span_res['moment'].max()) * factor) / 1000.0
@@ -161,18 +146,25 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     24, 400, # fc, fy
                     40, 16   # Cover, db main
                 )
+                
+                # --- [FIX] บันทึกค่า Mu Required ไว้เทียบในหน้า Interactive ---
+                des_span['pos']['required'] = Mu_pos
+                des_span['neg']['required'] = Mu_neg
+                des_span['shear_required'] = vu_val
+
                 des_span['span_id'] = i
                 des_span['db'] = 16
                 design_res.append(des_span)
             
 
-# --- 5. Visualization Results ---
+            # --- 5. Visualization Results ---
             t1, t2, t3 = st.tabs(["📊 Analysis Results", "🏗️ Design & Detailing", "📝 Calculation Report"])
             
+            # === TAB 1: Analysis ===
             with t1:
                 st.subheader("📊 Analysis Results & Load Summary")
                 
-                # แบ่งหน้าจอเป็น 2 ฝั่ง: กราฟ (70%) และ รายการโหลด (30%)
+                # แบ่งหน้าจอเป็น 2 ฝั่ง: กราฟ (70%) และ รายการคำนวณ (30%)
                 col_graph, col_loads = st.columns([7, 3])
                 
                 with col_graph:
@@ -219,12 +211,11 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     
                     st.success(f"ใช้ตัวคูณเพิ่มน้ำหนักบรรทุก (Load Factor) = {f_design}")
                 
-                    st.divider()
+                st.divider()
                 
-                # --- [FINAL VERSION] ส่วนแสดงผล Reaction พร้อมรายการคำนวณทุก Node ---
+                # --- [UPDATED] รายการคำนวณ Reaction พร้อมแสดงผลทุก Node ---
                 st.markdown("#### 🏁 รายการคำนวณแรงปฏิกิริยาที่จุดรองรับ (Design Reaction Forces, $R_u$)")
                 
-                # สร้างข้อมูลสำหรับการแสดงผลรายการคำนวณแบบ Text
                 reac_details = []
                 f_design = 1.4
                 uplift_warning = False
@@ -235,11 +226,9 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     
                     if val < -1e-3: uplift_warning = True
                     
-                    # บันทึกรูปแบบการคำนวณ: R_u = R_service * 1.4 = Result
                     calc_line = f"Node {r_id}: {val_service:,.2f} kN × {f_design} = **{val_factored:,.2f} kN**"
                     reac_details.append(calc_line)
 
-                # แบ่งส่วนแสดงผล: ตารางสรุป (ซ้าย) และ รายการคำนวณบรรทัดต่อบรรทัด (ขวา)
                 col_reac_list, col_reac_math = st.columns([1, 1])
 
                 with col_reac_list:
@@ -259,117 +248,100 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         st.write(line)
 
                 if uplift_warning:
-                    st.warning("⚠️ **ตรวจพบแรงยก (Uplift):** ค่าที่เป็นลบหมายถึงแรงดึงขึ้นที่จุดรองรับ")              
+                    st.warning("⚠️ **ตรวจพบแรงยก (Uplift):** ค่าที่เป็นลบหมายถึงแรงดึงขึ้นที่จุดรองรับ")       
 
+            # === TAB 2: Design Detailing (Interactive) ===
             with t2:
                 st.subheader("🏗️ Interactive Reinforcement Detailing")
                 
-                # 1. Longitudinal Section (รูปตัดยาว)
+                # 1. Longitudinal Section
                 fig_long = section_plotter.plot_longitudinal_section(spans, sup_df, design_res, params['h'], 40)
-                fig_long.set_size_inches(12, 2.5) # บีบให้เตี้ยลง
+                fig_long.set_size_inches(12, 2.5) 
                 st.pyplot(fig_long, use_container_width=True)
                 
-                st.divider()
+                st.markdown("---")
                 
-                # 2. Cross Sections Loop (วนลูปสร้างรูปตัดขวาง + คำนวณ)
-                # ใช้ CSS เพื่อลดระยะห่างของ Header
-                st.markdown("""
-                    <style>
-                    .block-container {padding-top: 1rem;}
-                    div[data-testid="stExpander"] div[role="button"] p {font-size: 0.9rem; font-weight: bold;}
-                    </style>
-                """, unsafe_allow_html=True)
-
-                # จัด Layout ทีละ Span
+                # 2. Interactive Loop
                 for i, d_auto in enumerate(design_res):
-                    # สร้าง Container แยกแต่ละ Span เพื่อความชัดเจน
                     with st.container():
+                        # Layout 3 คอลัมน์: ปรับค่า | รูปภาพ | รายการคำนวณ
                         c1, c2, c3 = st.columns([3, 4, 3])
                         
-                        # --- Column 1: Control Panel (ปรับแก้เหล็ก) ---
+                        # --- Col 1: แผงควบคุม (Control Panel) ---
                         with c1:
-                            st.markdown(f"### 🔹 Span {i+1}")
-                            st.caption(f"Section: {params['b']} x {params['h']} m")
+                            st.markdown(f"#### 🔹 Span {i+1}")
+                            st.caption(f"Geometry: {params['b']} x {params['h']} m")
                             
-                            with st.expander("⚙️ ปรับแก้เหล็ก/Covering", expanded=False):
-                                # 1. Covering
-                                new_cover = st.number_input(f"Covering (mm) - Sp{i+1}", 20, 75, 40, 5, key=f"cov_{i}")
+                            with st.expander("⚙️ แก้ไขเหล็กเสริม (Edit)", expanded=True):
+                                # เลือก Covering
+                                new_cover = st.number_input(f"Covering (mm)", 20, 75, 40, 5, key=f"cov_{i}")
                                 
-                                # 2. Main Steel (Top/Bot)
-                                st.markdown("**Main Bars:**")
-                                c_top, c_bot = st.columns(2)
-                                with c_top:
-                                    n_top = st.number_input(f"Top Bars", 2, 10, d_auto['neg']['n'], key=f"nt_{i}")
-                                with c_bot:
-                                    n_bot = st.number_input(f"Bot Bars", 2, 10, d_auto['pos']['n'], key=f"nb_{i}")
+                                # เลือกเหล็กบน-ล่าง
+                                col_bars1, col_bars2 = st.columns(2)
+                                with col_bars1:
+                                    n_top = st.number_input(f"Top Bars", 1, 10, int(d_auto['neg']['n']), key=f"nt_{i}")
+                                with col_bars2:
+                                    n_bot = st.number_input(f"Bot Bars", 1, 10, int(d_auto['pos']['n']), key=f"nb_{i}")
                                 
-                                bar_size = st.selectbox(f"Bar Size - Sp{i+1}", [12, 16, 20, 25], index=1, key=f"db_{i}")
+                                # เลือกขนาดเหล็ก
+                                bar_size = st.selectbox(f"Main DB (mm)", [12, 16, 20, 25, 28], index=1, key=f"db_{i}")
                                 
-                                # 3. Stirrups
-                                st.markdown("**Stirrups:**")
-                                s_spacing = st.number_input(f"Spacing (cm) - Sp{i+1}", 5, 30, 15, 5, key=f"s_{i}")
-                                
-                                # --- Recalculate Logic (Simplified) ---
-                                # คำนวณ Capacity ใหม่ตามที่ user เลือก
-                                # (หมายเหตุ: สูตรนี้เป็นการประมาณการเพื่อโชว์ผล Real-time)
-                                d_eff = (params['h']*1000) - new_cover - (bar_size/2) - 6 # 6=stirrup dia approx
-                                As_bot = n_bot * (3.1416 * (bar_size/2)**2)
-                                a_depth = (As_bot * 400) / (0.85 * 24 * (params['b']*1000))
-                                mn_val = 0.90 * As_bot * 400 * (d_eff - a_depth/2) / 1e6 # kNm
-                                
-                                req_moment = d_auto['pos']['required'] # Load เดิมจาก Analysis
+                                st.markdown("---")
+                                s_spacing = st.number_input(f"Stirrup Spacing (cm)", 5, 30, 15, 5, key=f"s_{i}")
 
-                        # --- Column 2: Visualization (รูปภาพ) ---
+                        # --- Col 2: รูปภาพ (Visualization) ---
                         with c2:
-                            # Plot ด้วยค่าใหม่ที่ปรับแล้ว
+                            # วาดรูปใหม่ตามค่าที่ User เลือก
                             fig_sec = section_plotter.plot_section(
                                 params['b'], params['h'], new_cover, bar_size,
                                 n_top, n_bot, 
                                 f"RB6@{s_spacing}cm", 24, 400
                             )
                             
-                            # ปรับแต่งกราฟให้ชิดขอบที่สุด (แก้ปัญหาพื้นที่ว่าง)
-                            fig_sec.set_size_inches(3.5, 3.5)
-                            fig_sec.subplots_adjust(left=0.05, right=0.95, top=0.95, bottom=0.05)
-                            
+                            # ตัดขอบขาวออกให้หมด (Tight Layout)
+                            fig_sec.set_size_inches(4, 4)
+                            fig_sec.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
                             st.pyplot(fig_sec, use_container_width=True)
-                            
-                            # Status Display
-                            status_color = "green" if mn_val >= req_moment else "red"
-                            status_icon = "✅" if mn_val >= req_moment else "⚠️"
-                            st.markdown(
-                                f"<div style='text-align:center; color:{status_color}; font-weight:bold; margin-top:-10px;'>"
-                                f"{status_icon} Capacity: {mn_val:.2f} kNm (Req: {req_moment:.2f})</div>", 
-                                unsafe_allow_html=True
-                            )
 
-                        # --- Column 3: Calculation Sheet (รายการคำนวณ) ---
+                        # --- Col 3: รายการคำนวณ (Calculation Note) ---
                         with c3:
                             st.markdown("#### 📝 รายการคำนวณ")
-                            st.markdown(f"**Design Check (Bottom):**")
                             
-                            # แสดงสูตร Latex
-                            st.latex(rf"d = {params['h']*1000:.0f} - {new_cover} - {bar_size}/2 = {d_eff:.1f} \text{{ mm}}")
-                            st.latex(rf"A_s = {n_bot} \times \pi ({bar_size}/2)^2 = {As_bot:.0f} \text{{ mm}}^2")
+                            # ดึงค่า Moment ที่ต้องการ (Safe Get)
+                            req_moment = d_auto.get('pos', {}).get('required', 0.0)
+
+                            # คำนวณ Real-time
+                            d_eff = (params['h']*1000) - new_cover - (bar_size/2) - 6 
+                            area_one_bar = 3.1416 * (bar_size/2)**2
+                            As_bot = n_bot * area_one_bar
                             
-                            st.write("**Moment Capacity ($\phi M_n$):**")
-                            st.latex(rf"a = \frac{{A_s f_y}}{{0.85 f_c' b}} = {a_depth:.1f} \text{{ mm}}")
+                            fy = 400
+                            fc = 24
+                            b_mm = params['b'] * 1000
+                            a_depth = (As_bot * fy) / (0.85 * fc * b_mm)
+                            
+                            # Nominal Moment (Mn) -> convert to kNm
+                            mn_val = 0.90 * As_bot * fy * (d_eff - a_depth/2) / 1e6
+                            
+                            # แสดงผลสูตร Latex
+                            st.caption(f"**Check Capacity (Bottom @ Mid-span):**")
+                            st.latex(rf"A_s = {n_bot} \times {area_one_bar:.1f} = {As_bot:.0f} \text{{ mm}}^2")
+                            st.latex(rf"a = \frac{{{As_bot:.0f} \cdot {fy}}}{{0.85 \cdot {fc} \cdot {b_mm:.0f}}} = {a_depth:.1f} \text{{ mm}}")
                             st.latex(rf"\phi M_n = 0.9 A_s f_y (d - a/2)")
                             st.latex(rf"= {mn_val:.2f} \text{{ kNm}}")
-                            
-                            # Check Pass/Fail
-                            if mn_val >= req_moment:
-                                st.success(f"OK (Ratio: {req_moment/mn_val:.2f})")
-                            else:
-                                st.error(f"Fail (Needs {req_moment:.2f} kNm)")
 
+                            if mn_val >= req_moment:
+                                st.success(f"✅ PASS (Req: {req_moment:.2f})")
+                            else:
+                                st.error(f"❌ FAIL (Req: {req_moment:.2f})")
+                    
                     st.divider()
-                
-                # Material Summary (BBS) อยู่ด้านล่างสุด
-                st.markdown("### 📋 Bill of Quantities")
-                # (ส่วนนี้ใช้โค้ดเดิมได้ หรือจะให้ผมแปะให้ครบก็ได้ครับ)
+
+                # Material Summary
+                st.markdown("### 📋 Material Take-off")
                 bbs_list = rc_design.generate_bbs(design_res, spans, params['b'], params['h'], 40)
                 vol_conc, w_steel = rc_design.get_boq(spans, params['b'], params['h'], bbs_list)
+                
                 m1, m2, m3 = st.columns(3)
                 m1.metric("Concrete Volume", f"{vol_conc:.2f} m³")
                 m2.metric("Total Steel Weight", f"{w_steel:.2f} kg")
@@ -379,6 +351,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     with st.expander("🔍 คลิกเพื่อดูตารางเหล็กเสริม (BBS Table)"):
                         st.dataframe(pd.DataFrame(bbs_list), use_container_width=True, hide_index=True)
 
+            # === TAB 3: Calculation Report ===
             with t3:
                 st.subheader("📝 Detailed Calculation Basis")
                 st.info(f"""
@@ -395,23 +368,11 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                 for idx, res in enumerate(design_res):
                     report_data.append({
                         "Span": idx+1,
-                        "Top Bars": f"{res['neg']['n']}-DB16",
-                        "Bot Bars": f"{res['pos']['n']}-DB16",
+                        "Top Bars": f"{res['neg']['n']}-DB{res.get('db', 16)}",
+                        "Bot Bars": f"{res['pos']['n']}-DB{res.get('db', 16)}",
                         "Stirrups": res['shear_stirrups'],
                         "Capacity (+)": f"{res['pos']['capacity']:.2f} kNm",
                         "Capacity (-)": f"{res['neg']['capacity']:.2f} kNm",
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
-
-
-
-
-
-
-
-
-
-
-
-
