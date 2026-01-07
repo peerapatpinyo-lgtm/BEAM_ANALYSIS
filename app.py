@@ -83,16 +83,25 @@ st.markdown("---")
 
 # --- 4. Main Process ---
 if st.button("🚀 Run Analysis & Design", type="primary"):
-    if not stable:
-        st.error("🚨 Structure is Unstable! Please check supports (Need at least 2 supports or 1 Fixed).")
-    else:
-        # A. Analysis (Solver)
-        st.info("Computing Finite Element Analysis...")
+    # 1. คำนวณ Self-weight (kN/m)
+    sw_kn_m = params['b'] * params['h'] * 24.0
+    
+    # 2. เตรียมรายการโหลด (รวม Load List เดิม + Self-weight)
+    final_load_list = load_list.copy()
+    
+    # เพิ่ม Self-weight เข้าไปในทุกๆ Span
+    for i in range(len(spans)):
+        final_load_list.append({
+            "type": "U",
+            "span_index": i,
+            "x": 0.0,
+            "mag": sw_kn_m * 1000, # แปลงเป็น N/m เพื่อ Solver
+            "dist": spans[i],
+            "case": "DL" # ถือเป็น Dead Load
+        })
         
-        sup_list = sup_df.to_dict('records') if not sup_df.empty else []
-        load_list = loads_df.to_dict('records') if (loads_df is not None and not loads_df.empty) else []
-        
-        beam_solver = solver.BeamSolver(spans, sup_list, load_list, params['E'], params['b'], params['h'], params['I'])
+    # 3. ส่ง final_load_list เข้า Solver แทน load_list เดิม
+    beam_solver = solver.BeamSolver(spans, sup_list, final_load_list, params['E'], params['b'], params['h'], params['I'])
         res_df, reactions, status = beam_solver.solve()
         
         if "error" in status:
@@ -234,6 +243,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True)
+
 
 
 
