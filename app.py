@@ -35,7 +35,7 @@ else:
         f_dl = 1.0
         f_ll = 1.0
         with col_fac1:
-            st.disabled = True
+            # Fixed: Removed the invalid 'st.disabled = True' line
             st.number_input("Dead Load Factor (DL)", value=1.0, disabled=True, key="fdl_serv")
         with col_fac2:
             st.number_input("Live Load Factor (LL)", value=1.0, disabled=True, key="fll_serv")
@@ -140,7 +140,7 @@ else:
         col_res3.metric(f"Max Moment (-)", f"{m_max_neg:.2f} kNm")
         col_res4.metric("Max Deflection", f"{d_abs_max:.2f} mm")
         
-        # 2.2 REACTION TABLE (NEW FEATURE)
+        # 2.2 REACTION TABLE
         st.markdown("### 📍 Support Reactions")
         if R:
             # Convert R dict (R0, R4...) to DataFrame
