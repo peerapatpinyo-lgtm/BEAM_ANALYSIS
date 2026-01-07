@@ -21,14 +21,14 @@ st.markdown("""
     .calc-header { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 5px; margin-bottom: 15px; font-weight: bold; }
     .pass { color: green; font-weight: bold; }
     .fail { color: red; font-weight: bold; }
-    .sub-calc { color: #555; font-family: 'Courier New', monospace; font-size: 0.9em; margin-bottom: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
 # --- Init Session State ---
 if 'analyzed' not in st.session_state: st.session_state.analyzed = False
 if 'avg_factor' not in st.session_state: st.session_state.avg_factor = 1.6 
-if 'full_loads' not in st.session_state: st.session_state.full_loads = [] # Store loads with SW
+if 'full_loads' not in st.session_state: st.session_state.full_loads = [] 
+if 'sw_val' not in st.session_state: st.session_state.sw_val = 0.0
 
 # --- 1. SIDEBAR INPUTS ---
 with st.sidebar:
@@ -59,12 +59,10 @@ if run_btn:
         # --- A. PREPARE LOADS (Include SW) ---
         sw_mag = params['b'] * params['h'] * 24.0 * 1000 # N/m
         
-        # Create a combined list for Solver AND Plotting
         loads_combined = []
         if not loads_df.empty:
             loads_combined = loads_df.to_dict('records')
             
-        # Add Self Weight explicitly
         for i in range(n_spans):
             loads_combined.append({
                 "id": f"sw_{i}", "type": "U", "span_index": i, "x": 0.0,
@@ -72,7 +70,6 @@ if run_btn:
             })
 
         # --- B. RUN ANALYSIS ---
-        # Pass loads_combined (User + SW) to solver
         solver_service = solver.BeamSolver(spans, sup_df.to_dict('records'), loads_combined, params['E'], params['b'], params['h'], params['I'])
         res_service, reac_service, status = solver_service.solve()
         
@@ -84,7 +81,7 @@ if run_btn:
         st.session_state.res_service = res_service
         st.session_state.reac_service = reac_service
         st.session_state.loads_df = loads_df
-        st.session_state.full_loads = loads_combined # [FIX] Save user+sw loads for plotting
+        st.session_state.full_loads = loads_combined
         st.session_state.params = params
         st.session_state.factors = factors
         st.session_state.avg_factor = current_avg_factor
@@ -114,7 +111,6 @@ if st.session_state.analyzed:
         col3.metric("Max M (-)", f"{res['moment'].min()/1000:.2f} kNm")
         col4.metric("Max V", f"{res['shear'].abs().max()/1000:.2f} kN")
         
-        # [FIX] Plot using full_loads (Includes SW now)
         fig = design_view.plot_analysis_results(res, spans, sup_df, full_loads)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -122,8 +118,12 @@ if st.session_state.analyzed:
     with tab2:
         st.markdown("### 🔹 Ultimate Limit State (Factored)")
         
+        # Prepare Design Data
         cum_dist = [0] + list(np.cumsum(spans))
         design_data = []
+        # Dummy structure for visualization (assuming uniform rebar for now in plot)
+        design_res_for_plot = [] 
+        
         for i in range(len(spans)):
             x0, x1 = cum_dist[i], cum_dist[i+1]
             span_df = res[(res['x'] >= x0) & (res['x'] <= x1)]
@@ -141,10 +141,13 @@ if st.session_state.analyzed:
                 "def_act": span_df['deflection'].abs().max(),
                 "L": spans[i]
             })
+            
+            # Default placeholder for plot
+            design_res_for_plot.append({'pos': {'n': 3}, 'neg': {'n': 2}, 'db': 16})
 
         sel_span = st.selectbox("Select Span", design_data, format_func=lambda x: f"Span {x['span']}")
         
-        c_left, c_right = st.columns([1, 1.5]) # ให้พื้นที่คำนวณกว้างขึ้น
+        c_left, c_right = st.columns([1, 1.5])
         
         with c_left:
             st.markdown(f"#### 🛠️ Reinforcement")
@@ -156,10 +159,25 @@ if st.session_state.analyzed:
                 db_main = cc3.selectbox("DB (mm)", [12, 16, 20, 25], index=1)
                 s_stir = cc4.number_input("Stirrup @ (cm)", 5, 30, 15, 5)
                 cover = st.number_input("Cover (mm)", 20, 50, 40)
-                st.form_submit_button("Update")
+                update_rb = st.form_submit_button("Update")
             
+            # Update plot data based on input
+            if update_rb:
+                design_res_for_plot[sel_span['span']-1]['pos']['n'] = n_bot
+                design_res_for_plot[sel_span['span']-1]['neg']['n'] = n_top
+                design_res_for_plot[sel_span['span']-1]['db'] = db_main
+
+            # [FIX] 1. Plot Section View (บังคับไม่ให้ขยายเต็มความกว้างคอลัมน์)
+            st.markdown("**Section View:**")
             fig_sec = section_plotter.plot_section(p['b'], p['h'], cover, db_main, n_top, n_bot, f"RB6@{s_stir}", p['fc'], p['fy'])
-            st.pyplot(fig_sec)
+            st.pyplot(fig_sec, use_container_width=False) # Important: False to keep it small
+
+            # [FIX] 2. Plot Longitudinal View (เอาคืนมาแล้ว)
+            st.markdown("**Longitudinal Profile:**")
+            # Update specific span in the full beam plot
+            design_res_for_plot[sel_span['span']-1] = {'pos': {'n': n_bot}, 'neg': {'n': n_top}, 'db': db_main}
+            fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res_for_plot, p['h'], cover)
+            st.pyplot(fig_long, use_container_width=True)
 
         with c_right:
             st.markdown('<div class="calc-box">', unsafe_allow_html=True)
@@ -174,24 +192,23 @@ if st.session_state.analyzed:
             st.markdown("---")
             st.markdown("**2. Flexural Strength Check (+M)**")
             
-            # Variables
             b_mm = p['b'] * 1000
             d_mm = p['h'] * 1000 - cover - 6 - db_main/2
             As_prov = n_bot * (3.1416 * (db_main/2)**2)
             
-            st.markdown("*(a) Determine Effective Depth (d) & Steel Area (As)*")
-            st.latex(rf"d = h - c_c - d_v - d_b/2 = {p['h']*1000:.0f} - {cover} - 6 - {db_main/2} = {d_mm:.1f}\ mm")
+            st.markdown("*(a) Effective Depth (d) & Steel Area (As)*")
+            st.latex(rf"d = {p['h']*1000:.0f} - {cover} - 6 - {db_main/2} = {d_mm:.1f}\ mm")
             st.latex(rf"A_{{s,prov}} = {n_bot} \times \pi ({db_main}/2)^2 = \mathbf{{{As_prov:.0f}}}\ mm^2")
 
-            st.markdown("*(b) Calculate Whitney Stress Block (a)*")
+            st.markdown("*(b) Whitney Stress Block (a)*")
             a_depth = (As_prov * p['fy']) / (0.85 * p['fc'] * b_mm)
-            st.latex(rf"a = \frac{{A_s f_y}}{{0.85 f_c' b}} = \frac{{{As_prov:.0f} \cdot {p['fy']}}}{{0.85 \cdot {p['fc']} \cdot {b_mm:.0f}}} = \mathbf{{{a_depth:.2f}}}\ mm")
+            st.latex(rf"a = \frac{{{As_prov:.0f} \cdot {p['fy']}}}{{0.85 \cdot {p['fc']} \cdot {b_mm:.0f}}} = \mathbf{{{a_depth:.2f}}}\ mm")
 
-            st.markdown("*(c) Calculate Moment Capacity*")
+            st.markdown("*(c) Moment Capacity*")
             Mn_kNm = As_prov * p['fy'] * (d_mm - a_depth/2) * 1e-6
             phi_Mn = f['phi_m'] * Mn_kNm
             
-            st.latex(rf"M_n = A_s f_y (d - a/2) = {As_prov:.0f} \cdot {p['fy']} ({d_mm:.1f} - {a_depth/2:.1f}) \cdot 10^{{-6}} = {Mn_kNm:.2f}\ kNm")
+            st.latex(rf"M_n = {As_prov:.0f} \cdot {p['fy']} ({d_mm:.1f} - {a_depth/2:.1f}) \cdot 10^{{-6}} = {Mn_kNm:.2f}\ kNm")
             st.latex(rf"\phi M_n = {f['phi_m']} \cdot {Mn_kNm:.2f} = \mathbf{{{phi_Mn:.2f}}}\ kNm")
             
             if phi_Mn >= sel_span['Mu_pos']:
@@ -205,19 +222,18 @@ if st.session_state.analyzed:
             
             st.markdown("*(a) Concrete Capacity (Vc)*")
             Vc_val = 0.17 * np.sqrt(p['fc']) * b_mm * d_mm / 1000.0
-            st.latex(rf"V_c = 0.17\sqrt{{f_c'}} b_w d = 0.17\sqrt{{{p['fc']}}} \cdot {b_mm:.0f} \cdot {d_mm:.0f} = \mathbf{{{Vc_val:.2f}}}\ kN")
+            st.latex(rf"V_c = 0.17\sqrt{{{p['fc']}}} \cdot {b_mm:.0f} \cdot {d_mm:.0f} = \mathbf{{{Vc_val:.2f}}}\ kN")
 
             st.markdown("*(b) Steel Capacity (Vs) - RB6*")
-            Av = 2 * (3.1416 * 3**2) # 2 legs of 6mm
+            Av = 2 * (3.1416 * 3**2) 
             s_mm = s_stir * 10
             Vs_val = (Av * p['fy'] * d_mm) / s_mm / 1000.0
             
-            st.latex(rf"A_v = 2 \cdot A_{{bar}} = 2 \cdot 28.3 = {Av:.1f}\ mm^2")
-            st.latex(rf"V_s = \frac{{A_v f_y d}}{{s}} = \frac{{{Av:.1f} \cdot {p['fy']} \cdot {d_mm:.0f}}}{{{s_mm}}} = \mathbf{{{Vs_val:.2f}}}\ kN")
+            st.latex(rf"V_s = \frac{{{Av:.1f} \cdot {p['fy']} \cdot {d_mm:.0f}}}{{{s_mm}}} = \mathbf{{{Vs_val:.2f}}}\ kN")
             
             st.markdown("*(c) Total Capacity*")
             phi_Vn = f['phi_v'] * (Vc_val + Vs_val)
-            st.latex(rf"\phi V_n = \phi (V_c + V_s) = {f['phi_v']} ({Vc_val:.2f} + {Vs_val:.2f}) = \mathbf{{{phi_Vn:.2f}}}\ kN")
+            st.latex(rf"\phi V_n = {f['phi_v']} ({Vc_val:.2f} + {Vs_val:.2f}) = \mathbf{{{phi_Vn:.2f}}}\ kN")
              
             if phi_Vn >= sel_span['Vu']:
                  st.markdown(f'<span class="pass">✅ OK</span>', unsafe_allow_html=True)
