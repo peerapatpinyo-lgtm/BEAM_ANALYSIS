@@ -244,41 +244,59 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                     st.warning("⚠️ **ตรวจพบแรงยก (Uplift):** ค่าที่เป็นลบหมายถึงแรงดึงขึ้นที่จุดรองรับ")              
 
                 
-            with t2:
-                st.subheader("Reinforcement Detailing")
+                with t2:
+                # 1. Longitudinal Section (บีบความสูงลง)
+                st.markdown("#### 📏 Longitudinal Section")
                 fig_long = section_plotter.plot_longitudinal_section(spans, sup_df, design_res, params['h'], 40)
-                st.pyplot(fig_long)
+                fig_long.set_size_inches(12, 3) # บีบรูปให้เตี้ยลงเพื่อประหยัดพื้นที่
+                st.pyplot(fig_long, use_container_width=True)
                 
-                st.divider()
-                cols = st.columns(len(spans))
-                for i, c in enumerate(cols):
-                    d = design_res[i]
-                    with c:
-                        st.markdown(f"**Span {i+1}**")
+                st.markdown("---") # ใช้เส้นบางๆ แทน divider หนาๆ
+                
+                # 2. Cross Sections (จัดกลุ่มให้อยู่ในแถวเดียวกันและเล็กลง)
+                st.markdown("#### 🟦 Cross Sections")
+                
+                # คำนวณจำนวนคอลัมน์ตามจำนวน Span (สูงสุด 4 ต่อแถวเพื่อไม่ให้เล็กเกิน)
+                n_cols = min(len(spans), 4)
+                cols = st.columns(n_cols)
+                
+                for i, d in enumerate(design_res):
+                    col_idx = i % n_cols
+                    with cols[col_idx]:
+                        # แสดงหัวข้อแบบกระชับ
+                        st.caption(f"**Span {i+1}** ({params['b']}x{params['h']} m)")
+                        
                         fig_sec = section_plotter.plot_section(
                             params['b'], params['h'], 40, 16,
                             d['neg']['n'], d['pos']['n'], 
                             d['shear_stirrups'], 24, 400
                         )
-                        st.pyplot(fig_sec)
+                        # ปรับขนาดรูปตัดให้เล็กลงพอดีคอลัมน์
+                        fig_sec.set_size_inches(3, 4) 
+                        st.pyplot(fig_sec, use_container_width=True)
+                        
+                        # แสดงสถานะแบบ Compact
                         if d['shear_status'] == 'Fail':
-                            st.error("Shear: Fail")
+                            st.error("Shear: Fail", icon="❌")
                         else:
-                            st.success(f"Shear: {d['shear_status']}")
+                            st.info(f"Shear: {d['shear_status']}")
 
-                st.divider()
-                st.markdown("### 📋 Bill of Quantities & Bar Schedule")
+                # 3. BBS & BOQ (บีบตารางให้เล็กลง)
+                st.markdown("---")
+                st.markdown("#### 📋 Material Summary")
+                
                 bbs_list = rc_design.generate_bbs(design_res, spans, params['b'], params['h'], 40)
                 vol_conc, w_steel = rc_design.get_boq(spans, params['b'], params['h'], bbs_list)
                 
                 m1, m2, m3 = st.columns(3)
-                m1.metric("Concrete Volume", f"{vol_conc:.2f} m³")
-                m2.metric("Total Steel Weight", f"{w_steel:.2f} kg")
-                ratio = w_steel / vol_conc if vol_conc > 0 else 0
-                m3.metric("Steel Ratio", f"{ratio:.1f} kg/m³")
+                # ใช้ Metrics แบบไม่มีพื้นที่ว่างมาก
+                m1.metric("Concrete", f"{vol_conc:.2f} m³")
+                m2.metric("Steel", f"{w_steel:.2f} kg")
+                m3.metric("Ratio", f"{w_steel/vol_conc:.1f} kg/m³")
                 
                 if bbs_list:
-                    st.dataframe(pd.DataFrame(bbs_list), use_container_width=True, hide_index=True)
+                    with st.expander("ดูตารางเหล็กเสริม (BBS)"):
+                        st.dataframe(pd.DataFrame(bbs_list), use_container_width=True, hide_index=True)
 
             with t3:
                 st.subheader("📝 Detailed Calculation Basis")
@@ -304,6 +322,7 @@ if st.button("🚀 Run Analysis & Design", type="primary"):
                         "Note": res['pos']['note']
                     })
                 st.dataframe(pd.DataFrame(report_data), use_container_width=True, hide_index=True)
+
 
 
 
