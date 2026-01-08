@@ -210,21 +210,31 @@ else:
         
         calc_loads_df = pd.DataFrame(combined_loads_list)
 
-        # --- 4.4 RUN SOLVER ---
+   # --- 4.4 RUN SOLVER ---
         with st.spinner('Running Analysis...'):
             x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
+        # --- FIX: สร้าง res_df ด้วยชื่อคอลัมน์เดิม (x, moment, shear, deflection) ---
+        # เพื่อให้ design_view.py ทำงานได้ถูกต้อง
         res_df = pd.DataFrame({
-            'x (m)': x_eval,
-            'Moment (N-mm)': M, 
-            'Shear (N)': V,    
-            'Deflection (m)': D 
+            'x': x_eval,
+            'moment': M, 
+            'shear': V,    
+            'deflection': D * 1000 # แปลงเป็น mm ตาม Logic เดิม
         })
-        # Add units for display
+
+        # --- สร้าง DataFrame สำหรับแสดงผล (เปลี่ยนชื่อให้สวยงามที่นี่แทน) ---
         res_df_display = res_df.copy()
-        res_df_display['Moment (kNm)'] = res_df['Moment (N-mm)'] / 1e6
-        res_df_display['Shear (kN)'] = res_df['Shear (N)'] / 1000
-        res_df_display['Deflection (mm)'] = res_df['Deflection (m)'] * 1000
+        res_df_display.rename(columns={
+            'x': 'x (m)',
+            'moment': 'Moment (N-mm)',
+            'shear': 'Shear (N)',
+            'deflection': 'Deflection (mm)'
+        }, inplace=True)
+        
+        # เพิ่มหน่วย kNm และ kN เพื่อใช้ในการดึงค่ามาคำนวณ Design
+        res_df_display['Moment (kNm)'] = res_df_display['Moment (N-mm)'] / 1e6
+        res_df_display['Shear (kN)'] = res_df_display['Shear (N)'] / 1000
         
         # --- 5. TABS INTERFACE ---
         tab1, tab2 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design & Detailing"])
@@ -232,6 +242,7 @@ else:
         # ================= TAB 1: ANALYSIS =================
         with tab1:
             st.subheader("📈 Force Diagrams")
+            # ส่ง res_df (ตัวที่มีคอลัมน์ 'x') ไปให้ฟังก์ชัน plot
             st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R), use_container_width=True)
             
             # Key Metrics
@@ -306,7 +317,7 @@ else:
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # Extract Forces for this span
+                # Extract Forces for this span (ใช้ res_df_display เพราะมีหน่วย kNm และ x (m) ที่เราเตรียมไว้)
                 span_data = res_df_display[(res_df_display['x (m)'] >= s_start - 1e-6) & (res_df_display['x (m)'] <= s_end + 1e-6)]
                 
                 if not span_data.empty:
@@ -454,4 +465,4 @@ else:
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
-        st.exception(e)
+        st.exception(e)  
