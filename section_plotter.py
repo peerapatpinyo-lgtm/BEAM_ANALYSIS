@@ -143,44 +143,47 @@ def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_te
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """ Longitudinal Section - Corrected Variable Name """
+    """ Longitudinal Section """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     h_mm = h_m * 1000
     
-    fig, ax = _setup_figure((12, 6)) # เพิ่มความสูง Canvas
+    # เพิ่มความสูง Canvas เพื่อรองรับ Label ด้านบนและล่าง
+    fig, ax = _setup_figure((12, 6)) 
     
     # 1. Beam Body
     ax.add_patch(patches.Rectangle((0, 0), total_L, h_mm, lw=2, ec='black', fc='#FFFFFF', zorder=1))
     
     # 2. Supports (Engineering Symbols)
-    for _, row in sup_df.iterrows():
-        x = row['x'] * 1000
-        _draw_support_symbol(ax, x, 0, row.get('type', 'Pin'), row.get('id', ''))
+    # หมายเหตุ: sup_df ต้องถูกส่งเข้ามาให้ถูกต้อง
+    if not sup_df.empty:
+        for _, row in sup_df.iterrows():
+            x = row['x'] * 1000
+            _draw_support_symbol(ax, x, 0, row.get('type', 'Pin'), row.get('id', ''))
 
     # 3. Reinforcement
     x_cursor = 0
-    # **ยกเส้นบอกระยะรวมขึ้นไปสูงๆ**
-    dim_offset_top = 400 
+    dim_offset_top = h_mm + 250 # ระยะของเส้น Dimension หลัก
     
     for i, span_L in enumerate(spans_mm):
+        if i >= len(design_res): break
         res = design_res[i]
+        
         end_cursor = x_cursor + span_L
         mid_span = x_cursor + span_L/2
         
         # --- Top Bars (Support) ---
         top_y = h_mm - cover_mm - 25
-        L_neg = span_L * 0.25 # Define Anchor Length
+        L_neg = span_L * 0.25 # ระยะฝังโดยประมาณ 0.25L
         
-        # Draw Lines
+        # Draw Solid Lines (Main Bars)
         ax.plot([x_cursor, x_cursor + L_neg], [top_y, top_y], color=COLOR_TOP, lw=3, solid_capstyle='round')
         ax.plot([end_cursor - L_neg, end_cursor], [top_y, top_y], color=COLOR_TOP, lw=3, solid_capstyle='round')
-        # Hanger Bars (เส้นประเชื่อมตรงกลาง) - แก้ไขชื่อตัวแปร L_anch -> L_neg
+        # Hanger Bars (เส้นประเชื่อมตรงกลาง)
         ax.plot([x_cursor + L_neg, end_cursor - L_neg], [top_y, top_y], color=COLOR_TOP, lw=0.8, ls=':') 
         
-        # Text Top (อยู่สูงกว่า Dimension Line ไปอีก หรืออยู่ใต้เส้น Dimension เล็กน้อย แต่เหนือคาน)
-        # แก้ปัญหาทับกัน: ให้ text อยู่เหนือเส้นเหล็กขึ้นไปเยอะๆ (ใต้ Dimension หลัก)
-        text_y_top = h_mm + 150 
+        # Label Top (วางเหนือเส้น Dimension เล็กน้อย หรือใต้ลงมาในจุดที่ว่าง)
+        text_y_top = top_y + 120 
         target_x = end_cursor - L_neg/2
         
         ax.annotate(f"{res['neg']['n']}-DB{int(res['top_db'])}", 
@@ -191,34 +194,33 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 
         # --- Bottom Bars (Mid) ---
         bot_y = cover_mm + 25
-        ax.plot([x_cursor + 80, end_cursor - 80], [bot_y, bot_y], color=COLOR_BOT, lw=3)
+        # วาดเส้นเว้นระยะจาก Support เล็กน้อย
+        ax.plot([x_cursor + 100, end_cursor - 100], [bot_y, bot_y], color=COLOR_BOT, lw=3)
         ax.text(mid_span, bot_y + 50, f"{res['pos']['n']}-DB{int(res['bot_db'])}", 
                 color=COLOR_BOT, ha='center', fontweight='bold', fontsize=9)
 
         # --- Stirrup ---
-        # ย้ายตำแหน่งไม่ให้ทับคาน
+        # ย้ายตำแหน่ง Text ลงด้านล่างไม่ให้ทับคาน
         stir_text = f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}"
-        ax.text(mid_span, -150, f"Stir: {stir_text}", color=COLOR_STIRRUP, ha='center', va='top', fontsize=9)
-        # Leader line ชี้ไปที่กลางคาน (ไม่ทับเส้นขอบล่าง)
-        ax.annotate("", xy=(mid_span, cover_mm), xytext=(mid_span, -140), 
+        ax.text(mid_span, -180, f"Stir: {stir_text}", color=COLOR_STIRRUP, ha='center', va='top', fontsize=9)
+        # Leader line ชี้ไปที่กลางคาน
+        ax.annotate("", xy=(mid_span, cover_mm), xytext=(mid_span, -170), 
                     arrowprops=dict(arrowstyle='-', color=COLOR_STIRRUP, lw=0.5, linestyle=':'))
 
-        # --- Section Cuts ---
+        # --- Section Cuts (เส้นตัด Section) ---
         ax.vlines(mid_span, -100, h_mm+100, colors='purple', linestyles='dashdot', lw=1)
-        ax.text(mid_span, h_mm+120, "A", color='purple', ha='center', fontweight='bold')
+        ax.text(mid_span, h_mm+120, f"Sec {i+1}", color='purple', ha='center', fontsize=8)
         
-        sec_b = end_cursor - 150
-        ax.vlines(sec_b, -100, h_mm+100, colors='orange', linestyles='dashdot', lw=1)
-        ax.text(sec_b, h_mm+120, "B", color='orange', ha='center', fontweight='bold')
-
         x_cursor += span_L
 
     # 4. Total Dimension (อยู่สูงที่สุด)
-    _draw_dim_line(ax, (0, h_mm), (total_L, h_mm), f"Total L = {total_L/1000:.2f} m", offset=dim_offset_top)
+    _draw_dim_line(ax, (0, h_mm), (total_L, h_mm), f"Total L = {total_L/1000:.2f} m", offset=400)
 
     ax.axis('equal')
     ax.axis('off')
+    
+    # ปรับขอบเขตการแสดงผล
     ax.set_xlim(-500, total_L + 500)
-    ax.set_ylim(-600, h_mm + 700) # เพิ่มพื้นที่ด้านบน
+    ax.set_ylim(-600, h_mm + 800) # เพิ่มพื้นที่ด้านบนให้พอ
     
     return fig
