@@ -6,8 +6,16 @@ import numpy as np
 DPI_VALUE = 300     
 GLOBAL_FONT = 8
 
+def _setup_white_canvas(figsize):
+    """ Helper to force pure white background """
+    fig, ax = plt.subplots(figsize=figsize, dpi=DPI_VALUE)
+    # บังคับสีขาวแบบ Hardcore
+    fig.patch.set_facecolor('#FFFFFF')
+    fig.patch.set_alpha(1.0)
+    ax.set_facecolor('#FFFFFF')
+    return fig, ax
+
 def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, fc, fy, title="SECTION A-A"):
-    """ Draw Cross Section (Pure White Background & English) """
     SECTION_SCALE = 500  
     b, h = b_m * 1000, h_m * 1000
     cover, ds, db = cover_mm, 6, db_main_mm
@@ -18,17 +26,13 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     width_inches = (view_right - view_left) / SECTION_SCALE 
     height_inches = (view_top - view_bottom) / SECTION_SCALE
     
-    fig, ax = plt.subplots(figsize=(width_inches, height_inches), dpi=DPI_VALUE)
+    fig, ax = _setup_white_canvas((width_inches, height_inches))
     
-    # 🔧 Force White Background
-    fig.patch.set_facecolor('white')
-    ax.set_facecolor('white')
-    
-    # 1. Concrete Outline (Fill = White)
-    ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#2c3e50', facecolor='white'))
+    # 1. Concrete Outline
+    ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#2c3e50', facecolor='#FFFFFF', zorder=0))
     
     # 2. Stirrup Line
-    ax.add_patch(patches.Rectangle((cover, cover), b-2*cover, h-2*cover, linewidth=1, edgecolor='#7f8c8d', ls='--'))
+    ax.add_patch(patches.Rectangle((cover, cover), b-2*cover, h-2*cover, linewidth=1, edgecolor='#7f8c8d', ls='--', zorder=1))
     
     # 3. Main Bars
     def draw_bars(n, y_pos, color):
@@ -42,34 +46,29 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
             x_positions = [start_x + i*spacing for i in range(int(n))]
             
         for x in x_positions:
-            # Circle fill
             circle = plt.Circle((x, y_pos), db/2, color=color, zorder=10, ec='black', lw=0.5)
             ax.add_patch(circle)
 
     y_bot = cover + ds + db/2
     y_top = h - cover - ds - db/2
     
-    # Steel Colors (Lines/Dots) - Keeping colors for distinction, but can make black if needed
-    draw_bars(n_bottom, y_bot, '#c0392b') # Bottom (Red)
-    draw_bars(n_top, y_top, '#2980b9')    # Top (Blue-ish line only)
+    draw_bars(n_bottom, y_bot, '#c0392b') 
+    draw_bars(n_top, y_top, '#2980b9')   
     
     # 4. Annotations
-    # Top Steel
     ax.plot([b/2, b+100], [y_top, y_top+100], color='#2980b9', lw=1)
     ax.text(b+110, y_top+100, f"{int(n_top)}-DB{int(db)} (Top)", va='center', color='#2980b9', fontsize=GLOBAL_FONT, fontweight='bold')
     
-    # Bottom Steel
     ax.plot([b/2, b+100], [y_bot, y_bot-100], color='#c0392b', lw=1)
     ax.text(b+110, y_bot-100, f"{int(n_bottom)}-DB{int(db)} (Bot)", va='center', color='#c0392b', fontsize=GLOBAL_FONT, fontweight='bold')
     
-    # Stirrup
     ax.plot([b-cover, b+150], [h/2, h/2], color='#27ae60', lw=1, ls=':')
     ax.text(b+160, h/2, f"Stirrup: {stirrup_name}", va='center', color='#27ae60', fontsize=GLOBAL_FONT)
     
-    # Material Box
+    # Material Props Box (White Background)
     mat_text = f"fc' = {fc} MPa\nfy = {fy} MPa"
     ax.text(view_right-50, view_bottom+50, mat_text, ha='right', va='bottom', fontsize=GLOBAL_FONT-2, color='gray', 
-            bbox=dict(facecolor='white', alpha=1.0, edgecolor='none')) # Force white box
+            bbox=dict(facecolor='#FFFFFF', alpha=1.0, edgecolor='none', pad=2))
 
     # Dimensions
     ax.plot([0, b], [-100, -100], color='black', lw=0.8)
@@ -80,11 +79,8 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     ax.plot([-100, -100], [0, h], color='black', lw=0.8)
     ax.plot([-80, -120], [0, 0], color='black', lw=0.8)
     ax.plot([-80, -120], [h, h], color='black', lw=0.8)
-    
-    # FIXED: Scalar value for x position
     ax.text(-180, h/2, f"{int(h)} mm", ha='right', va='center', rotation=90, fontsize=GLOBAL_FONT)
 
-    # Title
     ax.text(b/2, view_top - 100, title, ha='center', fontweight='bold', fontsize=GLOBAL_FONT+2)
 
     ax.set_xlim(view_left, view_right)
@@ -94,7 +90,6 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """ Draw Longitudinal Section (Pure White Background & English) """
     LONG_SCALE = 850
     h_beam = h_m * 1000 
     total_L = sum(spans) * 1000
@@ -102,27 +97,21 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     
     width_inches = (total_L + 3000) / LONG_SCALE 
     height_inches = 5000 / LONG_SCALE 
-    fig, ax = plt.subplots(figsize=(width_inches, height_inches), dpi=DPI_VALUE)
     
-    # 🔧 Force White Background
-    fig.patch.set_facecolor('white')
-    ax.set_facecolor('white')
+    fig, ax = _setup_white_canvas((width_inches, height_inches))
     
-    # 1. Beam Body (White Fill)
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=2, edgecolor='#000000', facecolor='white', zorder=1))
+    # 1. Beam Body
+    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=2, edgecolor='#000000', facecolor='#FFFFFF', zorder=1))
     
-    # 2. Supports (Changed from Blue-Grey to Light Gray #f0f0f0)
+    # 2. Supports
     support_fill = '#f0f0f0' 
-    
     for i, (_, row) in enumerate(sup_df.iterrows()):
         x_s = row['x'] * 1000
-        if i == 0: # Hinge
+        if i == 0: 
             poly = plt.Polygon([[x_s-150, -300], [x_s+150, -300], [x_s, 0]], facecolor=support_fill, edgecolor='black', lw=1.5, zorder=2)
             ax.add_patch(poly)
-            for k in range(-200, 201, 50):
-                ax.plot([x_s+k, x_s+k-50], [-300, -400], color='black', lw=1)
             ax.plot([x_s-250, x_s+250], [-300, -300], color='black', lw=2)
-        else: # Roller
+        else: 
             poly = plt.Polygon([[x_s-150, -200], [x_s+150, -200], [x_s, 0]], facecolor=support_fill, edgecolor='black', lw=1.5, zorder=2)
             ax.add_patch(poly)
             ax.add_patch(plt.Circle((x_s, -250), 50, color='black', fill=False, lw=1.5))
@@ -131,33 +120,24 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     # 3. Steel
     for i, span_l_m in enumerate(spans):
         L_mm = span_l_m * 1000
-        x_s = offsets[i]
-        x_e = offsets[i+1]
+        x_s, x_e = offsets[i], offsets[i+1]
         
-        # Bottom
-        ax.plot([x_s+50, x_e-50], [cover_mm, cover_mm], color='#c0392b', lw=2.5, label='Bottom Bars' if i==0 else "")
-        
-        # Top
+        ax.plot([x_s+50, x_e-50], [cover_mm, cover_mm], color='#c0392b', lw=2.5)
         y_t = h_beam - cover_mm
-        ax.plot([x_s, x_s + L_mm*0.3], [y_t, y_t], color='#2980b9', lw=2.5, label='Top Bars' if i==0 else "")
+        ax.plot([x_s, x_s + L_mm*0.3], [y_t, y_t], color='#2980b9', lw=2.5)
         ax.plot([x_e - L_mm*0.3, x_e], [y_t, y_t], color='#2980b9', lw=2.5)
 
-    # 4. Cut Lines
+    # 4. Cuts & Dims
     for i in range(len(spans)):
-        x_start = offsets[i]
-        x_end = offsets[i+1]
-        
-        # Section A
+        x_start, x_end = offsets[i], offsets[i+1]
         mid_x = (x_start + x_end) / 2
         ax.plot([mid_x, mid_x], [-800, h_beam + 800], color='#e67e22', ls='-.', lw=1.5)
         ax.text(mid_x, h_beam + 900, f"A (S{i+1})", color='#e67e22', fontweight='bold', ha='center', fontsize=GLOBAL_FONT+2)
         
-        # Section B
         sup_x = x_end - (x_end-x_start)*0.1 
         ax.plot([sup_x, sup_x], [-800, h_beam + 800], color='#8e44ad', ls='-.', lw=1.5)
         ax.text(sup_x, h_beam + 900, f"B (S{i+1})", color='#8e44ad', fontweight='bold', ha='center', fontsize=GLOBAL_FONT+2)
 
-    # 5. Dimensions
     ax.plot([0, total_L], [h_beam + 1500, h_beam + 1500], color='black', lw=1)
     ax.plot([0, 0], [h_beam + 1400, h_beam + 1600], color='black', lw=1)
     ax.plot([total_L, total_L], [h_beam + 1400, h_beam + 1600], color='black', lw=1)
@@ -167,5 +147,4 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     ax.set_ylim(-1500, h_beam + 2500)
     ax.set_aspect('equal')
     ax.axis('off')
-    
     return fig
