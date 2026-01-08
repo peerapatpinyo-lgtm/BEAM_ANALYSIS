@@ -2,12 +2,15 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-# --- 📏 Configuration ---
+# --- 📏 Global Configuration ---
 DPI_VALUE = 300     
 GLOBAL_FONT = 7.5
 
-def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, title="SECTION A-A"):
-    """ ฟังก์ชันวาดรูปตัดขวางที่รองรับทั้ง Section A และ B """
+def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, fc=None, fy=None, title="SECTION A-A"):
+    """ 
+    วาดรูปตัดขวาง: ขยายรูปใหญ่ขึ้น ตัวหนังสือเล็กคม 
+    รองรับ Argument 9 ตัวเพื่อป้องกัน Error จาก app.py
+    """
     SECTION_SCALE = 500  
     b, h = b_m * 1000, h_m * 1000
     cover, ds, db = cover_mm, 6, db_main_mm
@@ -20,7 +23,7 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     
     fig, ax = plt.subplots(figsize=(width_inches, height_inches), dpi=DPI_VALUE)
     
-    # วาดหน้าตัดคอนกรีต
+    # วาดคอนกรีต
     ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=1.5, edgecolor='#000000', facecolor='#ffffff'))
     ax.text(b/2, -350, title, ha='center', fontweight='bold', fontsize=GLOBAL_FONT + 1)
     
@@ -35,13 +38,15 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
             ax.add_patch(plt.Circle((x, y_pos), db/2, color=color, zorder=10))
 
     y_bot, y_top = cover + ds + db/2, h - cover - ds - db/2
-    draw_bars(n_bottom, y_bot, '#a93226') # เหล็กรับแรงดึง (ล่าง)
-    draw_bars(n_top, y_top, '#1f618d')    # เหล็กรับแรงดึง (บน)
+    draw_bars(n_bottom, y_bot, '#a93226')
+    draw_bars(n_top, y_top, '#1f618d')
     
+    # ข้อความกำกับเหล็ก
     ax.text(b + 70, y_top, f"{int(n_top)}-DB{int(db)}", va='center', color='#1f618d', fontsize=GLOBAL_FONT)
     ax.text(b + 70, y_bot, f"{int(n_bottom)}-DB{int(db)}", va='center', color='#a93226', fontsize=GLOBAL_FONT)
-    
-    # เส้นบอกขนาด
+    ax.text(b/2, h + 120, stirrup_name, ha='center', color='#1d8348', fontsize=GLOBAL_FONT)
+
+    # Dimension Lines
     def draw_tick_dim(p1, p2, text, vert=False):
         ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color='#000000', lw=0.6)
         if vert: ax.text(p1[0]-80, (p1[1]+p2[1])/2, text, va='center', ha='right', rotation=90, fontsize=GLOBAL_FONT-1)
@@ -57,7 +62,7 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """ รูปตัดตามยาวพร้อม Support (Hinge/Roller) และแนวตัด Section A-A, B-B """
+    """ วาดรูปตัดตามยาวพร้อม Support (Hinge/Roller) และจุดตัด Section """
     LONG_SCALE = 850
     h_beam = h_m * 1000 
     total_L = sum(spans) * 1000
@@ -70,27 +75,25 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     # 1. วาดตัวคาน
     ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=1.5, edgecolor='#000000', facecolor='#ffffff', zorder=1))
     
-    # 2. วาด Support (Hinge & Roller)
+    # 2. วาด Support (Engineering Symbols)
     for i, (_, row) in enumerate(sup_df.iterrows()):
         x_s = row['x'] * 1000
-        if i == 0: # ตัวแรกเป็น Hinge
+        if i == 0: # Hinge
             poly = plt.Polygon([[x_s-150, -300], [x_s+150, -300], [x_s, 0]], facecolor='#ffffff', edgecolor='black', lw=1, zorder=2)
             ax.add_patch(poly)
-            ax.plot([x_s-250, x_s+250], [-300, -300], color='black', lw=1.5) # ฐานแน่น
-        else: # ตัวถัดไปเป็น Roller
+            ax.plot([x_s-250, x_s+250], [-300, -300], color='black', lw=1.5)
+        else: # Roller
             poly = plt.Polygon([[x_s-150, -200], [x_s+150, -200], [x_s, 0]], facecolor='#ffffff', edgecolor='black', lw=1, zorder=2)
             ax.add_patch(poly)
-            ax.add_patch(plt.Circle((x_s, -250), 50, color='black', fill=False, lw=1)) # วาดล้อ
-            ax.plot([x_s-250, x_s+250], [-310, -310], color='black', lw=1.2) # เส้นพื้น
+            ax.add_patch(plt.Circle((x_s, -250), 50, color='black', fill=False, lw=1))
+            ax.plot([x_s-250, x_s+250], [-310, -310], color='black', lw=1.2)
 
     # 3. วาดเส้นตัด Section
-    # A-A ที่กลางช่วง
-    sec_a_x = (offsets[0] + offsets[1]) / 2
+    sec_a_x = (offsets[0] + offsets[1]) / 2 # A-A ที่กลาง Span
     ax.plot([sec_a_x, sec_a_x], [-700, h_beam + 700], color='#d35400', ls='--', lw=1)
     ax.text(sec_a_x, h_beam + 800, "A", color='#d35400', fontweight='bold', ha='center')
     
-    # B-B ที่หัวเสา (Support ที่สอง)
-    sec_b_x = offsets[1]
+    sec_b_x = offsets[1] # B-B ที่หัวเสา
     ax.plot([sec_b_x, sec_b_x], [-700, h_beam + 700], color='#2980b9', ls='--', lw=1)
     ax.text(sec_b_x, h_beam + 800, "B", color='#2980b9', fontweight='bold', ha='center')
 
@@ -98,11 +101,9 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     for i, span_l_m in enumerate(spans):
         L_mm, x_s, x_e = span_l_m * 1000, offsets[i], offsets[i+1]
         res = design_res[i]
-        # เหล็กล่าง
-        ax.plot([x_s+50, x_e-50], [cover_mm, cover_mm], color='#a93226', lw=1.8)
-        # เหล็กบน
+        ax.plot([x_s+50, x_e-50], [cover_mm, cover_mm], color='#a93226', lw=1.8) # เหล็กล่าง
         y_t = h_beam - cover_mm
-        ax.plot([x_s, x_s + L_mm*0.3], [y_t, y_t], color='#1f618d', lw=1.8)
+        ax.plot([x_s, x_s + L_mm*0.3], [y_t, y_t], color='#1f618d', lw=1.8) # เหล็กบน
         ax.plot([x_e - L_mm*0.3, x_e], [y_t, y_t], color='#1f618d', lw=1.8)
 
     ax.set_xlim(-1000, total_L + 1000)
