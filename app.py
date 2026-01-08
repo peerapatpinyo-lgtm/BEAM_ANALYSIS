@@ -216,7 +216,7 @@ else:
         })
 
         # คำนวณหน่วย Engineering (kNm, kN, mm) เตรียมไว้เลย
-        master_df['M_kNm'] = master_df['M_Nmm'] / 1e6
+        master_df['M_kNm'] = master_df['M_Nmm'] / 1000.0
         master_df['V_kN'] = master_df['V_N'] / 1000.0
         master_df['D_mm'] = master_df['D_m'] * 1000.0
 
@@ -511,3 +511,4 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)
+
