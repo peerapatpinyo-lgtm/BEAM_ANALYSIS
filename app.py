@@ -312,12 +312,12 @@ else:
             full_cal_report += f"  Load Factors: DL={f_dl}, LL={f_ll}\n"
             full_cal_report += "="*60 + "\n\n"
 
-# --- SPAN LOOP (Updated: Focus on As req vs As prov) ---
+# --- SPAN LOOP (Revised Display Logic) ---
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # Extract Forces
+                # Extract Forces (หน่วย kNm และ kN ถูกต้องแล้วจาก process ก่อนหน้า)
                 span_data = res_df_display[(res_df_display['x (m)'] >= s_start - 1e-6) & (res_df_display['x (m)'] <= s_end + 1e-6)]
                 
                 if not span_data.empty:
@@ -328,26 +328,28 @@ else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
 
                 # Report Logic
-                full_cal_report += f">> SPAN {i+1} (Length {s_len} m)\n"
+                full_cal_report += f"\n>> SPAN {i+1} (Length {s_len} m)\n"
                 full_cal_report += f"   Design Forces: Mu(+)={mu_pos:.2f} kNm, Mu(-)={mu_neg:.2f} kNm, Vu={vu_max:.2f} kN\n"
 
-                # UI Layout for Span
-                with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Max Forces: M+ {mu_pos:.1f}, M- {mu_neg:.1f}, V {vu_max:.1f}", expanded=True):
+                # UI Layout
+                with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Forces: $M_u^+$ {mu_pos:.2f}, $M_u^-$ {mu_neg:.2f}, $V_u$ {vu_max:.2f}", expanded=True):
                     
                     # Covering Input
-                    col_prop1, col_prop2 = st.columns([3, 1])
-                    with col_prop1:
-                        st.caption(f"Design Constants: fc'={fc}, fy={fy}, Size {b_mm:.0f}x{h_mm:.0f} mm")
-                    with col_prop2:
+                    c_const, c_cov = st.columns([3, 1])
+                    with c_const:
+                        st.caption(f"Design Constants: fc'={fc} MPa, fy={fy} MPa, Size {b_mm:.0f}x{h_mm:.0f} mm")
+                    with c_cov:
                         cover_mm = st.number_input(f"Covering (mm)", value=25.0, step=5.0, key=f"cov_{i}")
 
-                    # --- 1. FLEXURE DESIGN (BOTTOM) ---
-                    st.markdown("##### 1. Bottom Reinforcement (Mid-Span, +Moment)")
+                    # ==================================================
+                    # 1. POSITIVE MOMENT DESIGN (Bottom Steel)
+                    # ==================================================
+                    st.markdown("##### 1. Bottom Reinforcement (Mid-Span, $+M_u$)")
                     d_eff_bot_est = h_mm - cover_mm - 9 - 10 
                     as_req_bot, rho_bot, err_bot = get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
                     
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-                    with c1: st.markdown(f"**Req:** `{as_req_bot:.0f}` mm²")
+                    with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_bot:.0f}` mm²")
                     with c2: bot_db = st.selectbox("DB", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
                     with c3: bot_n = st.number_input("Qty", 2, 10, 2, key=f"bn_{i}")
                     
@@ -356,27 +358,27 @@ else:
                     pass_b = phi_Mn_bot >= mu_pos
                     
                     with c4: 
-                        # Engineering Check: As Provided vs As Required
-                        color_b = "green" if pass_b else "red"
-                        icon_b = "✅" if pass_b else "❌"
+                        # Comparison Display
+                        clr_b = "green" if pass_b else "red"
+                        icon_b = "✅ OK" if pass_b else "❌ Fail"
                         
-                        # Show: Provided vs Required
-                        st.markdown(f"Prov: :{color_b}[**{as_prov_bot:.0f}**] vs Req: **{as_req_bot:.0f}** mm²")
-                        
-                        # Show: Final Capacity Check (Safety Factor)
-                        st.caption(f"Cap: {phi_Mn_bot:.1f} kNm (Mu: {mu_pos:.1f}) {icon_b}")
-
+                        # Line 1: Area Check
+                        st.markdown(f"**$A_{{s,prov}}$**: :{clr_b}[**{as_prov_bot:.0f}**] vs **{as_req_bot:.0f}** mm²")
+                        # Line 2: Strength Check (Inequality format)
+                        st.markdown(f"**Strength**: $\phi M_n = {phi_Mn_bot:.2f} \ge M_u = {mu_pos:.2f}$ kNm")
+                        st.caption(f"Status: {icon_b}")
                     
-                    full_cal_report += f"   [Bottom] Req: {as_req_bot:.0f} mm2 | Prov: {bot_n}-DB{bot_db} ({as_prov_bot:.0f} mm2)\n"
-                    full_cal_report += f"            PhiMn: {phi_Mn_bot:.2f} kNm vs Mu: {mu_pos:.2f} kNm -> {'OK' if pass_b else 'FAIL'}\n"
+                    full_cal_report += f"   [Bottom] Prov: {bot_n}-DB{bot_db} (As={as_prov_bot:.0f}), phiMn={phi_Mn_bot:.2f} >= Mu={mu_pos:.2f} -> {icon_b}\n"
 
-                    # --- 2. FLEXURE DESIGN (TOP) ---
-                    st.markdown("##### 2. Top Reinforcement (Supports, -Moment)")
+                    # ==================================================
+                    # 2. NEGATIVE MOMENT DESIGN (Top Steel)
+                    # ==================================================
+                    st.markdown("##### 2. Top Reinforcement (Supports, $-M_u$)")
                     d_eff_top_est = h_mm - cover_mm - 9 - 10 
                     as_req_top, rho_top, err_top = get_as_req(mu_neg, d_eff_top_est, fc, fy, b_mm)
                     
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-                    with c1: st.markdown(f"**Req:** `{as_req_top:.0f}` mm²")
+                    with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_top:.0f}` mm²")
                     with c2: top_db = st.selectbox("DB", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
                     with c3: top_n = st.number_input("Qty", 2, 10, 2, key=f"tn_{i}")
                     
@@ -385,22 +387,21 @@ else:
                     pass_t = phi_Mn_top >= mu_neg
                     
                     with c4:
-                        color_t = "green" if pass_t else "red"
-                        icon_t = "✅" if pass_t else "❌"
+                        clr_t = "green" if pass_t else "red"
+                        icon_t = "✅ OK" if pass_t else "❌ Fail"
                         
-                        # Show: Provided vs Required
-                        st.markdown(f"Prov: :{color_t}[**{as_prov_top:.0f}**] vs Req: **{as_req_top:.0f}** mm²")
-                        
-                        # Show: Final Capacity Check
-                        st.caption(f"Cap: {phi_Mn_top:.1f} kNm (Mu: {mu_neg:.1f}) {icon_t}")
+                        st.markdown(f"**$A_{{s,prov}}$**: :{clr_t}[**{as_prov_top:.0f}**] vs **{as_req_top:.0f}** mm²")
+                        st.markdown(f"**Strength**: $\phi M_n = {phi_Mn_top:.2f} \ge M_u = {mu_neg:.2f}$ kNm")
+                        st.caption(f"Status: {icon_t}")
 
-                    full_cal_report += f"   [Top]    Req: {as_req_top:.0f} mm2 | Prov: {top_n}-DB{top_db} ({as_prov_top:.0f} mm2)\n"
-                    full_cal_report += f"            PhiMn: {phi_Mn_top:.2f} kNm vs Mu: {mu_neg:.2f} kNm -> {'OK' if pass_t else 'FAIL'}\n"
+                    full_cal_report += f"   [Top]    Prov: {top_n}-DB{top_db} (As={as_prov_top:.0f}), phiMn={phi_Mn_top:.2f} >= Mu={mu_neg:.2f} -> {icon_t}\n"
 
-                    # --- 3. SHEAR DESIGN ---
-                    st.markdown("##### 3. Shear Reinforcement (Stirrups)")
+                    # ==================================================
+                    # 3. SHEAR DESIGN (Stirrups)
+                    # ==================================================
+                    st.markdown("##### 3. Shear Reinforcement (Stirrups, $V_u$)")
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-                    with c1: st.markdown(f"**Vu:** `{vu_max:.1f}` kN")
+                    with c1: st.markdown(f"**Design $V_u$:**\n`{vu_max:.2f}` kN")
                     with c2: stir_db = st.selectbox("Stirrup", [6, 9, 12], index=0, key=f"sdb_{i}")
                     with c3: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, 10, key=f"ss_{i}")
                     
@@ -408,15 +409,16 @@ else:
                     status_v, phi_Vn, phi_Vc, phi_Vs, _, _ = check_shear_details(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s)
                     
                     with c4:
-                        color_v = "green" if status_v == "OK" else "red"
-                        icon_v = "✅" if status_v == "OK" else "❌"
+                        clr_v = "green" if status_v == "OK" else "red"
+                        icon_v = "✅ OK" if status_v == "OK" else "❌ Fail"
                         
-                        # Shear เรามักดูที่ Capacity เป็นหลัก เพราะ Area เป็นฟังก์ชันของ Spacing
-                        st.markdown(f"Cap: :{color_v}[**{phi_Vn:.1f}**] vs Vu: **{vu_max:.1f}** kN")
-                        st.caption(f"Stirrup Check: {status_v} {icon_v}")
+                        # Shear check is strictly Capacity vs Demand
+                        st.markdown(f"**Strength**: $\phi V_n = :{clr_v}[{phi_Vn:.1f}] \ge V_u = {vu_max:.1f}$ kN")
+                        st.caption(f"($\phi V_c={phi_Vc:.1f} + \phi V_s={phi_Vs:.1f}$)")
+                        # st.caption(f"Status: {icon_v}")
                     
-                    full_cal_report += f"   [Shear]  Prov: RB{stir_db}@{stir_s} mm | PhiVn: {phi_Vn:.2f} kN vs Vu: {vu_max:.2f} kN -> {status_v}\n"
-                    full_cal_report += "-"*30 + "\n"
+                    full_cal_report += f"   [Shear]  Prov: RB{stir_db}@{stir_s}, phiVn={phi_Vn:.2f} >= Vu={vu_max:.2f} -> {icon_v}\n"
+                    full_cal_report += "-"*30
 
                     # Collect Data
                     final_design_res.append({
@@ -426,6 +428,7 @@ else:
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': pass_t},
                         'shear': {'s': stir_s, 'status': status_v}
                     })
+                    
             # --- SUMMARY & REPORT ---
             st.markdown("---")
             st.subheader("📋 Design Summary & Drawing")
@@ -481,5 +484,6 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)  
+
 
 
