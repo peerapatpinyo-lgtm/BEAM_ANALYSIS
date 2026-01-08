@@ -2,90 +2,123 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
+def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, fc, fy):
+    """
+    หน้าตัดคาน (Cross Section) - รูปแบบมาตรฐานวิศวกรรม
+    """
+    b, h = b_m * 1000, h_m * 1000
+    cover = cover_mm
+    ds = 6  # Stirrup diameter
+    db = db_main_mm
+    
+    fig, ax = plt.subplots(figsize=(5, 7))
+    
+    # วาดคอนกรีต (Concrete Outline)
+    ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='black', facecolor='#f8f9fa', hatch='///', alpha=0.2))
+    
+    # วาดเหล็กปลอก (Stirrup)
+    ax.add_patch(patches.Rectangle((cover, cover), b-2*cover, h-2*cover, linewidth=1.5, edgecolor='#2c3e50', facecolor='none'))
+    
+    # ฟังก์ชันวาดเหล็กเส้น
+    def draw_bars(n, y_pos, color):
+        if n < 1: return
+        if n == 1:
+            ax.add_patch(plt.Circle((b/2, y_pos), db/2, color=color, zorder=5))
+        else:
+            spacing = (b - 2*cover - 2*ds - db) / (n - 1)
+            for i in range(n):
+                x = cover + ds + db/2 + i*spacing
+                ax.add_patch(plt.Circle((x, y_pos), db/2, color=color, zorder=5))
+
+    draw_bars(n_bottom, cover + ds + db/2, '#c0392b') # เหล็กล่าง
+    draw_bars(n_top, h - cover - ds - db/2, '#2980b9') # เหล็กบน
+    
+    # ข้อมูลประกอบ (Callouts)
+    info_text = (
+        f"BEAM SECTION DETAIL\n"
+        f"Size: {int(b)}x{int(h)} mm\n"
+        f"fc': {fc} MPa | fy: {fy} MPa\n"
+        f"Top: {int(n_top)}-DB{int(db)}\n"
+        f"Bottom: {int(n_bottom)}-DB{int(db)}\n"
+        f"Stirrup: {stirrup_name}"
+    )
+    ax.text(b/2, h + 50, info_text, ha='center', va='bottom', family='monospace', 
+            fontsize=9, bbox=dict(facecolor='white', alpha=0.8, edgecolor='#bdc3c7'))
+    
+    # เส้นบอกขนาด (Dimensions)
+    ax.annotate('', xy=(0, -30), xytext=(b, -30), arrowprops=dict(arrowstyle='<->'))
+    ax.text(b/2, -80, f"b={int(b)}", ha='center', size=9)
+    ax.annotate('', xy=(-30, 0), xytext=(-30, h), arrowprops=dict(arrowstyle='<->'))
+    ax.text(-100, h/2, f"h={int(h)}", va='center', rotation=90, size=9)
+    
+    ax.set_xlim(-150, b + 150)
+    ax.set_ylim(-150, h + 250)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    return fig
+
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    World-Class Longitudinal Detailing.
-    - Dynamic Support Symbols
-    - Precise Rebar Callouts
-    - Professional Dimensioning
+    รูปตัดตามยาว (Longitudinal Section) - แสดงเหล็กเสริมและ Support ตามจริง
     """
-    h_beam = h_m * 1000  # Convert to mm
+    h_beam = h_m * 1000 
     total_L = sum(spans) * 1000
     offsets = [0] + list(np.cumsum(spans) * 1000)
     
-    fig, ax = plt.subplots(figsize=(18, 6))
+    fig, ax = plt.subplots(figsize=(16, 6))
     
-    # 1. วาดตัวคาน (Concrete Outline)
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, 
-                                   linewidth=2, edgecolor='#2c3e50', facecolor='#fdfefe', zorder=1))
+    # 1. ตัวคาน
+    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=2, edgecolor='#2c3e50', facecolor='#ffffff', zorder=1))
 
-    # 2. วาด Support ตามตำแหน่งและประเภทจริง
+    # 2. วาด Support ตามประเภท
     for _, sup in sup_df.iterrows():
         sx = sup['x'] * 1000
         stype = sup['type']
-        
         if stype == 'Fixed':
-            # วาดสัญลักษณ์ผนัง Fixed
-            ax.add_patch(patches.Rectangle((sx-20, -50), 40, h_beam+100, facecolor='#bdc3c7', hatch='///'))
+            ax.add_patch(patches.Rectangle((sx-25, -50), 50, h_beam+100, facecolor='#bdc3c7', hatch='///'))
         else:
-            # วาดสัญลักษณ์ Roller/Pin (Triangle)
-            poly = plt.Polygon([[sx-100, -100], [sx+100, -100], [sx, 0]], 
-                               closed=True, fill=True, facecolor='#ecf0f1', edgecolor='black', lw=1.5)
+            # Pin / Roller
+            poly = plt.Polygon([[sx-120, -120], [sx+120, -120], [sx, 0]], closed=True, facecolor='#ecf0f1', edgecolor='black', lw=1.5)
             ax.add_patch(poly)
-            if stype == 'Roller':
-                ax.plot([sx-100, sx+100], [-120, -120], 'k-', lw=2)
+            if stype == 'Roller': ax.plot([sx-120, sx+120], [-140, -140], 'k-', lw=2)
 
-    # 3. วาดเหล็กเสริม (Reinforcement)
+    # 3. วาดเหล็กเสริมและป้ายบอกรายละเอียด
     for i, span_l_m in enumerate(spans):
         L_mm = span_l_m * 1000
         x_s, x_e = offsets[i], offsets[i+1]
         res = design_res[i]
         
-        # --- เหล็กล่าง (Positive Moment) ---
-        y_bot = cover_mm
+        # เหล็กล่าง (Main Bottom Steel)
+        y_bot = cover_mm + 5
         ax.plot([x_s + 50, x_e - 50], [y_bot, y_bot], color='#c0392b', lw=3, solid_capstyle='round', zorder=3)
-        ax.annotate(f"{res['pos']['n']}-DB{res['db']}", xy=(x_s + L_mm/2, y_bot), xytext=(0, -25),
-                    textcoords='offset points', ha='center', color='#c0392b', fontweight='bold',
-                    arrowprops=dict(arrowstyle='->', color='#c0392b'))
+        ax.text(x_s + L_mm/2, y_bot + 20, f"{int(res['pos']['n'])}-DB{int(res['db'])}", 
+                ha='center', color='#c0392b', fontsize=10, fontweight='bold')
 
-        # --- เหล็กบน (Negative Moment / Support Bars) ---
-        y_top = h_beam - cover_mm
-        cut_len = L_mm * 0.30 # ระยะตัดเหล็ก 0.3L
-        
-        # วาดเหล็กเสริมช่วงหัวเสา
+        # เหล็กบน (Top Curtailment Steel)
+        y_top = h_beam - cover_mm - 5
+        cut_len = L_mm * 0.3 # ระยะตัดเหล็ก 0.3L
         ax.plot([x_s, x_s + cut_len], [y_top, y_top], color='#2980b9', lw=3, zorder=3)
         ax.plot([x_e - cut_len, x_e], [y_top, y_top], color='#2980b9', lw=3, zorder=3)
-        
-        # ป้ายบอกเหล็กบน (เฉพาะช่วงที่มีเหล็ก)
-        ax.text(x_s + 100, y_top + 20, f"{res['neg']['n']}-DB{res['db']}", 
-                color='#2980b9', fontsize=9, fontweight='bold')
+        ax.text(x_s + 50, y_top - 40, f"{int(res['neg']['n'])}-DB{int(res['db'])}", color='#2980b9', fontsize=9, fontweight='bold')
 
-        # --- เหล็กปลอก (Stirrups) ---
+        # เหล็กปลอก (Stirrups) - วาดเส้นจำลองโซน
         s_val = res['shear']['s']
-        # วาดเส้นจำลองเหล็กปลอก (สุ่มแสดงผลเพื่อความสวยงาม ไม่ให้แน่นเกินไป)
-        n_vis_stirrups = int(L_mm / 250) # แสดงทุกๆ 250mm ในแบบ
-        stirrup_x = np.linspace(x_s + 100, x_e - 100, n_vis_stirrups)
-        for sx in stirrup_x:
-            ax.plot([sx, sx], [cover_mm, h_beam - cover_mm], color='#27ae60', lw=0.8, alpha=0.4, zorder=2)
-        
-        # ป้ายบอกระยะเหล็กปลอก
-        ax.text(x_s + L_mm/2, h_beam/2, f"RB6 @{int(s_val)} mm", 
-                ha='center', va='center', rotation=90, color='#27ae60', fontsize=8, 
-                bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
+        num_vis = int(L_mm / 300) 
+        for sx in np.linspace(x_s + 150, x_e - 150, num_vis):
+            ax.plot([sx, sx], [cover_mm, h_beam-cover_mm], color='#27ae60', lw=1, alpha=0.4)
+        ax.text(x_s + L_mm/2, h_beam/2, f"RB6 @{int(s_val)}", ha='center', va='center', rotation=90, 
+                color='#27ae60', fontsize=9, bbox=dict(facecolor='white', edgecolor='none', alpha=0.8))
 
-    # 4. Dimension Lines (บอกระยะ Span)
+    # 4. บอกระยะ Span
     for i in range(len(spans)):
-        x_m = (offsets[i] + offsets[i+1]) / 2
-        ax.annotate('', xy=(offsets[i], h_beam + 150), xytext=(offsets[i+1], h_beam + 150),
-                    arrowprops=dict(arrowstyle='<->', color='gray'))
-        ax.text(x_m, h_beam + 180, f"L = {spans[i]} m", ha='center', fontweight='bold')
+        mid = (offsets[i] + offsets[i+1]) / 2
+        ax.annotate('', xy=(offsets[i], -250), xytext=(offsets[i+1], -250), arrowprops=dict(arrowstyle='<->', color='gray'))
+        ax.text(mid, -300, f"Span {i+1}: {spans[i]}m", ha='center', fontweight='bold')
 
-    # ปรับแต่งขอบรูป
     ax.set_xlim(-500, total_L + 500)
-    ax.set_ylim(-350, h_beam + 400)
+    ax.set_ylim(-400, h_beam + 300)
     ax.set_aspect('equal')
     ax.axis('off')
-    
-    plt.title("DETAILED LONGITUDINAL SECTION & REINFORCEMENT", fontsize=14, fontweight='bold', pad=30)
+    plt.title("DETAILED LONGITUDINAL REINFORCEMENT PROFILE", fontsize=14, fontweight='bold', pad=20)
     
     return fig
