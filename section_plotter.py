@@ -7,7 +7,7 @@ DPI_VALUE = 300
 GLOBAL_FONT = 8
 
 def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, fc, fy, title="SECTION A-A"):
-    """ วาด Cross Section พร้อมรายละเอียดวัสดุและการเสริมเหล็ก """
+    """ Draw Cross Section with Materials and Reinforcement (English) """
     SECTION_SCALE = 500  
     b, h = b_m * 1000, h_m * 1000
     cover, ds, db = cover_mm, 6, db_main_mm
@@ -20,8 +20,8 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     
     fig, ax = plt.subplots(figsize=(width_inches, height_inches), dpi=DPI_VALUE)
     
-    # 1. Concrete Outline
-    ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#2c3e50', facecolor='#fdfefe'))
+    # 1. Concrete Outline (Changed facecolor to 'white' to remove blue tint)
+    ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#2c3e50', facecolor='white'))
     
     # 2. Stirrup Line
     ax.add_patch(patches.Rectangle((cover, cover), b-2*cover, h-2*cover, linewidth=1, edgecolor='#7f8c8d', ls='--'))
@@ -77,8 +77,7 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     ax.plot([-80, -120], [0, 0], color='black', lw=0.8)
     ax.plot([-80, -120], [h, h], color='black', lw=0.8)
     
-    # --- จุดที่แก้ไข (Fixed Line) ---
-    # เปลี่ยน [-180] เป็น -180 เพื่อให้เป็น Scalar
+    # Corrected: Use simple integer/float for x coordinate, not a list
     ax.text(-180, h/2, f"{int(h)} mm", ha='right', va='center', rotation=90, fontsize=GLOBAL_FONT)
 
     # Title
@@ -91,20 +90,20 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """ วาดรูปตัดตามยาว พร้อมระบุตำแหน่งหน้าตัด (Sections) """
+    """ Draw Longitudinal Section with cut lines (English) """
     LONG_SCALE = 850
     h_beam = h_m * 1000 
     total_L = sum(spans) * 1000
     offsets = [0] + list(np.cumsum(spans) * 1000)
     
-    width_inches = (total_L + 3000) / LONG_SCALE # เผื่อที่ด้านข้างเยอะหน่อย
+    width_inches = (total_L + 3000) / LONG_SCALE 
     height_inches = 5000 / LONG_SCALE 
     fig, ax = plt.subplots(figsize=(width_inches, height_inches), dpi=DPI_VALUE)
     
-    # 1. วาดตัวคานหลัก
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=2, edgecolor='#000000', facecolor='#ffffff', zorder=1))
+    # 1. Main Beam Body (White fill)
+    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=2, edgecolor='#000000', facecolor='white', zorder=1))
     
-    # 2. วาด Support (Hinge & Roller)
+    # 2. Supports (Hinge & Roller)
     for i, (_, row) in enumerate(sup_df.iterrows()):
         x_s = row['x'] * 1000
         # Symbol drawing logic
@@ -121,21 +120,21 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
             ax.add_patch(plt.Circle((x_s, -250), 50, color='black', fill=False, lw=1.5))
             ax.plot([x_s-250, x_s+250], [-310, -310], color='black', lw=2)
 
-    # 3. วาดเหล็กเสริม (Reinforcement)
+    # 3. Reinforcement Bars
     for i, span_l_m in enumerate(spans):
         L_mm = span_l_m * 1000
         x_s = offsets[i]
         x_e = offsets[i+1]
         
-        # Bottom Steel (วิ่งยาวตลอดช่วง แต่หยุดก่อนถึง support นิดหน่อยในแบบ simplified)
+        # Bottom Steel
         ax.plot([x_s+50, x_e-50], [cover_mm, cover_mm], color='#c0392b', lw=2.5, label='Bottom Bars' if i==0 else "")
         
-        # Top Steel (Extra bars at supports) - ประมาณ 0.25-0.3L
+        # Top Steel (Approx 0.25-0.3L)
         y_t = h_beam - cover_mm
         ax.plot([x_s, x_s + L_mm*0.3], [y_t, y_t], color='#2980b9', lw=2.5, label='Top Bars' if i==0 else "")
         ax.plot([x_e - L_mm*0.3, x_e], [y_t, y_t], color='#2980b9', lw=2.5)
 
-    # 4. วาดเส้นแนวตัด (Cut Lines) - แสดงทุก Span เพื่อความสวยงาม
+    # 4. Cut Lines (Sections)
     for i in range(len(spans)):
         x_start = offsets[i]
         x_end = offsets[i+1]
@@ -145,13 +144,12 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
         ax.plot([mid_x, mid_x], [-800, h_beam + 800], color='#e67e22', ls='-.', lw=1.5)
         ax.text(mid_x, h_beam + 900, f"A (S{i+1})", color='#e67e22', fontweight='bold', ha='center', fontsize=GLOBAL_FONT+2)
         
-        # Cut B-B (Near Support - End of span)
-        # ตัดที่ support ขวาของ span นั้น (ยกเว้น span สุดท้ายตัดซ้ายก็ได้ แต่นิยมตัดหัวเสา)
-        sup_x = x_end - (x_end-x_start)*0.1 # ตัดแถวๆ support
+        # Cut B-B (Near Support)
+        sup_x = x_end - (x_end-x_start)*0.1 
         ax.plot([sup_x, sup_x], [-800, h_beam + 800], color='#8e44ad', ls='-.', lw=1.5)
         ax.text(sup_x, h_beam + 900, f"B (S{i+1})", color='#8e44ad', fontweight='bold', ha='center', fontsize=GLOBAL_FONT+2)
 
-    # 5. Dimension Line รวม
+    # 5. Dimension Line
     ax.plot([0, total_L], [h_beam + 1500, h_beam + 1500], color='black', lw=1)
     ax.plot([0, 0], [h_beam + 1400, h_beam + 1600], color='black', lw=1)
     ax.plot([total_L, total_L], [h_beam + 1400, h_beam + 1600], color='black', lw=1)
