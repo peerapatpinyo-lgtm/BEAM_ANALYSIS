@@ -241,26 +241,41 @@ else:
                         st.markdown("**Shear Design**")
                         for s in steps_shear: st.latex(s)
 
-            # --- 🚀 DETAILING PREVIEW (จุดที่แก้ไขเรื่องภาพแตก) ---
+            # --- 🚀 DETAILING SECTION (แก้ไขเพื่อแสดง A-A, B-B, Long. Sect) ---
             st.markdown("---")
-            st.subheader("🛠️ Detailing Preview (High-Definition Drawing)")
+            st.subheader("🛠️ Structural Detailing (Professional View)")
+            
             if design_res:
-                col_det1, col_det2 = st.columns([1, 2.5])
+                # ปรับเป็น 3 คอลัมน์: A-A | B-B | รูปตามยาว
+                c_det1, c_det2, c_det3 = st.columns([1, 1, 2])
                 
-                with col_det1:
-                    st.markdown("**Typical Cross Section**")
-                    # เรียกรูปตัดขวาง
-                    fig_sec = section_plotter.plot_section(
+                with c_det1:
+                    st.markdown("**Section A-A (Mid-span)**")
+                    # กลางคาน (Moment +): เน้นเหล็กล่าง
+                    fig_a = section_plotter.plot_section(
                         params['b'], params['h'], 40, db_main, 
-                        design_res[0]['neg']['n'], design_res[0]['pos']['n'], 
-                        f"RB6@{int(design_res[0]['shear']['s'])}", params['fc'], params['fy']
+                        2, # Top bars (Min)
+                        design_res[0]['pos']['n'], # Bottom bars (Calc)
+                        f"RB6@{int(design_res[0]['shear']['s'])}", 
+                        params['fc'], params['fy'], "SECTION A-A"
                     )
-                    # จุดตาย: ต้องใช้ use_container_width=False เพื่อไม่ให้รูปโดนบีบอัดพิกเซล
-                    st.pyplot(fig_sec, use_container_width=False)
+                    st.pyplot(fig_a, use_container_width=False)
                 
-                with col_det2:
-                    st.markdown("**Longitudinal Detailing**")
-                    # เรียกรูปตัดตามยาว
+                with c_det2:
+                    st.markdown("**Section B-B (Support)**")
+                    # หัวเสา (Moment -): เน้นเหล็กบน
+                    fig_b = section_plotter.plot_section(
+                        params['b'], params['h'], 40, db_main, 
+                        design_res[0]['neg']['n'], # Top bars (Calc)
+                        2, # Bottom bars (Min)
+                        f"RB6@{int(design_res[0]['shear']['s'])}", 
+                        params['fc'], params['fy'], "SECTION B-B"
+                    )
+                    st.pyplot(fig_b, use_container_width=False)
+
+                with c_det3:
+                    st.markdown("**Longitudinal Section**")
+                    # รูปตัดตามยาว แสดง Support (Hinge/Roller) และแนวตัด A/B
                     fig_long = section_plotter.plot_longitudinal_section_detailed(
                         spans, sup_df, design_res, params['h'], 40
                     )
@@ -271,4 +286,3 @@ else:
         st.exception(e)
 
 # --- END OF APP SCRIPT ---
-
