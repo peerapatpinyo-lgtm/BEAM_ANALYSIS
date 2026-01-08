@@ -6,12 +6,11 @@ import io
 import time
 
 # --- 1. IMPORT CUSTOM MODULES ---
-# ต้องมีไฟล์เหล่านี้ในโฟลเดอร์เดียวกัน
 import input_handler
 import solver
 import design_view
 import section_plotter
-import reporter  # <--- เพิ่ม Module ใหม่ตรงนี้
+import reporter
 
 # --- 2. PAGE CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -113,6 +112,54 @@ def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
     status = "OK" if phi_Vn >= Vu else "FAIL"
     return status, phi_Vn/1000, phi_Vc/1000, phi_Vs/1000, Vc, Vs
 
+def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
+    """Helper function to prepare load dataframe for solver"""
+    # 1. Self-weight
+    w_sw_base_kN = params['b'] * params['h'] * 24.0      
+    w_sw_factored_kN = w_sw_base_kN * f_dl
+    
+    span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
+    combined_loads_list = []
+    
+    # 2. User Loads
+    if not raw_loads_df.empty:
+        for _, row in raw_loads_df.iterrows():
+            try:
+                s_idx = int(row['span_index'])
+                if s_idx >= n_spans: continue 
+                
+                l_type = row['type']
+                u_factor = f_dl if row['case'] == 'DL' else f_ll
+                mag_base_kN = float(row['mag']) 
+                mag_factored_N = mag_base_kN * u_factor * 1000.0 
+                dist = float(row['dist'])
+                d_start = float(row['d_start'])
+                
+                if l_type == 'P':
+                    combined_loads_list.append({
+                        'span_index': s_idx, 'type': 'P', 'mag': mag_factored_N, 
+                        'd_start': d_start, 'dist': 0.0
+                    })
+                elif l_type == 'U':
+                    if d_start <= 0.01 and dist >= (spans[s_idx] - 0.01):
+                        span_total_udl_N[s_idx] += mag_factored_N
+                    else:
+                        combined_loads_list.append({
+                            'span_index': s_idx, 'type': 'U', 'mag': mag_factored_N, 
+                            'd_start': d_start, 'dist': dist
+                        })
+            except Exception: continue
+    
+    # Add Self-weight + Full Span UDLs
+    for i in range(n_spans):
+        if span_total_udl_N[i] > 0:
+            combined_loads_list.append({
+                'span_index': i, 'type': 'U', 'mag': span_total_udl_N[i], 
+                'd_start': 0.0, 'dist': spans[i]
+            })
+            
+    return pd.DataFrame(combined_loads_list)
+
 # --- 4. MAIN APPLICATION ---
 
 st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div>', unsafe_allow_html=True)
@@ -158,209 +205,106 @@ else:
 
  # --- 4.3 LOAD CALCULATION PROCESS & SOLVER ---
     try:
-        # Calculate Self-weight
-        w_sw_base_kN = params['b'] * params['h'] * 24.0      
-        w_sw_factored_kN = w_sw_base_kN * f_dl
-        
-        span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
-        combined_loads_list = []
-        
-        if not loads_df.empty:
-            for _, row in loads_df.iterrows():
-                try:
-                    s_idx = int(row['span_index'])
-                    if s_idx >= n_spans: continue 
-                    
-                    l_type = row['type']
-                    u_factor = f_dl if row['case'] == 'DL' else f_ll
-                    mag_base_kN = float(row['mag']) 
-                    mag_factored_N = mag_base_kN * u_factor * 1000.0 
-                    dist = float(row['dist'])
-                    d_start = float(row['d_start'])
-                    
-                    if l_type == 'P':
-                        combined_loads_list.append({
-                            'span_index': s_idx, 'type': 'P', 'mag': mag_factored_N, 
-                            'd_start': d_start, 'dist': 0.0, 'desc': f'User Point ({row["case"]})'
-                        })
-                    elif l_type == 'U':
-                        if d_start <= 0.01 and dist >= (spans[s_idx] - 0.01):
-                            span_total_udl_N[s_idx] += mag_factored_N
-                        else:
-                            combined_loads_list.append({
-                                'span_index': s_idx, 'type': 'U', 'mag': mag_factored_N, 
-                                'd_start': d_start, 'dist': dist, 'desc': f'User Partial UDL ({row["case"]})'
-                            })
-                except Exception: continue
-        
-        for i in range(n_spans):
-            if span_total_udl_N[i] > 0:
-                combined_loads_list.append({
-                    'span_index': i, 'type': 'U', 'mag': span_total_udl_N[i], 
-                    'd_start': 0.0, 'dist': spans[i], 'desc': 'Total Combined UDL (Incl. SW)'
-                })
-        
-        calc_loads_df = pd.DataFrame(combined_loads_list)
-
-        # ----------------------------------------------------------------------
-        # RUN SOLVER
-        # ----------------------------------------------------------------------
         with st.spinner('Running Analysis...'):
-            x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
-        
-        # สร้าง DataFrame หลักตัวเดียว (Master DataFrame)
-        master_df = pd.DataFrame({
-            'x': x_eval,                 # m
-            'M_Nmm': M,                  # N-mm
-            'V_N': V,                    # N
-            'D_m': D                     # m
-        })
+            # =================================================================
+            # RUN 1: ULTIMATE LOAD ANALYSIS (For Strength Design)
+            # =================================================================
+            calc_loads_ult = prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
+            x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
+            
+            # =================================================================
+            # RUN 2: SERVICE LOAD ANALYSIS (For Deflection Check)
+            # =================================================================
+            # Force factors to 1.0 for Serviceability Limit State
+            calc_loads_svc = prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
+            x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
-        # คำนวณหน่วย Engineering (kNm, kN, mm) เตรียมไว้เลย
+        # --- PREPARE DATA FOR DISPLAY (Based on User Selection) ---
+        # If user selected Service Mode, show Service results in graphs.
+        # If Ultimate Mode, show Ultimate results.
+        if is_service:
+            x_plot, M_plot, V_plot, D_plot, R_plot = x_svc, M_svc, V_svc, D_svc, R_svc
+            display_loads = calc_loads_svc
+        else:
+            x_plot, M_plot, V_plot, D_plot, R_plot = x_ult, M_ult, V_ult, D_ult, R_ult
+            display_loads = calc_loads_ult
+
+        # Master DataFrame for Plotting (Current Mode)
+        master_df = pd.DataFrame({
+            'x': x_plot,
+            'M_Nmm': M_plot,
+            'V_N': V_plot,
+            'D_m': D_plot
+        })
         master_df['M_kNm'] = master_df['M_Nmm'] / 1000.0
         master_df['V_kN'] = master_df['V_N'] / 1000.0
         master_df['D_mm'] = master_df['D_m'] * 1000.0
-
-        # DataFrame สำหรับแสดงผล
-        res_df_display = master_df.copy()
-        res_df_display.rename(columns={
-            'x': 'x (m)',
-            'M_Nmm': 'Moment (N-mm)',
-            'M_kNm': 'Moment (kNm)',
-            'V_N': 'Shear (N)',
-            'V_kN': 'Shear (kN)',
-            'D_mm': 'Deflection (mm)'
-        }, inplace=True)
-
+        
         # --- 5. TABS INTERFACE ---
-        # เพิ่ม Tab 3 สำหรับ Calculation Report
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design & Detailing", "📘 3. Detailed Calculation Report"])
         
-        # สร้างตัวแปร final_design_res ไว้ข้างนอก เพื่อให้ Tab 3 มองเห็นได้
         final_design_res = []
 
         # ================= TAB 1: ANALYSIS =================
         with tab1:
-            st.subheader("📈 Force Diagrams")
+            st.subheader(f"📈 Force Diagrams ({tag} Load)")
             
-            # 1. Plot Diagram
             df_for_plot = pd.DataFrame({
-                'x': x_eval,
-                'moment': M, # N-mm
-                'shear': V,  # N
-                'deflection': D * 1000 # mm
+                'x': x_plot,
+                'moment': M_plot, # N-mm
+                'shear': V_plot,  # N
+                'deflection': D_plot * 1000 # mm
             })
             
             if not df_for_plot.empty:
-                st.plotly_chart(design_view.plot_analysis_results(df_for_plot, spans, sup_df, calc_loads_df, R), use_container_width=True)
-            else:
-                st.info("ℹ️ Please input data and click 'Analyze'")
-
-            # 2. Key Metrics
-            st.markdown("### 📌 Critical Values (Global)")
-            if not master_df.empty:
-                v_max_kN = master_df['V_kN'].abs().max()
-                g_max_m = master_df['M_kNm'].max()
-                g_min_m = master_df['M_kNm'].min()
-
-                m_max_pos_kNm = g_max_m if g_max_m > 0 else 0.0
-                m_max_neg_kNm = abs(g_min_m) if g_min_m < 0 else 0.0
-                
-                d_abs_max_mm = master_df['D_mm'].abs().max()
-                
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Max Shear (Vu)", f"{v_max_kN:.2f} kN")
-                m2.metric("Max Moment (+)", f"{m_max_pos_kNm:.2f} kNm")
-                m3.metric("Max Moment (-)", f"{m_max_neg_kNm:.2f} kNm")
-                m4.metric("Max Deflection", f"{d_abs_max_mm:.2f} mm")
-
-            # 3. Support Reactions & Check
-            st.markdown("### 📍 Support Reactions & Checks")
+                st.plotly_chart(design_view.plot_analysis_results(df_for_plot, spans, sup_df, display_loads, R_plot), use_container_width=True)
             
-            if R:
-                col_r1, col_r2 = st.columns([1, 2])
-                with col_r1:
-                    reaction_data = [{"Node": int(str(k).replace('R', '')), "Reaction (kN)": v/1000.0} for k, v in R.items()]
-                    df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
-                    st.dataframe(
-                        df_reac.style.format({"Reaction (kN)": "{:.2f}"}).background_gradient(cmap="Blues", subset=["Reaction (kN)"]),
-                        use_container_width=True, hide_index=True
-                    )
-                
-                with col_r2:
-                    st.write("**Equilibrium Check (ΣFy = 0):**")
-                    sum_R_kN = sum(R.values()) / 1000.0
-                    total_applied_kN = 0.0
-                    if not calc_loads_df.empty:
-                        for _, l in calc_loads_df.iterrows():
-                            if l['type'] == 'P': 
-                                total_applied_kN += l['mag'] / 1000.0
-                            elif l['type'] == 'U':
-                                dist = l.get('dist', 0)
-                                total_applied_kN += (l['mag'] * dist) / 1000.0
-
-                    diff = abs(sum_R_kN - total_applied_kN)
-                    is_balanced = diff < 0.1 
-
-                    if is_balanced:
-                        st.success(f"✅ **Balanced** | Diff: {diff:.4f} kN")
-                    else:
-                        st.error(f"⚠️ **Unbalanced** | Diff: {diff:.4f} kN")
-
-                    c1, c2 = st.columns(2)
-                    c1.metric("Total Reactions (Up)", f"{sum_R_kN:.2f} kN")
-                    c2.metric("Total Loads (Down)", f"{total_applied_kN:.2f} kN")
-
-            # 4. Export
-            if not res_df_display.empty:
-                st.markdown("---")
-                csv = res_df_display.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="📥 Download Analysis Results (CSV)",
-                    data=csv,
-                    file_name=f'Analysis_Results.csv',
-                    mime='text/csv',
-                    type='primary'
-                )
+            # Key Metrics
+            v_max = master_df['V_kN'].abs().max()
+            m_max = master_df['M_kNm'].max()
+            m_min = master_df['M_kNm'].min()
+            d_max = master_df['D_mm'].abs().max()
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Max Shear", f"{v_max:.2f} kN")
+            c2.metric("Max Moment (+)", f"{max(0, m_max):.2f} kNm")
+            c3.metric("Max Moment (-)", f"{abs(min(0, m_min)):.2f} kNm")
+            c4.metric("Max Deflection", f"{d_max:.2f} mm")
 
         # ================= TAB 2: INTERACTIVE DESIGN =================
         with tab2:
-            st.header(f"🏗️ Interactive RC Design ({tag})")
-            
+            st.header(f"🏗️ Interactive RC Design")
             if is_service:
-                st.warning("⚠️ Warning: Service Load Mode (Factor=1.0). Please switch to Ultimate for design.")
+                st.warning("⚠️ You are in Service Mode. Design should be based on Ultimate Loads.")
             
             b_mm, h_mm = params['b'] * 1000, params['h'] * 1000
             fc, fy = params['fc'], params['fy']
-            
             offsets = [0] + list(np.cumsum(spans))
-            
-            # Note: We build final_design_res here so it can be used in Tab 3
             
             # --- SPAN LOOP ---
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # Fetch data for this span
-                span_data = master_df[(master_df['x'] >= s_start - 1e-6) & (master_df['x'] <= s_end + 1e-6)]
-                
-                # --- CALCULATION LOGIC ---
-                if not span_data.empty:
-                    # Positive Moment
-                    raw_max_kNm = span_data['M_kNm'].max()
-                    mu_pos = max(0.0, raw_max_kNm)
-                    
-                    # Negative Moment
-                    raw_min_kNm = span_data['M_kNm'].min()
-                    mu_neg = abs(raw_min_kNm) if raw_min_kNm < 0 else 0.0
-                    
-                    vu_max = span_data['V_kN'].abs().max()
+                # 1. Get ULTIMATE Forces for Strength Design
+                mask_ult = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
+                if any(mask_ult):
+                    mu_pos = max(0.0, (M_ult[mask_ult] / 1000.0).max())
+                    mu_neg = abs(min(0.0, (M_ult[mask_ult] / 1000.0).min()))
+                    vu_max = abs((V_ult[mask_ult] / 1000.0)).max()
                 else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
+                
+                # 2. Get SERVICE Forces for Deflection Check
+                mask_svc = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
+                if any(mask_svc):
+                    ma_pos_svc = max(0.0, (M_svc[mask_svc] / 1000.0).max())
+                    delta_svc_mm = abs((D_svc[mask_svc] * 1000.0)).max()
+                else:
+                    ma_pos_svc, delta_svc_mm = 0, 0
 
                 # --- UI DISPLAY ---
-                with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Forces: $M_u^+$ {mu_pos:.2f} kNm, $M_u^-$ {mu_neg:.2f} kNm, $V_u$ {vu_max:.2f} kN", expanded=True):
+                with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Strength Design Forces", expanded=True):
                     
                     c_const, c_cov = st.columns([3, 1])
                     with c_const:
@@ -369,9 +313,9 @@ else:
                         cover_mm = st.number_input(f"Covering (mm)", value=25.0, step=5.0, key=f"cov_{i}")
 
                     # 1. Bottom Steel (+Moment)
-                    st.markdown("##### 1. Bottom Reinforcement (Mid-Span, $+M_u$)")
-                    d_eff_bot_est = h_mm - cover_mm - 9 - 10 
-                    as_req_bot, rho_bot, err_bot = get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
+                    st.markdown("##### 1. Bottom Reinforcement (Mid-Span)")
+                    d_eff_bot_est = h_mm - cover_mm - 20
+                    as_req_bot, _, _ = get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
                     
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
                     with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_bot:.0f}` mm²")
@@ -384,14 +328,12 @@ else:
                     
                     with c4: 
                         clr_b = "green" if pass_b else "red"
-                        icon_b = "✅ OK" if pass_b else "❌ Fail"
-                        st.markdown(f"**Area**: $A_{{s,prov}} =$ :{clr_b}[**{as_prov_bot:.0f}**] **mm²** vs $A_{{req}} =$ **{as_req_bot:.0f}** **mm²**")
-                        st.markdown(f"**Strength**: $\phi M_n =$ :{clr_b}[**{phi_Mn_bot:.2f}**] **kNm** $\ge M_u =$ **{mu_pos:.2f}** **kNm**")
+                        st.markdown(f"$\phi M_n$: :{clr_b}[**{phi_Mn_bot:.2f}**] kNm vs $M_u$: **{mu_pos:.2f}**")
                     
                     # 2. Top Steel (-Moment)
-                    st.markdown("##### 2. Top Reinforcement (Supports, $-M_u$)")
-                    d_eff_top_est = h_mm - cover_mm - 9 - 10 
-                    as_req_top, rho_top, err_top = get_as_req(mu_neg, d_eff_top_est, fc, fy, b_mm)
+                    st.markdown("##### 2. Top Reinforcement (Supports)")
+                    d_eff_top_est = h_mm - cover_mm - 20
+                    as_req_top, _, _ = get_as_req(mu_neg, d_eff_top_est, fc, fy, b_mm)
                     
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
                     with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_top:.0f}` mm²")
@@ -404,12 +346,10 @@ else:
                     
                     with c4:
                         clr_t = "green" if pass_t else "red"
-                        icon_t = "✅ OK" if pass_t else "❌ Fail"
-                        st.markdown(f"**Area**: $A_{{s,prov}} =$ :{clr_t}[**{as_prov_top:.0f}**] **mm²** vs $A_{{req}} =$ **{as_req_top:.0f}** **mm²**")
-                        st.markdown(f"**Strength**: $\phi M_n =$ :{clr_t}[**{phi_Mn_top:.2f}**] **kNm** $\ge M_u =$ **{mu_neg:.2f}** **kNm**")
+                        st.markdown(f"$\phi M_n$: :{clr_t}[**{phi_Mn_top:.2f}**] kNm vs $M_u$: **{mu_neg:.2f}**")
 
                     # 3. Shear
-                    st.markdown("##### 3. Shear Reinforcement (Stirrups, $V_u$)")
+                    st.markdown("##### 3. Shear Reinforcement")
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
                     with c1: st.markdown(f"**Design $V_u$:**\n`{vu_max:.2f}` kN")
                     with c2: stir_db = st.selectbox("Stirrup", [6, 9, 12], index=0, key=f"sdb_{i}")
@@ -420,11 +360,9 @@ else:
                     
                     with c4:
                         clr_v = "green" if status_v == "OK" else "red"
-                        icon_v = "✅ OK" if status_v == "OK" else "❌ Fail"
-                        st.markdown(f"**Strength**: $\phi V_n =$ :{clr_v}[**{phi_Vn:.1f}**] **kN** $\ge V_u =$ **{vu_max:.1f}** **kN**")
-                        st.caption(f"($\phi V_c={phi_Vc:.1f} + \phi V_s={phi_Vs:.1f}$ kN)")
+                        st.markdown(f"$\phi V_n$: :{clr_v}[**{phi_Vn:.1f}**] kN")
                     
-                    # Store results for Report and Summary
+                    # Store results for Report
                     final_design_res.append({
                         'span_id': i,
                         'L': s_len,
@@ -435,59 +373,46 @@ else:
                         'top_db': top_db, 'bot_db': bot_db, 'stir_db': stir_db,
                         'pos': {'n': bot_n, 'area': as_prov_bot, 'status': pass_b},
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': pass_t},
-                        'shear': {'s': stir_s, 'status': status_v}
+                        'shear': {'s': stir_s, 'status': status_v},
+                        # Service Load Results for Report
+                        'Ma_pos_svc': ma_pos_svc,
+                        'delta_svc_mm': delta_svc_mm
                     })
 
             # --- SUMMARY & REPORT ---
             st.markdown("---")
-            st.subheader("📋 Design Summary & Drawing")
+            st.subheader("📋 Design Summary")
             
             summary_data = []
             for item in final_design_res:
                 summary_data.append({
                     "Span": item['span_id'] + 1,
-                    "Bottom Rebar": f"{item['pos']['n']}-DB{item['bot_db']}",
-                    "Top Rebar": f"{item['neg']['n']}-DB{item['top_db']}",
+                    "Bottom": f"{item['pos']['n']}-DB{item['bot_db']}",
+                    "Top": f"{item['neg']['n']}-DB{item['top_db']}",
                     "Stirrup": f"RB{item['stir_db']}@{item['shear']['s']}",
-                    "Result": "✅ Pass" if (item['pos']['status'] and item['neg']['status'] and item['shear']['status'] == "OK") else "❌ Fail"
+                    "Status": "✅ Pass" if (item['pos']['status'] and item['neg']['status'] and item['shear']['status'] == "OK") else "❌ Fail"
                 })
             st.table(pd.DataFrame(summary_data))
-
-            col_act1, col_act2 = st.columns(2)
-            with col_act1:
-                if st.button("🔄 Generate/Update Drawings", type="primary"):
-                    try:
-                        st.write("**Longitudinal Section:**")
-                        fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, params['h'], final_design_res[0]['cover'])
-                        st.pyplot(fig_long, use_container_width=True)
-                        
-                        st.write("**Cross Section (Typical Span 1):**")
-                        res1 = final_design_res[0]
-                        fig_sec = section_plotter.plot_section(
-                            params['b'], params['h'], res1['cover'], res1['top_db'], res1['bot_db'],
-                            res1['neg']['n'], res1['pos']['n'], f"RB{res1['stir_db']}@{res1['shear']['s']}",
-                            fc, fy, "SECTION A-A (Span 1)"
-                        )
-                        st.pyplot(fig_sec, use_container_width=True)
-                    except Exception as e:
-                        st.error(f"Error plotting: {e}")
             
-            with col_act2:
-                # Text Report (Old style) can be kept here if needed, but we have Tab 3 now.
-                st.info("💡 Go to **Tab 3** to view detailed Step-by-Step Calculation Sheets.")
+            # Drawings Button
+            if st.button("🔄 Generate Drawings", type="primary"):
+                try:
+                    st.write("**Longitudinal Section:**")
+                    fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, params['h'], final_design_res[0]['cover'])
+                    st.pyplot(fig_long, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Drawing Error: {e}")
 
-        # ================= TAB 3: DETAILED REPORT (NEW) =================
+        # ================= TAB 3: DETAILED REPORT =================
         with tab3:
             st.header("📝 Detailed Calculation Reports")
             st.markdown(f"**Project:** {project_name} | **Engineer:** {engineer_name}")
-            st.write("Click on each span below to view the full engineering calculation sheet (English/LaTeX).")
             
             if not final_design_res:
                 st.warning("⚠️ Please complete the design in Tab 2 first.")
             else:
                 for i, res in enumerate(final_design_res):
                     with st.expander(f"📘 Calculation Sheet: Span {i+1}", expanded=False):
-                        # เรียกใช้งาน Function จาก reporter.py
                         reporter.render_calculation_report(
                             span_idx=i,
                             span_len=res['L'],
@@ -498,10 +423,12 @@ else:
                             Mu_pos=res['Mu_pos'],
                             Mu_neg=res['Mu_neg'],
                             Vu=res['Vu_max'],
-                            res_data=res
+                            res_data=res,
+                            # Pass Service Results here
+                            Ma_pos=res['Ma_pos_svc'],
+                            delta_analysis_mm=res['delta_svc_mm']
                         )
 
     except Exception as e:
-        st.error(f"❌ Calculation Error: {e}")
-        st.warning("Please check your input loads or support conditions.")
+        st.error(f"❌ Application Error: {e}")
         st.exception(e)
