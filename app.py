@@ -312,7 +312,7 @@ else:
             full_cal_report += f"  Load Factors: DL={f_dl}, LL={f_ll}\n"
             full_cal_report += "="*60 + "\n\n"
 
-# --- SPAN LOOP (Final Fix: Units & Display) ---
+# --- SPAN LOOP (Final Polish: Explicit Units for Area) ---
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
@@ -361,8 +361,8 @@ else:
                         clr_b = "green" if pass_b else "red"
                         icon_b = "✅ OK" if pass_b else "❌ Fail"
                         
-                        # Display Fixed
-                        st.markdown(f"**$A_{{s,prov}}$**: :{clr_b}[**{as_prov_bot:.0f}**] vs **{as_req_bot:.0f}** mm²")
+                        # Fix: ใส่หน่วย mm² ให้ครบทั้งสองฝั่ง
+                        st.markdown(f"**Area**: $A_{{s,prov}} =$ :{clr_b}[**{as_prov_bot:.0f}**] **mm²** vs $A_{{req}} =$ **{as_req_bot:.0f}** **mm²**")
                         st.markdown(f"**Strength**: $\phi M_n =$ :{clr_b}[**{phi_Mn_bot:.2f}**] **kNm** $\ge M_u =$ **{mu_pos:.2f}** **kNm**")
                         st.caption(f"Status: {icon_b}")
                     
@@ -388,7 +388,8 @@ else:
                         clr_t = "green" if pass_t else "red"
                         icon_t = "✅ OK" if pass_t else "❌ Fail"
                         
-                        st.markdown(f"**$A_{{s,prov}}$**: :{clr_t}[**{as_prov_top:.0f}**] vs **{as_req_top:.0f}** mm²")
+                        # Fix: ใส่หน่วย mm² ให้ครบทั้งสองฝั่ง
+                        st.markdown(f"**Area**: $A_{{s,prov}} =$ :{clr_t}[**{as_prov_top:.0f}**] **mm²** vs $A_{{req}} =$ **{as_req_top:.0f}** **mm²**")
                         st.markdown(f"**Strength**: $\phi M_n =$ :{clr_t}[**{phi_Mn_top:.2f}**] **kNm** $\ge M_u =$ **{mu_neg:.2f}** **kNm**")
                         st.caption(f"Status: {icon_t}")
 
@@ -410,6 +411,7 @@ else:
                         clr_v = "green" if status_v == "OK" else "red"
                         icon_v = "✅ OK" if status_v == "OK" else "❌ Fail"
                         
+                        # Shear Unit Check (Already fixed previously, keeping consistent)
                         st.markdown(f"**Strength**: $\phi V_n =$ :{clr_v}[**{phi_Vn:.1f}**] **kN** $\ge V_u =$ **{vu_max:.1f}** **kN**")
                         st.caption(f"($\phi V_c={phi_Vc:.1f} + \phi V_s={phi_Vs:.1f}$ kN)")
                     
@@ -480,6 +482,7 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)  
+
 
 
 
