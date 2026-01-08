@@ -1,141 +1,153 @@
 import numpy as np
 
-def design_beam_flexure(Mu, b, d, fc, fy, phi=0.9):
+def design_beam_flexure(Mu, b_m, h_m, cover_mm, db_main_mm, db_stir_mm, fc, fy, phi=0.9):
     """
-    Calculates required steel Area (As) with detailed calculation steps (LaTeX).
-    Returns: As_req, rho, status_dict, calc_steps (list of latex strings)
+    Calculates required steel Area (As) and Number of Bars with detailed LaTeX steps.
+    Now calculates 'd' accurately based on cover and bar sizes.
     """
-    Mu_Nmm = Mu * 1e6
-    b_mm = b * 1000
-    d_mm = d * 1000
+    # 1. Unit Conversion & Geometry
+    Mu_Nmm = abs(Mu) * 1e6
+    b = b_m * 1000
+    h = h_m * 1000
+    
+    # Calculate Effective Depth (d)
+    # d = h - cover - stirrup - main/2
+    d = h - cover_mm - db_stir_mm - (db_main_mm / 2)
     
     steps = []
     steps.append(r"\textbf{1. Design Parameters}")
-    steps.append(f"M_u = {Mu:.2f} \\text{{ kNm}}, \\quad f'_c = {fc} \\text{{ MPa}}, \\quad f_y = {fy} \\text{{ MPa}}")
-    steps.append(f"b = {b_mm:.0f} \\text{{ mm}}, \\quad d = {d_mm:.0f} \\text{{ mm}}, \\quad \\phi = {phi}")
+    steps.append(rf"M_u = {abs(Mu):.2f} \text{{ kNm}}, \quad f'_c = {fc} \text{{ MPa}}, \quad f_y = {fy} \text{{ MPa}}")
+    steps.append(rf"b = {b:.0f} \text{{ mm}}, \quad h = {h:.0f} \text{{ mm}}, \quad \text{{Cover}} = {cover_mm} \text{{ mm}}")
+    steps.append(rf"\text{{Main DB}}{db_main_mm}, \quad \text{{Stirrup RB/DB}}{db_stir_mm}")
+    steps.append(rf"d = {h:.0f} - {cover_mm} - {db_stir_mm} - {db_main_mm}/2 = \mathbf{{{d:.1f} \text{{ mm}}}}")
 
-    # 1. Beta1
+    # 2. Beta1
     if fc <= 30: beta1 = 0.85
     elif fc >= 55: beta1 = 0.65
     else: beta1 = 0.85 - 0.05 * (fc - 30) / 7
     
-    steps.append(r"\textbf{2. Determine } \beta_1")
-    steps.append(rf"\beta_1 = {beta1:.3f} \quad (\text{{for }} f'_c = {fc} \text{{ MPa}})")
-
-    # 2. Rho Limits
-    steps.append(r"\textbf{3. Reinforcement Ratio Limits}")
-    
-    # Rho Min
+    # 3. Rho Limits
     rho_min_1 = 0.25 * np.sqrt(fc) / fy
     rho_min_2 = 1.4 / fy
     rho_min = max(rho_min_1, rho_min_2)
     
-    steps.append(r"\rho_{min} = \max \left( \frac{0.25\sqrt{f'_c}}{f_y}, \frac{1.4}{f_y} \right)")
-    steps.append(rf"\rho_{{min}} = \max \left( \frac{{0.25\sqrt{{{fc}}}}}{{{fy}}}, \frac{{1.4}}{{{fy}}} \right) = \max({rho_min_1:.5f}, {rho_min_2:.5f}) = {rho_min:.5f}")
-
-    # Rho Bal & Max
     rho_b = 0.85 * beta1 * (fc / fy) * (600 / (600 + fy))
-    rho_max = 0.75 * rho_b
+    rho_max = 0.75 * rho_b # Maximum allowed rho
     
-    steps.append(r"\rho_{b} = 0.85 \beta_1 \frac{f'_c}{f_y} \left( \frac{600}{600 + f_y} \right)")
-    steps.append(rf"\rho_{{b}} = 0.85 ({beta1:.3f}) \frac{{{fc}}}{{{fy}}} \left( \frac{{600}}{{600 + {fy}}} \right) = {rho_b:.5f}")
-    steps.append(rf"\rho_{{max}} = 0.75 \rho_b = 0.75 \times {rho_b:.5f} = {rho_max:.5f}")
+    # 4. Calculate Rn & Rho Required
+    steps.append(r"\textbf{2. Flexural Calculation}")
+    Rn = Mu_Nmm / (phi * b * d**2)
+    steps.append(rf"R_n = \frac{{{Mu_Nmm:.0f}}}{{0.9 \cdot {b:.0f} \cdot {d:.1f}^2}} = {Rn:.3f} \text{{ MPa}}")
 
-    # 3. Calculate Rn
-    steps.append(r"\textbf{4. Required Reinforcement}")
-    Rn = Mu_Nmm / (phi * b_mm * d_mm**2)
-    steps.append(r"R_n = \frac{M_u}{\phi b d^2}")
-    steps.append(rf"R_n = \frac{{{Mu_Nmm:.0f}}}{{{phi} \cdot {b_mm} \cdot {d_mm}^2}} = {Rn:.4f} \text{{ MPa}}")
-
-    # 4. Calculate Rho Required
     try:
         term_in_sqrt = 1 - (2 * Rn) / (0.85 * fc)
         if term_in_sqrt < 0:
-            steps.append(r"\textbf{Error: Section too small!}")
-            steps.append(rf"1 - \frac{{2 R_n}}{{0.85 f'_c}} < 0 \rightarrow \text{{Fail}}")
-            return 0, 0, {"status": "Fail", "msg": "Compression Fail"}, steps
+            steps.append(r"\color{red}{\textbf{Fail: Section too small! Increase Depth.}}")
+            return {'status': 'Fail', 'msg': 'Section Small'}, steps
             
         rho_req = (0.85 * fc / fy) * (1 - np.sqrt(term_in_sqrt))
-        
-        steps.append(r"\rho_{req} = \frac{0.85 f'_c}{f_y} \left( 1 - \sqrt{1 - \frac{2 R_n}{0.85 f'_c}} \right)")
-        steps.append(rf"\rho_{{req}} = \frac{{0.85 ({fc})}}{{{fy}}} \left( 1 - \sqrt{{1 - \frac{{2 ({Rn:.4f})}}{{0.85 ({fc})}}}} \right) = {rho_req:.5f}")
-
     except:
-        return 0, 0, {"status": "Fail", "msg": "Calc Error"}, steps
+        return {'status': 'Error', 'msg': 'Calc Error'}, steps
         
     # 5. Check Logic
     final_rho = rho_req
     status = "OK"
-    msg = "Design Pass"
-    
-    steps.append(r"\textbf{5. Check \& Final Area}")
     
     if rho_req < rho_min:
-        steps.append(rf"\rho_{{req}} ({rho_req:.5f}) < \rho_{{min}} ({rho_min:.5f}) \rightarrow \text{{Use }} \rho_{{min}}")
         final_rho = rho_min
-        msg = "Used Min Steel"
+        steps.append(rf"\rho_{{req}} ({rho_req:.5f}) < \rho_{{min}} \rightarrow \text{{Use }} \rho_{{min}} = {rho_min:.5f}")
     elif rho_req > rho_max:
-        steps.append(rf"\rho_{{req}} ({rho_req:.5f}) > \rho_{{max}} ({rho_max:.5f}) \rightarrow \text{{Warning: Section Over-Reinforced}}")
         status = "Warning"
-        msg = "Exceeds rho_max"
+        steps.append(rf"\rho_{{req}} ({rho_req:.5f}) > \rho_{{max}} \rightarrow \text{{Warning: Over-Reinforced}}")
     else:
-        steps.append(rf"\rho_{{min}} < \rho_{{req}} < \rho_{{max}} \rightarrow \text{{OK}}")
+        steps.append(rf"\rho = {rho_req:.5f} \quad (\text{{OK}})")
 
-    As_req = final_rho * b_mm * d_mm
-    steps.append(r"A_{s,req} = \rho \cdot b \cdot d")
-    steps.append(rf"A_{{s,req}} = {final_rho:.5f} \cdot {b_mm} \cdot {d_mm} = \mathbf{{{As_req:.2f} \text{{ mm}}^2}}")
+    # 6. Calculate Area & Number of Bars
+    As_req = final_rho * b * d
+    
+    # Area of one bar
+    A_bar = 3.14159 * (db_main_mm / 2)**2
+    num_bars = np.ceil(As_req / A_bar)
+    if num_bars < 2: num_bars = 2
+    
+    As_prov = num_bars * A_bar
+    
+    steps.append(r"\textbf{3. Reinforcement}")
+    steps.append(rf"A_{{s,req}} = {final_rho:.5f} \cdot {b:.0f} \cdot {d:.1f} = {As_req:.2f} \text{{ mm}}^2")
+    steps.append(rf"\text{{Use }} \mathbf{{{int(num_bars)} \text{{ - DB}} {db_main_mm}}} \quad (A_{{s,prov}} = {As_prov:.2f} \text{{ mm}}^2)")
 
-    return As_req, final_rho, {"status": status, "msg": msg}, steps
+    return {
+        'As_req': As_req,
+        'As_prov': As_prov,
+        'n_bars': int(num_bars),
+        'rho': final_rho,
+        'd_used': d,
+        'status': status
+    }, steps
 
-def check_shear(Vu, b, d, fc, fy, phi=0.85):
+def check_shear(Vu, b_m, d_mm, fc, fy, db_stir_mm, phi=0.85):
     """
-    Returns required stirrup spacing with calculation steps.
+    Calculates stirrup spacing based on user selected stirrup size.
     """
-    Vu_N = Vu * 1000
-    b_mm = b * 1000
-    d_mm = d * 1000
+    Vu_N = abs(Vu) * 1000
+    b = b_m * 1000
+    d = d_mm # d passed from flexure calculation for consistency
     
     steps = []
-    steps.append(r"\textbf{Shear Design}")
-    steps.append(rf"V_u = {Vu:.2f} \text{{ kN}}, \quad \phi = {phi}")
+    steps.append(r"\textbf{Shear Design (Stirrups)}")
     
-    Vc = 0.17 * np.sqrt(fc) * b_mm * d_mm
+    # Vc Calculation
+    Vc = 0.17 * np.sqrt(fc) * b * d
     phi_Vc = phi * Vc
     
-    steps.append(r"V_c = 0.17 \sqrt{f'_c} b d")
-    steps.append(rf"V_c = 0.17 \sqrt{{{fc}}} ({b_mm}) ({d_mm}) = {Vc/1000:.2f} \text{{ kN}}")
-    steps.append(rf"\phi V_c = {phi} \times {Vc/1000:.2f} = {phi_Vc/1000:.2f} \text{{ kN}}")
+    steps.append(rf"V_u = {abs(Vu):.2f} \text{{ kN}}, \quad \phi V_c = {phi_Vc/1000:.2f} \text{{ kN}}")
     
-    req_s = None
-    status = "OK"
+    req_s = 0
+    status_msg = ""
+    
+    # Av Calculation (2 legs)
+    Av = 2 * (3.14159 * (db_stir_mm/2)**2)
     
     if Vu_N <= phi_Vc / 2:
-        status = "No Shear Reinf. Needed"
-        req_s = 600
-        steps.append(r"V_u \le 0.5 \phi V_c \rightarrow \text{Theoreticaly no stirrups needed (Use max spacing)}")
+        status_msg = "Not Req."
+        req_s = d / 2
+        steps.append(r"V_u \le 0.5 \phi V_c \rightarrow \text{Theoretically None (Use Min)}")
+    
     elif Vu_N <= phi_Vc:
-        status = "Min Shear Reinf."
-        req_s = 300 
-        steps.append(r"0.5 \phi V_c < V_u \le \phi V_c \rightarrow \text{Use Minimum Stirrups}")
+        status_msg = "Min Stirrups"
+        # Min spacing (simplified)
+        s1 = (Av * fy) / (0.062 * np.sqrt(fc) * b)
+        s2 = (Av * fy) / (0.35 * b)
+        req_s = min(s1, s2, d/2, 600)
+        steps.append(r"0.5 \phi V_c < V_u \le \phi V_c \rightarrow \text{Min Stirrups}")
+        
     else:
+        # Design Stirrups
         Vs = (Vu_N - phi_Vc) / phi
-        steps.append(r"V_u > \phi V_c \rightarrow \text{Stirrups Required}")
-        steps.append(r"V_s = \frac{V_u - \phi V_c}{\phi}")
         steps.append(rf"V_s = \frac{{{Vu_N:.0f} - {phi_Vc:.0f}}}{{{phi}}} = {Vs/1000:.2f} \text{{ kN}}")
         
-        # Try RB6 (2 legs) -> Av = 2 * 28 = 56 mm2
-        Av = 56.5
-        steps.append(r"\text{Try RB6 (2 legs), } A_v \approx 56.5 \text{ mm}^2")
+        # Check Max Capacity
+        if Vs > (0.66 * np.sqrt(fc) * b * d):
+            steps.append(r"\color{red}{\textbf{Fail: V_s exceeds limit. Increase Size.}}")
+            return 0, "Fail", steps
+
+        s_calc = (Av * fy * d) / Vs
         
-        s_req = (Av * fy * d_mm) / Vs
-        steps.append(r"s_{req} = \frac{A_v f_y d}{V_s}")
-        steps.append(rf"s_{{req}} = \frac{{56.5 \cdot {fy} \cdot {d_mm}}}{{{Vs:.0f}}} = {s_req:.0f} \text{{ mm}}")
-        
-        req_s = s_req
-        
-        if Vs > 0.66 * np.sqrt(fc) * b_mm * d_mm:
-            status = "Fail (Section too small)"
-            req_s = 0
-            steps.append(r"\textbf{Fail: } V_s \text{ exceeds max limit}")
+        # Max Spacing
+        if Vs <= (0.33 * np.sqrt(fc) * b * d):
+            s_max = min(d/2, 600)
+        else:
+            s_max = min(d/4, 300)
             
-    return req_s, status, steps
+        req_s = min(s_calc, s_max)
+        steps.append(rf"\text{{Try }} \text{{RB/DB}}{db_stir_mm} (A_v={Av:.1f}), \quad s_{{req}} = {req_s:.0f} \text{{ mm}}")
+        status_msg = "Req. Calc"
+
+    # Practical Rounding (10mm or 25mm steps)
+    if req_s > 300: req_s = 300
+    if req_s < 50: req_s = 50
+    s_final = int(req_s // 10) * 10
+    
+    steps.append(rf"\textbf{{Use }} \mathbf{{\text{{RB/DB}}{db_stir_mm} @ {s_final} \text{{ mm}} c/c}}")
+    
+    return s_final, status_msg, steps
