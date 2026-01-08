@@ -2,149 +2,131 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-# --- 📏 Config ---
-DPI_VALUE = 300     
-GLOBAL_FONT = 8
-
-def _setup_white_canvas(figsize):
-    """ Helper to force pure white background """
-    fig, ax = plt.subplots(figsize=figsize, dpi=DPI_VALUE)
-    # บังคับสีขาวแบบ Hardcore
-    fig.patch.set_facecolor('#FFFFFF')
-    fig.patch.set_alpha(1.0)
-    ax.set_facecolor('#FFFFFF')
-    return fig, ax
-
-def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, fc, fy, title="SECTION A-A"):
-    SECTION_SCALE = 500  
-    b, h = b_m * 1000, h_m * 1000
-    cover, ds, db = cover_mm, 6, db_main_mm
+def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_text, fc, fy, title="Section"):
+    """
+    Plots the beam cross-section with different Top and Bottom bar sizes.
+    """
+    b = b_m * 1000
+    h = h_m * 1000
+    cover = cover_mm
     
-    view_left, view_right = -400, b + 800
-    view_bottom, view_top = -500, h + 600
+    fig, ax = plt.subplots(figsize=(6, 6))
     
-    width_inches = (view_right - view_left) / SECTION_SCALE 
-    height_inches = (view_top - view_bottom) / SECTION_SCALE
+    # 1. Concrete Face
+    rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='black', facecolor='#f0f0f0')
+    ax.add_patch(rect)
     
-    fig, ax = _setup_white_canvas((width_inches, height_inches))
+    # 2. Stirrup (Simplified as a box inside cover)
+    stir_w = b - 2*cover
+    stir_h = h - 2*cover
+    stirrup = patches.Rectangle((cover, cover), stir_w, stir_h, linewidth=1.5, edgecolor='blue', facecolor='none', linestyle='--')
+    ax.add_patch(stirrup)
     
-    # 1. Concrete Outline
-    ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='#2c3e50', facecolor='#FFFFFF', zorder=0))
-    
-    # 2. Stirrup Line
-    ax.add_patch(patches.Rectangle((cover, cover), b-2*cover, h-2*cover, linewidth=1, edgecolor='#7f8c8d', ls='--', zorder=1))
-    
-    # 3. Main Bars
-    def draw_bars(n, y_pos, color):
-        if n < 1: return
-        if n == 1:
+    # 3. Rebar Plotting Helper
+    def plot_bars(n_bars, y_center, db, color='red'):
+        if n_bars < 2: n_bars = 2 # Minimum visual
+        radius = db / 2
+        
+        # Spacing logic
+        start_x = cover + db # Offset from stirrup roughly
+        end_x = b - cover - db
+        if n_bars == 1:
             x_positions = [b/2]
         else:
-            start_x = cover + ds + db/2
-            end_x = b - cover - ds - db/2
-            spacing = (end_x - start_x) / (n - 1)
-            x_positions = [start_x + i*spacing for i in range(int(n))]
+            x_positions = np.linspace(start_x, end_x, int(n_bars))
             
         for x in x_positions:
-            circle = plt.Circle((x, y_pos), db/2, color=color, zorder=10, ec='black', lw=0.5)
+            circle = patches.Circle((x, y_center), radius, edgecolor='black', facecolor=color, zorder=10)
             ax.add_patch(circle)
+            
+    # Draw Top Bars
+    # y position = height - cover - stirrup_dia (approx 9) - radius
+    y_top = h - cover - 9 - (db_top_mm/2)
+    plot_bars(n_top, y_top, db_top_mm, color='#d62728') # Red
+    
+    # Draw Bottom Bars
+    y_bot = cover + 9 + (db_bot_mm/2)
+    plot_bars(n_bot, y_bot, db_bot_mm, color='#1f77b4') # Blue
+    
+    # 4. Annotation
+    # Dimension lines
+    ax.annotate(f"{b:.0f}", xy=(b/2, -40), ha='center', va='top', arrowprops=dict(arrowstyle='|-|'))
+    ax.annotate(f"{h:.0f}", xy=(-40, h/2), ha='right', va='center', rotation=90, arrowprops=dict(arrowstyle='|-|'))
+    
+    # Text Details
+    info_text = (
+        f"Size: {b:.0f}x{h:.0f} mm\n"
+        f"Cover: {cover} mm\n"
+        f"fc': {fc} MPa\n"
+        f"fy: {fy} MPa"
+    )
+    ax.text(b*1.1, h*0.9, info_text, fontsize=10, bbox=dict(boxstyle="round", fc="white"))
+    
+    # Rebar Labels
+    ax.text(b/2, h + 30, f"{int(n_top)}-DB{db_top_mm} (Top)", ha='center', color='#d62728', fontweight='bold')
+    ax.text(b/2, -90, f"{int(n_bot)}-DB{db_bot_mm} (Bottom)", ha='center', color='#1f77b4', fontweight='bold')
+    ax.text(b/2, h/2, f"Stirrup: {stir_text}", ha='center', va='center', color='blue', fontsize=9, backgroundcolor='white')
 
-    y_bot = cover + ds + db/2
-    y_top = h - cover - ds - db/2
-    
-    draw_bars(n_bottom, y_bot, '#c0392b') 
-    draw_bars(n_top, y_top, '#2980b9')   
-    
-    # 4. Annotations
-    ax.plot([b/2, b+100], [y_top, y_top+100], color='#2980b9', lw=1)
-    ax.text(b+110, y_top+100, f"{int(n_top)}-DB{int(db)} (Top)", va='center', color='#2980b9', fontsize=GLOBAL_FONT, fontweight='bold')
-    
-    ax.plot([b/2, b+100], [y_bot, y_bot-100], color='#c0392b', lw=1)
-    ax.text(b+110, y_bot-100, f"{int(n_bottom)}-DB{int(db)} (Bot)", va='center', color='#c0392b', fontsize=GLOBAL_FONT, fontweight='bold')
-    
-    ax.plot([b-cover, b+150], [h/2, h/2], color='#27ae60', lw=1, ls=':')
-    ax.text(b+160, h/2, f"Stirrup: {stirrup_name}", va='center', color='#27ae60', fontsize=GLOBAL_FONT)
-    
-    # Material Props Box (White Background)
-    mat_text = f"fc' = {fc} MPa\nfy = {fy} MPa"
-    ax.text(view_right-50, view_bottom+50, mat_text, ha='right', va='bottom', fontsize=GLOBAL_FONT-2, color='gray', 
-            bbox=dict(facecolor='#FFFFFF', alpha=1.0, edgecolor='none', pad=2))
-
-    # Dimensions
-    ax.plot([0, b], [-100, -100], color='black', lw=0.8)
-    ax.plot([0, 0], [-80, -120], color='black', lw=0.8)
-    ax.plot([b, b], [-80, -120], color='black', lw=0.8)
-    ax.text(b/2, -180, f"{int(b)} mm", ha='center', va='top', fontsize=GLOBAL_FONT)
-    
-    ax.plot([-100, -100], [0, h], color='black', lw=0.8)
-    ax.plot([-80, -120], [0, 0], color='black', lw=0.8)
-    ax.plot([-80, -120], [h, h], color='black', lw=0.8)
-    ax.text(-180, h/2, f"{int(h)} mm", ha='right', va='center', rotation=90, fontsize=GLOBAL_FONT)
-
-    ax.text(b/2, view_top - 100, title, ha='center', fontweight='bold', fontsize=GLOBAL_FONT+2)
-
-    ax.set_xlim(view_left, view_right)
-    ax.set_ylim(view_bottom, view_top)
+    ax.set_xlim(-100, b + 150)
+    ax.set_ylim(-150, h + 150)
     ax.set_aspect('equal')
     ax.axis('off')
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    LONG_SCALE = 850
-    h_beam = h_m * 1000 
-    total_L = sum(spans) * 1000
-    offsets = [0] + list(np.cumsum(spans) * 1000)
+    """
+    Plots the longitudinal profile of the beam showing spans, supports, and simplified rebar.
+    """
+    n_spans = len(spans)
+    total_length = sum(spans)
+    h_mm = h_m * 1000
     
-    width_inches = (total_L + 3000) / LONG_SCALE 
-    height_inches = 5000 / LONG_SCALE 
+    fig, ax = plt.subplots(figsize=(12, 4))
     
-    fig, ax = _setup_white_canvas((width_inches, height_inches))
+    current_x = 0
     
     # 1. Beam Body
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=2, edgecolor='#000000', facecolor='#FFFFFF', zorder=1))
+    beam_rect = patches.Rectangle((0, 0), total_length, h_mm, linewidth=2, edgecolor='black', facecolor='#f9f9f9')
+    ax.add_patch(beam_rect)
     
     # 2. Supports
-    support_fill = '#f0f0f0' 
-    for i, (_, row) in enumerate(sup_df.iterrows()):
-        x_s = row['x'] * 1000
-        if i == 0: 
-            poly = plt.Polygon([[x_s-150, -300], [x_s+150, -300], [x_s, 0]], facecolor=support_fill, edgecolor='black', lw=1.5, zorder=2)
-            ax.add_patch(poly)
-            ax.plot([x_s-250, x_s+250], [-300, -300], color='black', lw=2)
-        else: 
-            poly = plt.Polygon([[x_s-150, -200], [x_s+150, -200], [x_s, 0]], facecolor=support_fill, edgecolor='black', lw=1.5, zorder=2)
-            ax.add_patch(poly)
-            ax.add_patch(plt.Circle((x_s, -250), 50, color='black', fill=False, lw=1.5))
-            ax.plot([x_s-250, x_s+250], [-310, -310], color='black', lw=2)
+    for _, row in sup_df.iterrows():
+        sx = row['position']
+        # Draw triangle support
+        triangle = patches.Polygon([[sx-0.2, -100], [sx+0.2, -100], [sx, 0]], closed=True, edgecolor='black', facecolor='grey')
+        ax.add_patch(triangle)
+        ax.text(sx, -150, row['support_id'], ha='center', fontsize=10, fontweight='bold')
 
-    # 3. Steel
-    for i, span_l_m in enumerate(spans):
-        L_mm = span_l_m * 1000
-        x_s, x_e = offsets[i], offsets[i+1]
+    # 3. Reinforcement Visualization (Simplified)
+    offsets = [0] + list(np.cumsum(spans))
+    
+    for i in range(n_spans):
+        start = offsets[i]
+        end = offsets[i+1]
+        length = end - start
         
-        ax.plot([x_s+50, x_e-50], [cover_mm, cover_mm], color='#c0392b', lw=2.5)
-        y_t = h_beam - cover_mm
-        ax.plot([x_s, x_s + L_mm*0.3], [y_t, y_t], color='#2980b9', lw=2.5)
-        ax.plot([x_e - L_mm*0.3, x_e], [y_t, y_t], color='#2980b9', lw=2.5)
-
-    # 4. Cuts & Dims
-    for i in range(len(spans)):
-        x_start, x_end = offsets[i], offsets[i+1]
-        mid_x = (x_start + x_end) / 2
-        ax.plot([mid_x, mid_x], [-800, h_beam + 800], color='#e67e22', ls='-.', lw=1.5)
-        ax.text(mid_x, h_beam + 900, f"A (S{i+1})", color='#e67e22', fontweight='bold', ha='center', fontsize=GLOBAL_FONT+2)
+        res = design_res[i]
         
-        sup_x = x_end - (x_end-x_start)*0.1 
-        ax.plot([sup_x, sup_x], [-800, h_beam + 800], color='#8e44ad', ls='-.', lw=1.5)
-        ax.text(sup_x, h_beam + 900, f"B (S{i+1})", color='#8e44ad', fontweight='bold', ha='center', fontsize=GLOBAL_FONT+2)
+        # Bottom Bar (Blue) - Span center
+        # Assuming bottom bar runs full span minus cover (simplified)
+        ax.plot([start + 0.2, end - 0.2], [50, 50], color='#1f77b4', linewidth=3)
+        ax.text(start + length/2, 80, f"{res['pos']['n']}-DB{res['bot_db']}", ha='center', color='#1f77b4', fontsize=9)
+        
+        # Top Bar (Red) - Supports
+        # Only drawing conceptual top bars at supports/continuous
+        ax.plot([start, end], [h_mm-50, h_mm-50], color='#d62728', linewidth=3)
+        ax.text(start + length/2, h_mm-90, f"{res['neg']['n']}-DB{res['top_db']}", ha='center', color='#d62728', fontsize=9)
+        
+        # Stirrups info
+        ax.text(start + length/2, h_mm/2, f"Stir: RB{res['stir_db']}@{int(res['shear']['s'])}", ha='center', color='blue', fontsize=8, alpha=0.7)
 
-    ax.plot([0, total_L], [h_beam + 1500, h_beam + 1500], color='black', lw=1)
-    ax.plot([0, 0], [h_beam + 1400, h_beam + 1600], color='black', lw=1)
-    ax.plot([total_L, total_L], [h_beam + 1400, h_beam + 1600], color='black', lw=1)
-    ax.text(total_L/2, h_beam + 1600, f"Total Length = {total_L/1000:.2f} m", ha='center', va='bottom', fontsize=GLOBAL_FONT+2)
-
-    ax.set_xlim(-1000, total_L + 1000)
-    ax.set_ylim(-1500, h_beam + 2500)
-    ax.set_aspect('equal')
+    # Decoration
+    ax.set_xlim(-1, total_length + 1)
+    ax.set_ylim(-200, h_mm + 100)
+    ax.set_aspect('equal', adjustable='box') # Keep aspect ratio but allow width to fit
     ax.axis('off')
+    ax.set_title("Longitudinal Section (Reinforcement Layout)", fontsize=12, fontweight='bold')
+    
     return fig
