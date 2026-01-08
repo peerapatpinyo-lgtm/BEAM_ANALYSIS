@@ -1,280 +1,292 @@
+# =====================================================================
+# 🏗️ RC BEAM ANALYSIS & DESIGN PROFESSIONAL SUITE
+# Version: 3.0 (Full Detailed Edition)
+# Description: Advanced Finite Element Analysis for Reinforced Concrete
+# =====================================================================
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
-# =====================================================================
-# 1. MODULE IMPORTS & INITIALIZATION
-# =====================================================================
+# --- 1. CORE ENGINE MODULES ---
+# มอดูลที่เชื่อมต่อกับไฟล์ภายนอก
 import input_handler
 import solver
 import rc_design
 import design_view
 import section_plotter
 
-# Setup Page Configuration for Wide Layout and Professional Look
+# --- 2. GLOBAL PAGE SETTINGS ---
+# ตั้งค่าหน้าเว็บให้รองรับการแสดงผลรายงานขนาดใหญ่
 st.set_page_config(
-    page_title="Ultimate RC Beam Analysis & Engineering Report",
-    page_icon="🏗️",
+    page_title="Professional Beam Designer Pro",
+    page_icon="👷",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling for Table and Report Sections
+# --- 3. CUSTOM CSS INTERFACE ---
+# ปรับปรุง UI ให้ดูเหมือนโปรแกรมวิศวกรรมระดับสูง
 st.markdown("""
     <style>
-    .report-header { background-color: #1e3a8a; color: white; padding: 1.5rem; border-radius: 0.5rem; margin-bottom: 2rem; }
-    .metric-card { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 0.5rem; padding: 1rem; text-align: center; }
-    .formula-box { background-color: #f1f5f9; border-left: 5px solid #3b82f6; padding: 15px; font-family: 'Courier New', monospace; margin: 10px 0; }
+    .main-header { font-size: 32px; color: #1e3a8a; font-weight: bold; border-bottom: 3px solid #3b82f6; padding-bottom: 10px; }
+    .sub-header { font-size: 22px; color: #1e40af; margin-top: 20px; font-weight: 600; }
+    .calc-note { background-color: #f8fafc; border-left: 6px solid #10b981; padding: 15px; border-radius: 4px; margin: 15px 0; }
+    .metric-box { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+    .error-msg { background-color: #fef2f2; border: 1px solid #ef4444; color: #b91c1c; padding: 10px; border-radius: 4px; }
     </style>
     """, unsafe_allow_html=True)
 
-# =====================================================================
-# 2. APPLICATION HEADER & METADATA
-# =====================================================================
-st.markdown("""
-    <div class="report-header">
-        <h1>🏗️ Structural Beam Analysis & RC Design System</h1>
-        <p>Integrated FEA Solver for Continuous Beams | Load Combination | RC Detailing</p>
-    </div>
-    """, unsafe_allow_html=True)
+# --- 4. HEADER SECTION ---
+st.markdown('<div class="main-header">🏗️ Ultimate Structural Beam Analysis System</div>', unsafe_allow_html=True)
+st.markdown(f"**Report Generated on:** {datetime.now().strftime('%A, %d %B %Y | %H:%M:%S')}")
 
-# Display Current Project Info
-col_meta1, col_meta2, col_meta3 = st.columns(3)
-with col_meta1:
-    st.info(f"📅 **Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-with col_meta2:
-    st.info("💻 **Solver Engine:** Timoshenko Beam Theory")
-with col_meta3:
-    st.info("📐 **Design Code:** ACI 318-14 / Strength Design")
-
-# =====================================================================
-# 3. SIDEBAR DATA COLLECTION (INPUT_HANDLER)
-# =====================================================================
-# ดึงค่าพารามิเตอร์และโหลดทั้งหมดมาจาก Module input_handler
+# --- 5. SIDEBAR DATA FETCHING ---
+# ดึงค่า Input ทั้งหมดจาก input_handler.py
+# params: ข้อมูลวัสดุและหน้าตัด, n_spans: จำนวนช่วงคาน, spans: ความยาวแต่ละช่วง
+# sup_df: ข้อมูลจุดรองรับ, loads_df: โหลดที่ผู้ใช้กรอก, stable: สถานะความมั่นคง
 params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
-# =====================================================================
-# 4. STABILITY CHECK & ERROR HANDLING
-# =====================================================================
+# --- 6. STRUCTURAL STABILITY VALIDATION ---
 if not stable:
-    st.error("🚨 **CRITICAL ERROR: SYSTEM UNSTABLE**")
-    st.warning("โครงสร้างไม่มีเสถียรภาพ (Instability) เนื่องจากจุดรองรับไม่เพียงพอ กรุณาตรวจสอบ:")
-    st.markdown("- ตรวจสอบว่ามี Reaction อย่างน้อย 3 จุด (เช่น Pin 1 ตัว และ Roller 1 ตัวเป็นอย่างน้อย)")
-    st.markdown("- หากเป็นคานปลายยื่น (Cantilever) ต้องมีจุดรองรับแบบ 'Fixed' ที่จุดเริ่มต้น")
+    st.markdown('<div class="error-msg">🚨 <b>CRITICAL WARNING:</b> The structure is currently UNSTABLE.</div>', unsafe_allow_html=True)
+    st.warning("กรุณาตรวจสอบจุดรองรับ (Support Conditions):")
+    st.info("- คานต่อเนื่องต้องการอย่างน้อย 3 องค์ประกอบของแรงปฏิกิริยา (เช่น Pin 1, Roller 1 หรือ Fixed 1)")
+    st.info("- หากโครงสร้างเป็นแบบ Cantilever จำเป็นต้องมีจุดรองรับแบบ Fixed ที่จุดใดจุดหนึ่ง")
     st.stop()
 
-# =====================================================================
-# 5. LOAD COMBINATION & ANALYSIS SETTINGS
-# =====================================================================
-st.subheader("⚙️ 1. Analysis Parameters & Load Factors")
-st.markdown("ระบุตัวคูณน้ำหนักบรรทุก (Load Factors) เพื่อใช้ในวิธี Strength Design Method (SDM)")
+# --- 7. DESIGN PARAMETERS & LOAD COMBINATION SETTINGS ---
+st.markdown('<div class="sub-header">⚙️ 1. Analysis Parameters & Design Factors</div>', unsafe_allow_html=True)
 
 with st.container():
-    c_fac1, c_fac2, c_fac3 = st.columns([1, 1, 2])
+    col_f1, col_f2, col_f3 = st.columns([1, 1, 2])
     
-    with c_fac1:
-        f_dl = st.number_input("Dead Load Factor ($f_{DL}$)", value=1.4, step=0.1, key="f_dl_input")
-        st.caption("Default ACI: 1.4")
+    with col_f1:
+        f_dl = st.number_input("Dead Load Factor ($f_{DL}$)", value=1.4, step=0.1, help="ตัวคูณสำหรับน้ำหนักบรรทุกคงที่ (Default ACI = 1.4)")
+        st.caption("Standard: ACI 318-14")
         
-    with c_fac2:
-        f_ll = st.number_input("Live Load Factor ($f_{LL}$)", value=1.7, step=0.1, key="f_ll_input")
-        st.caption("Default ACI: 1.7")
+    with col_f2:
+        f_ll = st.number_input("Live Load Factor ($f_{LL}$)", value=1.7, step=0.1, help="ตัวคูณสำหรับน้ำหนักบรรทุกจร (Default ACI = 1.7)")
+        st.caption("Standard: ACI 318-14")
         
-    with c_fac3:
-        analysis_mode = st.radio("Calculation Basis:", 
-                                ["Total Factored Load ($W_u = 1.4DL + 1.7LL$)", 
-                                 "Service Load (DL + LL)"], horizontal=True)
+    with col_f3:
+        st.markdown("**Combination Equation Applied:**")
+        st.latex(fr"W_u = {f_dl} \times DL + {f_ll} \times LL")
 
-# =====================================================================
-# 6. DETAILED LOAD CALCULATION & TRACEABILITY
-# =====================================================================
-st.markdown("---")
-st.subheader("🧮 2. Detailed Load Summation & Verification")
+# --- 8. DETAILED LOAD CALCULATION & VERIFICATION (TRACEABILITY) ---
+st.markdown('<div class="sub-header">🧮 2. Comprehensive Load Breakdown & Factoring</div>', unsafe_allow_html=True)
+st.markdown("การแจกแจงรายละเอียดน้ำหนักบรรทุกก่อนส่งเข้า Stiffness Matrix Solver เพื่อความโปร่งใสในการคำนวณ:")
 
 try:
-    final_loads_for_solver = []
-    load_summary_report = []
-    
-    # 6.1 SELF-WEIGHT CALCULATION (Automatic for all spans)
-    st.markdown("#### A. Structural Self-Weight (Concrete Density = 24.0 kN/m³)")
-    
+    final_loads_list = []  # ข้อมูลที่จะส่งเข้า Solver (หน่วย Newton)
+    report_trace = []      # ข้อมูลที่จะแสดงในตารางรายงาน (หน่วย kN)
+
+    # 8.1 SELF-WEIGHT CALCULATION (AUTOMATIC)
+    # สูตรคำนวณ: Area (b*h) * Density (24 kN/m3) * f_dl
+    st.markdown("#### A. Reinforced Concrete Self-Weight")
     for i in range(n_spans):
-        # Calculation Logic: Area * Density * DL Factor
-        base_sw_kN_m = params['b'] * params['h'] * 24.0
-        factored_sw = base_sw_kN_m * f_dl
-        span_length = spans[i]
-        total_sw_span = factored_sw * span_length
+        area = params['b'] * params['h']
+        density = 24.0 # kN/m3
+        unfactored_sw = area * density
+        factored_sw = unfactored_sw * f_dl
+        total_span_force = factored_sw * spans[i]
         
-        # Add to Solver Input (Newton units)
-        final_loads_for_solver.append({
+        # เก็บข้อมูลลง Trace Table
+        report_trace.append({
+            "Span": i + 1,
+            "Source": "Self-Weight (RC)",
+            "Case": "DL",
+            "Calculation": f"({params['b']}m x {params['h']}m x 24) x {f_dl}",
+            "Intensity": f"{factored_sw:.3f} kN/m",
+            "Total Resultant (kN)": f"{total_span_force:.3f}"
+        })
+        
+        # เตรียมข้อมูลสำหรับ Solver
+        final_loads_list.append({
             'span_index': i, 'type': 'U', 'mag': factored_sw * 1000.0,
-            'd_start': 0.0, 'dist': span_length, 'desc': 'Self-Weight'
-        })
-        
-        # Add to Report Trace
-        load_summary_report.append({
-            "Span": i + 1, "Source": "Concrete Self-Weight", "Case": "DL",
-            "Intensity": f"{base_sw_kN_m:.2f} kN/m", "Factor": f"x{f_dl}",
-            "Design Value": f"{factored_sw:.2f} kN/m", "Total Force (kN)": f"{total_sw_span:.2f}"
+            'd_start': 0.0, 'dist': spans[i], 'desc': 'SW'
         })
 
-    # 6.2 USER-DEFINED LOADS (DL/LL Separation Logic)
+    # 8.2 USER-DEFINED LOADS (DL & LL COMBINATION)
     if not loads_df.empty:
-        st.markdown("#### B. External Applied Loads (User Input)")
+        st.markdown("#### B. User-Defined External Loads")
         for _, row in loads_df.iterrows():
-            current_factor = f_dl if row['case'] == "DL" else f_ll
+            # พิจารณา Factor ตามประเภท DL หรือ LL
+            factor = f_dl if row['case'] == "DL" else f_ll
             raw_mag = float(row['mag'])
-            factored_mag = raw_mag * current_factor
+            factored_mag = raw_mag * factor
             
-            # Resultant Force Calculation
+            # คำนวณแรงลัพธ์สุทธิลงคาน (Net Resultant Force)
             if row['type'] == 'P':
-                net_resultant = factored_mag
-                unit_label = "kN"
+                net_f = factored_mag
+                unit = "kN"
+                calc_str = f"{raw_mag} x {factor}"
             else:
-                net_resultant = factored_mag * row['dist']
-                unit_label = "kN/m"
+                net_f = factored_mag * row['dist']
+                unit = "kN/m"
+                calc_str = f"({raw_mag} x {row['dist']}m) x {factor}"
 
-            load_summary_report.append({
-                "Span": row['span_index'] + 1, "Source": f"User Added ({row['case']})", 
-                "Case": row['case'], "Intensity": f"{raw_mag:.2f} {unit_label}", 
-                "Factor": f"x{current_factor}", "Design Value": f"{factored_mag:.2f} {unit_label}", 
-                "Total Force (kN)": f"{net_resultant:.2f}"
+            report_trace.append({
+                "Span": row['span_index'] + 1,
+                "Source": f"User Load ({row['case']})",
+                "Case": row['case'],
+                "Calculation": calc_str,
+                "Intensity": f"{factored_mag:.2f} {unit}",
+                "Total Resultant (kN)": f"{net_f:.3f}"
             })
-
-            # Format for Solver
-            final_loads_for_solver.append({
+            
+            # เตรียมข้อมูลสำหรับ Solver
+            final_loads_list.append({
                 'span_index': int(row['span_index']), 'type': row['type'],
-                'mag': factored_mag * 1000.0, 'd_start': row['d_start'],
-                'dist': row['dist'], 'desc': f"User {row['case']}"
+                'mag': factored_mag * 1000.0, 'd_start': float(row['d_start']),
+                'dist': float(row['dist']), 'desc': f"{row['case']}_{row['type']}"
             })
 
-    # Display Load Summation Table
-    calc_df = pd.DataFrame(load_summary_report)
-    st.table(calc_df)
+    # 8.3 DISPLAY LOAD VERIFICATION TABLE
+    display_report_df = pd.DataFrame(report_trace)
+    st.table(display_report_df)
     
-    # Checksum of Applied Loads
-    total_w_kN = calc_df["Total Force (kN)"].astype(float).sum()
+    # คำนวณ Checksum ของแรงทั้งหมด
+    total_applied_kN = display_report_df["Total Resultant (kN)"].astype(float).sum()
+    
     st.markdown(f"""
-        <div class="formula-box">
-            <b>Total Net Factored Load Applied ($\Sigma W_u$):</b> {total_w_kN:.3f} kN <br>
-            <i>Note: This is the total vertical force that must be balanced by support reactions.</i>
+        <div class="calc-note">
+            <b>Total Net Factored Load Applied ($\Sigma W_u$):</b> {total_applied_kN:.4f} kN <br>
+            <i>Note: ค่านี้คือแรงกดรวมทั้งหมดที่โครงสร้างต้องรับภาระและถ่ายลงสู่จุดรองรับ</i>
         </div>
     """, unsafe_allow_html=True)
 
-    # =====================================================================
-    # 7. STRUCTURAL ANALYSIS EXECUTION (SOLVER MODULE)
-    # =====================================================================
+    # --- 9. STRUCTURAL ANALYSIS EXECUTION (SOLVER CORE) ---
     st.markdown("---")
-    st.subheader("📊 3. Structural Analysis Results")
+    st.markdown('<div class="sub-header">📊 3. Analysis Diagrams & Results</div>', unsafe_allow_html=True)
     
-    # Run Finite Element Solver
-    solver_load_df = pd.DataFrame(final_loads_for_solver)
-    x_points, moment_vals, shear_vals, defl_vals, reactions = solver.solve_beam(
-        spans, sup_df, solver_load_df, params
-    )
+    # แปลง List เป็น DataFrame เพื่อส่งเข้า Solver
+    solver_ready_df = pd.DataFrame(final_loads_list)
     
-    # Assemble Analysis DataFrame
-    analysis_res_df = pd.DataFrame({
-        'x': x_points, 'moment': moment_vals, 'shear': shear_vals, 'deflection': defl_vals * 1000.0
+    # รันโปรแกรมคำนวณ Stiffness Matrix
+    # คืนค่า: x_eval, Moment, Shear, Deflection และ Reactions
+    x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, solver_ready_df, params)
+    
+    # รวบรวมผลลัพธ์เป็น DataFrame สำหรับการทำ Visualization
+    res_df = pd.DataFrame({
+        'x': x_eval, 
+        'moment': M, 
+        'shear': V, 
+        'deflection': D * 1000.0 # แปลงหน่วย m เป็น mm เพื่อการอ่านที่ง่ายขึ้น
     })
 
-    # Visualization
-    st.plotly_chart(design_view.plot_analysis_results(analysis_res_df, spans, sup_df, solver_load_df, reactions), use_container_width=True)
+    # วาดกราฟผลการวิเคราะห์ (SFD, BMD, Deflection)
+    st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, solver_ready_df, R), use_container_width=True)
 
-    # =====================================================================
-    # 8. EQUILIBRIUM & REACTION VERIFICATION
-    # =====================================================================
-    with st.expander("⚖️ Static Equilibrium Verification", expanded=True):
-        total_reaction_kN = sum(reactions.values()) / 1000.0
-        error_diff = abs(total_w_kN - total_reaction_kN)
+    # --- 10. STATIC EQUILIBRIUM CHECK ---
+    with st.expander("⚖️ Static Equilibrium & Support Verification", expanded=True):
+        total_reaction_kN = sum(R.values()) / 1000.0
+        diff_error = abs(total_applied_kN - total_reaction_kN)
         
         v_col1, v_col2, v_col3 = st.columns(3)
-        v_col1.metric("Sum Applied Loads (ΣW)", f"{total_w_kN:.3f} kN")
-        v_col2.metric("Sum Reaction Forces (ΣR)", f"{total_reaction_kN:.3f} kN")
+        v_col1.metric("Sum Applied Loads (ΣW)", f"{total_applied_kN:.4f} kN")
+        v_col2.metric("Sum Reaction Forces (ΣR)", f"{total_reaction_kN:.4f} kN")
         
-        if error_diff < 0.01:
-            v_col3.success(f"Equilibrium: OK\nDiff: {error_diff:.6f}")
+        if diff_error < 0.005:
+            v_col3.success(f"Equilibrium: PASSED ✅\n(Error: {diff_error:.8f})")
+            st.toast("Equilibrium Check Successful!", icon="✅")
         else:
-            v_col3.error(f"Equilibrium: FAIL\nDiff: {error_diff:.4f}")
+            v_col3.error(f"Equilibrium: FAILED ❌\n(Diff: {diff_error:.4f})")
+            st.warning("⚠️ มีค่าความคลาดเคลื่อนสูงเกินกำหนด กรุณาตรวจสอบหน่วยและการป้อนข้อมูล")
 
-    # =====================================================================
-    # 9. RC REINFORCEMENT DESIGN (ACI 318-14)
-    # =====================================================================
+    # --- 11. REINFORCED CONCRETE DESIGN (ACI CODE) ---
     st.markdown("---")
-    st.subheader("🧱 4. Reinforced Concrete Design & Detailing")
+    st.markdown('<div class="sub-header">🧱 4. RC Reinforcement Design & Detailing</div>', unsafe_allow_html=True)
     
-    tab_summary, tab_details = st.tabs(["📌 Design Summary", "📝 Step-by-Step Calculations"])
+    # แบ่ง Tab สำหรับดูสรุปผล และดูรายละเอียดการคำนวณ
+    tab_sum, tab_step = st.tabs(["📌 Design Summary Table", "📝 Detailed Calculation Logs"])
     
-    design_data_summary = []
-    main_bar_db = 16 # Default main reinforcement size
-    offsets = [0] + list(np.cumsum(spans))
+    design_final_data = []
+    main_bar_size = 16 # กำหนดขนาดเหล็กหลักเริ่มต้นที่ DB16
+    cum_dist = [0] + list(np.cumsum(spans))
 
     for idx in range(n_spans):
-        # Filter analysis data for the current span
-        span_mask = (analysis_res_df['x'] >= offsets[idx] - 1e-6) & (analysis_res_df['x'] <= offsets[idx+1] + 1e-6)
-        span_results = analysis_res_df[span_mask]
+        # กรองข้อมูลเฉพาะช่วงคานที่กำลังพิจารณา
+        mask = (res_df['x'] >= cum_dist[idx] - 1e-7) & (res_df['x'] <= cum_dist[idx+1] + 1e-7)
+        span_data = res_df[mask]
         
-        if not span_results.empty:
-            mu_max_pos = span_results['moment'].max() / 1000.0
-            mu_max_neg = abs(span_results['moment'].min()) / 1000.0
-            vu_max = span_results['shear'].abs().max() / 1000.0
-            d_effective = params['h'] - 0.05
+        if not span_data.empty:
+            # หาค่าสูงสุดของ Moment (+), Moment (-), และ Shear (V) ในแต่ละช่วง
+            mu_pos = span_data['moment'].max() / 1000.0 # kN-m
+            mu_neg = abs(span_data['moment'].min()) / 1000.0 # kN-m
+            vu_max = span_data['shear'].abs().max() / 1000.0 # kN
+            d_eff = params['h'] - 0.05 # ระยะ d ประสิทธิผล (สมมติ covering + stirrup = 5cm)
             
-            # Flexure Design
-            as_pos, rho_p, _, steps_p = rc_design.design_beam_flexure(mu_max_pos, params['b'], d_effective, params['fc'], params['fy'])
-            as_neg, rho_n, _, steps_n = rc_design.design_beam_flexure(mu_max_neg, params['b'], d_effective, params['fc'], params['fy'])
+            # เรียกใช้ Module rc_design เพื่อออกแบบเหล็กเสริม
+            as_pos, _, _, steps_pos = rc_design.design_beam_flexure(mu_pos, params['b'], d_eff, params['fc'], params['fy'])
+            as_neg, _, _, steps_neg = rc_design.design_beam_flexure(mu_neg, params['b'], d_eff, params['fc'], params['fy'])
+            stirrup_s, _, steps_shear = rc_design.check_shear(vu_max, params['b'], d_eff, params['fc'], params['fy'])
             
-            # Shear Design
-            spacing, stirrup_type, steps_v = rc_design.check_shear(vu_max, params['b'], d_effective, params['fc'], params['fy'])
+            # คำนวณจำนวนเส้นเหล็กตามหน้าตัดที่ต้องการ
+            def get_bars(as_req, db):
+                a_bar = np.pi * (db/2)**2
+                return max(2, int(np.ceil(as_req / a_bar)))
+
+            n_pos = get_bars(as_pos, main_bar_size)
+            n_neg = get_bars(as_neg, main_bar_size)
             
-            # Calculate Number of Bars
-            bar_area = np.pi * (main_bar_db/2)**2
-            n_pos = max(2, int(np.ceil(as_pos / bar_area)))
-            n_neg = max(2, int(np.ceil(as_neg / bar_area)))
-            
-            design_data_summary.append({
-                'span': idx + 1, 'mu_pos': mu_max_pos, 'mu_neg': mu_max_neg,
-                'n_pos': n_pos, 'n_neg': n_neg, 'stirrup': f"{stirrup_type}@{spacing*100:.0f} cm"
+            # เก็บข้อมูลสรุปเพื่อวาดภาพ Detailing [FIXED STRUCTURE FOR PLOTTER]
+            design_final_data.append({
+                'span': idx + 1,
+                'pos': {'n': n_pos},
+                'neg': {'n': n_neg},
+                'db': main_bar_size,
+                'stirrup': f"RB6@{stirrup_s*100:.0f} cm",
+                'shear': {'s': stirrup_s}
             })
             
-            with tab_details:
-                st.markdown(f"#### Span {idx+1} Detailed Design")
+            with tab_step:
+                st.markdown(f"#### 📄 Span {idx+1}: Detailed Engineering Steps")
                 sc1, sc2 = st.columns(2)
                 with sc1:
-                    st.write("**Positive Moment Steel (Bottom):**")
-                    for s in steps_p: st.latex(s)
+                    st.write("**Flexure Design (Positive Moment):**")
+                    for s in steps_pos: st.latex(s)
                 with sc2:
-                    st.write("**Shear Stirrup Calculation:**")
-                    for s in steps_v: st.latex(s)
+                    st.write("**Shear Design (Stirrups):**")
+                    for s in steps_shear: st.latex(s)
     
-    with tab_summary:
-        st.table(pd.DataFrame(design_data_summary))
+    with tab_sum:
+        # แสดงตารางสรุปผลการออกแบบเหล็กเสริมทั้งหมด
+        st.dataframe(pd.DataFrame(design_final_data).drop(columns=['pos', 'neg', 'shear']), use_container_width=True)
         
-        # 10. DETAILING PLOTS
-        st.markdown("### 🎨 Engineering Drawings")
-        det_col1, det_col2 = st.columns([1, 2])
-        with det_col1:
-            st.write("**Cross Section View (Typical Span 1)**")
-            fig_sec = section_plotter.plot_section(params['b'], params['h'], 40, main_bar_db, 
-                                                  design_data_summary[0]['n_neg'], 
-                                                  design_data_summary[0]['n_pos'], 
-                                                  "RB6", params['fc'], params['fy'])
-            st.pyplot(fig_sec)
-        with det_col2:
-            st.write("**Longitudinal Reinforcement Detail**")
-            fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_data_summary, params['h'], 40)
+        # --- 12. ENGINEERING DETAILING DRAWINGS ---
+        st.markdown("---")
+        st.subheader("🎨 Engineering Drawings & Section Preview")
+        
+        draw_col1, draw_col2 = st.columns([1, 2])
+        
+        with draw_col1:
+            st.write("**Typical Cross-Section (Support/Midspan)**")
+            # วาดรูปตัดขวางโดยใช้ข้อมูลจาก Span แรกเป็นเกณฑ์
+            fig_section = section_plotter.plot_section(
+                params['b'], params['h'], 40, main_bar_size, 
+                design_final_data[0]['neg']['n'], 
+                design_final_data[0]['pos']['n'], 
+                "RB6", params['fc'], params['fy']
+            )
+            st.pyplot(fig_section)
+            
+        with draw_col2:
+            st.write("**Longitudinal Reinforcement Profile**")
+            # วาดรูปตัดตามยาวแสดงตำแหน่งเหล็กเสริมและจุดรองรับ
+            fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_final_data, params['h'], 40)
             st.pyplot(fig_long)
 
-# =====================================================================
-# 10. SYSTEM LOGS & ERROR CATCHING
-# =====================================================================
-except Exception as error:
-    st.error(f"⚠️ **Application Runtime Error:** {str(error)}")
-    st.exception(error)
+# --- 13. GLOBAL ERROR CATCHING & SYSTEM LOGS ---
+except Exception as global_error:
+    st.markdown('<div class="error-msg"><b>CRITICAL RUNTIME ERROR:</b> Analysis could not be completed.</div>', unsafe_allow_html=True)
+    st.error(f"Error Details: {str(global_error)}")
+    st.info("กรุณาตรวจสอบว่าไฟล์ Module ทั้งหมด (solver, rc_design, design_view, section_plotter) อยู่ในโฟลเดอร์เดียวกัน")
+    st.exception(global_error)
 
+# --- 14. FOOTER SECTION ---
 st.markdown("---")
-st.caption("© 2024 BeamDesign Professional Edition. Optimized for ACI Standard Calculations.")
-
-# END OF APP.PY (Approximately 250+ Lines maintained for completeness)
+st.caption(f"Powered by Gemini Structural Solver | Total Computed Spans: {n_spans} | Build: 2026.01")
+# [End of app.py - Total Lines: ~250+]
