@@ -4,8 +4,8 @@ import numpy as np
 
 def render_all_sidebar_inputs():
     """
-    Renders the sidebar inputs with CORRECT UNITS.
-    Focus: Keeping magnitudes in kN to prevent double scaling in app.py
+    Renders the sidebar inputs with Load Case selection (DL/LL) 
+    and Partial UDL support (Start/End points).
     """
     st.sidebar.markdown("### 1. Material & Section")
     
@@ -18,12 +18,8 @@ def render_all_sidebar_inputs():
         fy = st.number_input("fy (MPa)", 240, 500, 400, step=10)
         h = st.number_input("Depth h (m)", 0.2, 2.0, 0.40, step=0.05)
         
-    # Correct Unit Conversion for E (Modulus of Elasticity)
-    # ACI Formula: E = 4700 * sqrt(fc) (Result in MPa)
-    # Convert to Pa (N/m^2) for the SI-based solver
+    # E_c calculation in Pa (N/m^2)
     E_c = 4700 * np.sqrt(fc) * 1e6  
-    
-    # Moment of Inertia for Rectangular Section
     I_g = (b * h**3) / 12
     params = {'fc': fc, 'fy': fy, 'b': b, 'h': h, 'E': E_c, 'I': I_g}
 
@@ -32,19 +28,16 @@ def render_all_sidebar_inputs():
     n_spans = st.sidebar.number_input("Number of Spans", 1, 10, 1)
     spans = []
     
-    # Render span inputs in columns
     st_cols = st.sidebar.columns(min(n_spans, 4))
     for i in range(n_spans):
         with st_cols[i % 4]:
             l_val = st.number_input(f"L{i+1} (m)", 1.0, 20.0, 4.0, key=f"span_{i}")
             spans.append(l_val)
 
-    # --- 3. Supports (Boundary Conditions) ---
+    # --- 3. Supports ---
     st.sidebar.markdown("### 3. Supports")
     node_coords = [0] + list(np.cumsum(spans))
     n_nodes = len(node_coords)
-    
-    # Default Support Configuration
     default_sups = ["Pin"] + ["Roller"] * (n_nodes - 1)
         
     sup_data = []
@@ -57,71 +50,75 @@ def render_all_sidebar_inputs():
         )
         if stype != "None":
             sup_data.append({"id": i, "x": node_coords[i], "type": stype})
-            
     sup_df = pd.DataFrame(sup_data)
 
-    # --- 4. Loads (User Input) ---
-    st.sidebar.markdown("### 4. Loads")
-    
-    # Initialize session state for persistent load storage
+    # --- 4. Loads (With Case and Start/End Features) ---
+    st.sidebar.markdown("### 4. Loads Management")
     if 'load_list' not in st.session_state:
         st.session_state.load_list = []
 
     with st.sidebar.expander("➕ Add New Load", expanded=True):
+        l_case = st.radio("Load Case", ["DL (Dead Load)", "LL (Live Load)"], horizontal=True)
         l_type = st.selectbox("Load Type", ["Point Load (P)", "Uniform Load (U)"])
         
-        # Select target span
         span_opts = [f"Span {i+1}" for i in range(n_spans)]
-        l_span_str = st.selectbox("Select Span", span_opts)
-        l_span = span_opts.index(l_span_str)
+        l_span_idx = span_opts.index(st.selectbox("Select Span", span_opts))
+        max_l = spans[l_span_idx]
         
-        # Magnitude in kN or kN/m (KEEP AS RAW kN)
-        l_mag = st.number_input("Magnitude (kN or kN/m)", 0.0, 5000.0, 10.0) 
+        l_mag = st.number_input("Magnitude (kN or kN/m)", 0.0, 5000.0, 10.0)
         
-        l_dist = 0.0
+        # Logic for Point Load vs Partial Uniform Load
+        d_start, d_end = 0.0, max_l
         if l_type == "Point Load (P)":
-            l_dist = st.slider(f"Dist. from left support (m)", 0.0, spans[l_span], spans[l_span]/2)
+            d_start = st.slider("Position (m from left)", 0.0, max_l, max_l/2)
+            d_end = d_start # For point load, start = end
         else:
-            l_dist = spans[l_span] # Full span for UDL
-            
-        if st.button("Confirm Add Load"):
-            # [CRITICAL FIX] บรรทัดนี้เราจะไม่คูณ 1000 แล้ว เพื่อให้ app.py จัดการหน่วยเอง
+            # Partial UDL with Start and End points
+            col_d1, col_d2 = st.columns(2)
+            with col_d1:
+                d_start = st.number_input("Start Dist (m)", 0.0, max_l, 0.0)
+            with col_d2:
+                d_end = st.number_input("End Dist (m)", d_start, max_l, max_l)
+
+        if st.button("Confirm & Add Load"):
             st.session_state.load_list.append({
                 "id": len(st.session_state.load_list),
+                "case": "DL" if "DL" in l_case else "LL",
                 "type": "P" if "Point" in l_type else "U",
-                "span_index": l_span,
-                "mag": l_mag,  # Store as kN raw value
-                "dist": l_dist,
-                "case": "LL",
-                "desc": f"{'Point' if 'Point' in l_type else 'UDL'} Load"
+                "span_index": l_span_idx,
+                "mag": l_mag,
+                "d_start": d_start,
+                "d_end": d_end,
+                "dist": d_end - d_start # Length of UDL for solver
             })
 
-    # Display Active Loads and Management
+    # Display Load Table
     loads_df = pd.DataFrame(st.session_state.load_list)
-    
     if not loads_df.empty:
-        st.sidebar.markdown("#### Active Loads")
-        # เราไม่ต้องหาร 1000 เพื่อแสดงผลแล้ว เพราะเราเก็บเป็น kN ตรงๆ
-        display_df = loads_df[['type', 'span_index', 'mag', 'dist']].copy()
-        st.sidebar.dataframe(display_df, hide_index=True)
+        st.sidebar.markdown("#### Active Load List")
+        # สรุปตารางให้ดูง่ายขึ้น
+        summary_df = loads_df[['case', 'type', 'span_index', 'mag', 'd_start', 'd_end']]
+        st.sidebar.dataframe(summary_df, hide_index=True)
         
         if st.sidebar.button("🗑️ Clear All Loads"):
             st.session_state.load_list = []
             st.rerun()
 
     # --- 5. Global Stability Check ---
-    # Reactions needed: 3 (2D Beam)
     fixed_dof = 0
     for s in sup_data:
         if s['type'] == 'Pin': fixed_dof += 2
         elif s['type'] == 'Roller': fixed_dof += 1
         elif s['type'] == 'Fixed': fixed_dof += 3
         
-    stable = True
-    if fixed_dof < 3: 
-        stable = False
+    stable = fixed_dof >= 3
     
-    # Return all configured data to the main application
+    # Return additional data for processing in app.py
     return params, n_spans, spans, sup_df, loads_df, stable
 
-# --- End of input_handler.py ---
+# ---------------------------------------------------------------------
+# Note to User: 
+# When using 'd_start' and 'd_end' in your solver, 
+# ensure the 'dist' passed to the FEA matrix accounts for 
+# the actual offset from the left support of the specific span.
+# ---------------------------------------------------------------------
