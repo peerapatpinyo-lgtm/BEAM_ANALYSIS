@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import io
 
 # --- 1. IMPORT CUSTOM MODULES ---
 import input_handler
@@ -14,7 +15,7 @@ st.set_page_config(page_title="Beam Analysis & Design Pro", layout="wide")
 st.title("🏗️ RC Beam Analysis & Design Pro (Timoshenko)")
 
 # --- 3. SIDEBAR INPUTS ---
-# รับค่า Parameters และรูปพรรณคานจาก Sidebar
+# รับค่า Parameters และรูปพรรณคานจาก Sidebar ผ่าน input_handler
 params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
@@ -49,14 +50,13 @@ else:
         tag = "Ultimate"
         st.warning(f"⚡ Using **Factored Load**: {f_dl} DL + {f_ll} LL for Strength Design.")
 
-    # --- 5. LOAD CALCULATIONS & COMBINATIONS (FIXED POINT LOAD & OVERLAP) ---
+    # --- 5. LOAD CALCULATIONS & COMBINATIONS ---
     try:
         # 5.1 Self-Weight Calculation (Unit Weight = 24 kN/m³)
         w_sw_base_kN = params['b'] * params['h'] * 24.0   
         w_sw_factored_kN = w_sw_base_kN * f_dl
         
         # 5.2 Initialize Total UDL per span (Newton (N/m))
-        # [แก้ไข] สร้าง Dictionary เก็บค่า UDL ที่รวมแล้วแยกตาม Span
         span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
         combined_loads_list = []
         
@@ -68,25 +68,23 @@ else:
                     if s_idx >= n_spans: continue 
                     
                     l_type = row['type']
-                    # [แก้ไข] ใช้ Load Factor ให้ตรงกับ DL/LL Case
                     u_factor = f_dl if row['case'] == 'DL' else f_ll
                     mag_base_kN = float(row['mag']) 
                     mag_factored_N = mag_base_kN * u_factor * 1000.0 
                     dist = float(row['dist'])
                     d_start = float(row['d_start'])
                     
-                    # [แก้ไข] จุดตาย: Point Load ต้องส่งตำแหน่ง d_start ที่ถูกต้องและห้ามเอามารวมใน UDL
                     if l_type == 'P':
                         combined_loads_list.append({
                             'span_index': s_idx,
                             'type': 'P',
                             'mag': mag_factored_N, 
-                            'd_start': d_start, # แก้ตำแหน่งตรงนี้
+                            'd_start': d_start,
                             'dist': 0.0,
                             'desc': f'User Point ({row["case"]})'
                         })
-                    # [แก้ไข] UDL ถ้าเต็มคานให้ยุบรวมเพื่อลดการซ้อนทับ ถ้าไม่เต็มให้แยกเป็น Partial
                     elif l_type == 'U':
+                        # ยุบรวม UDL เต็มคานเข้ากับ Self-Weight เพื่อลดความซับซ้อนของเมทริกซ์
                         if d_start <= 0.01 and dist >= (spans[s_idx] - 0.01):
                             span_total_udl_N[s_idx] += mag_factored_N
                         else:
@@ -101,7 +99,7 @@ else:
                 except Exception:
                     continue
         
-        # 5.4 รวม UDL ที่ยุบแล้ว (รวม SW) เข้าสู่ List หลัก
+        # 5.4 รวม UDL ที่ยุบแล้วเข้าสู่ List หลัก
         for i in range(n_spans):
             if span_total_udl_N[i] > 0:
                 combined_loads_list.append({
@@ -118,7 +116,7 @@ else:
         # --- 6. BEAM SOLVER ---
         x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
-        # แปลงผลลัพธ์ใส่ DataFrame
+        # แปลงผลลัพธ์ใส่ DataFrame เพื่อใช้ Plot และออกแบบ
         res_df = pd.DataFrame({
             'x': x_eval,
             'moment': M, 
@@ -130,7 +128,7 @@ else:
         tab1, tab2 = st.tabs(["📊 1. Analysis Results & Checks", "📝 2. RC Design & Report"])
         
         with tab1:
-            # 7.1 Plot Analysis Diagrams
+            # 7.1 Plot Analysis Diagrams (BMD, SFD, Deflection)
             st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R), use_container_width=True)
             
             # 7.2 Summary Metrics
@@ -146,7 +144,7 @@ else:
             c_res3.metric("Max Moment (-)", f"{abs(m_max_neg_kNm):.2f} kNm")
             c_res4.metric("Max Deflection", f"{d_abs_max_mm:.2f} mm")
 
-            # 7.3 Support Reactions
+            # 7.3 Support Reactions Table
             st.markdown("### 📍 Support Reactions")
             if R:
                 reaction_data = [{"Node": int(str(k).replace('R', '')), "Reaction (kN)": v/1000.0} for k, v in R.items()]
@@ -205,6 +203,7 @@ else:
             db_main = 16 
             offsets = [0] + list(np.cumsum(spans))
 
+            # วนลูปออกแบบเหล็กเสริมในแต่ละ Span
             for i in range(n_spans):
                 s_start, s_end = offsets[i], offsets[i+1]
                 span_data = res_df[(res_df['x'] >= s_start - 1e-6) & (res_df['x'] <= s_end + 1e-6)]
@@ -213,8 +212,9 @@ else:
                     mu_pos = span_data['moment'].max() / 1000.0
                     mu_neg = abs(span_data['moment'].min()) / 1000.0
                     vu_max = span_data['shear'].abs().max() / 1000.0
-                    d_eff = params['h'] - 0.05
+                    d_eff = params['h'] - 0.05 # Cover 5 cm
                     
+                    # เรียกใช้ฟังก์ชันออกแบบจาก rc_design
                     As_pos, _, _, steps_pos = rc_design.design_beam_flexure(mu_pos, params['b'], d_eff, params['fc'], params['fy'])
                     As_neg, _, _, steps_neg = rc_design.design_beam_flexure(mu_neg, params['b'], d_eff, params['fc'], params['fy'])
                     s_req, _, steps_shear = rc_design.check_shear(vu_max, params['b'], d_eff, params['fc'], params['fy'])
@@ -233,27 +233,41 @@ else:
                         st.markdown(f"**Flexural Design (Mu+ = {mu_pos:.2f}, Mu- = {mu_neg:.2f} kNm)**")
                         col1, col2 = st.columns(2)
                         with col1:
-                            st.write("Bottom Steel:")
+                            st.write("Bottom Steel (Positive Moment):")
                             for s in steps_pos: st.latex(s)
                         with col2:
-                            st.write("Top Steel:")
+                            st.write("Top Steel (Negative Moment):")
                             for s in steps_neg: st.latex(s)
                         st.markdown("**Shear Design**")
                         for s in steps_shear: st.latex(s)
 
+            # --- 🚀 DETAILING PREVIEW (จุดที่แก้ไขเรื่องภาพแตก) ---
             st.markdown("---")
-            st.subheader("🛠️ Detailing Preview")
+            st.subheader("🛠️ Detailing Preview (High-Definition Drawing)")
             if design_res:
-                col_det1, col_det2 = st.columns([1, 2])
+                col_det1, col_det2 = st.columns([1, 2.5])
+                
                 with col_det1:
-                    fig_sec = section_plotter.plot_section(params['b'], params['h'], 40, db_main, design_res[0]['neg']['n'], design_res[0]['pos']['n'], "RB6", params['fc'], params['fy'])
-                    st.pyplot(fig_sec)
+                    st.markdown("**Typical Cross Section**")
+                    # เรียกรูปตัดขวาง
+                    fig_sec = section_plotter.plot_section(
+                        params['b'], params['h'], 40, db_main, 
+                        design_res[0]['neg']['n'], design_res[0]['pos']['n'], 
+                        f"RB6@{int(design_res[0]['shear']['s'])}", params['fc'], params['fy']
+                    )
+                    # จุดตาย: ต้องใช้ use_container_width=False เพื่อไม่ให้รูปโดนบีบอัดพิกเซล
+                    st.pyplot(fig_sec, use_container_width=False)
+                
                 with col_det2:
-                    fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'], 40)
-                    st.pyplot(fig_long)
+                    st.markdown("**Longitudinal Detailing**")
+                    # เรียกรูปตัดตามยาว
+                    fig_long = section_plotter.plot_longitudinal_section_detailed(
+                        spans, sup_df, design_res, params['h'], 40
+                    )
+                    st.pyplot(fig_long, use_container_width=False)
 
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
         st.exception(e)
 
-# --- END OF SCRIPT (300+ Lines maintained for logic completeness) ---
+# --- END OF APP SCRIPT ---
