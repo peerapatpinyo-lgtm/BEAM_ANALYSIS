@@ -34,61 +34,78 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 3. HELPER FUNCTIONS: RC DESIGN LOGIC ---
+# --- HELPER FUNCTIONS: RC DESIGN LOGIC (ACI 318 REVISED) ---
+
+def get_beta1(fc):
+    """
+    Calculate Beta1 factor according to ACI 318 (Metric)
+    """
+    if fc <= 28: # ACI uses 28 MPa as the threshold (approx 4000 psi)
+        return 0.85
+    elif fc >= 55:
+        return 0.65
+    else:
+        return 0.85 - 0.05 * (fc - 28) / 7
 
 def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
-    """Calculate Required Steel Area (As) based on USD Method"""
+    """
+    Calculate Required Steel Area based on ACI 318
+    """
     if Mu_kNm == 0: return 0.0, 0.0, False
-    Mu = abs(Mu_kNm) * 1e6 # Convert to N-mm
+    Mu = abs(Mu_kNm) * 1e6 # N-mm
     phi = 0.9 
     
-    m = fy / (0.85 * fc)
+    # 1. Check Max Capacity first
+    # Rho_bal (Balanced)
+    beta1 = get_beta1(fc)
+    rho_bal = (0.85 * beta1 * fc / fy) * (600 / (600 + fy))
+    rho_max = 0.75 * rho_bal # Common limit for ductility (approx strain 0.005) (Or use strain check directly)
+    
+    # 2. Calculate Rho required
+    # Rn = Mu / (phi * b * d^2)
     Rn = Mu / (phi * b_mm * d_eff_mm**2)
     
-    rho = 0.0
-    is_error = False
+    # Formula: rho = (0.85*fc/fy) * [1 - sqrt(1 - 2*Rn / (0.85*fc))]
+    term_inside = 1 - (2 * Rn) / (0.85 * fc)
     
-    try:
-        term = 1 - (2 * m * Rn) / fy
-        if term < 0:
-            rho = 0.0 
-            is_error = True # Section too small (Compression failure)
-        else:
-            rho = (1/m) * (1 - np.sqrt(term))
-    except:
-        rho = 0.0
-        is_error = True
-    
+    if term_inside < 0:
+        return 0.0, 0.0, True # Section too small (Fail)
+
+    rho = (0.85 * fc / fy) * (1 - np.sqrt(term_inside))
     as_req = rho * b_mm * d_eff_mm
     
-    # Min Reinforcement Check (ACI 318)
-    if as_req > 0 and not is_error: 
-        as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
-        as_min2 = (1.4 / fy) * b_mm * d_eff_mm
-        as_min = max(as_min1, as_min2)
-        return max(as_req, as_min), rho, False
+    # 3. Minimum Steel (ACI 9.6.1.2)
+    as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
+    as_min2 = (1.4 / fy) * b_mm * d_eff_mm
+    as_min = max(as_min1, as_min2)
     
-    return as_req, rho, is_error
+    return max(as_req, as_min), rho, False
 
 def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
-    """Calculate Moment Capacity (Phi Mn) and check Strain"""
+    """
+    Calculate Capacity with Strain Check (ACI 318-19 Table 21.2.2)
+    """
     Ast = n * (np.pi * (db/2)**2)
     if Ast == 0: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
     # Whitney Stress Block
     a = (Ast * fy) / (0.85 * fc * b)
-    # Beta1 factor
-    beta1 = 0.85 if fc <= 30 else max(0.65, 0.85 - 0.05 * (fc - 30) / 7)
+    beta1 = get_beta1(fc)
     c = a / beta1
     
-    # Strain Check
-    dt = d_eff 
+    # Strain in extreme tension steel
+    # epsilon_t = 0.003 * (d - c) / c
     if c > 0:
-        strain_t = 0.003 * (dt - c) / c
+        strain_t = 0.003 * (d_eff - c) / c
     else:
-        strain_t = 0.005 # Infinite strain (tension)
+        strain_t = 999.0 # Infinite
         
-    # Phi Factor
+    # Phi Factor Calculation (ACI Fig R21.2.2b)
+    # Compression controlled: 0.65
+    # Tension controlled: 0.90 (strain >= 0.005)
+    # Transition: 0.65 + 0.25 * (strain - ty) / (0.005 - ty)
+    # Assume ty = 0.002 for Grade 40/60 (approx)
+    
     if strain_t >= 0.005:
         phi = 0.9
     elif strain_t <= 0.002:
@@ -97,27 +114,52 @@ def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
         phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
     Mn = Ast * fy * (d_eff - a/2)
-    phi_Mn = phi * Mn / 1e6 # Convert to kNm
+    phi_Mn = phi * Mn / 1e6 # kNm
+    
     return phi_Mn, Ast, a, Mn, c, strain_t
 
 def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
-    """Calculate Shear Capacity (Phi Vn)"""
-    Vu = abs(Vu_kN) * 1000 # Convert to N
+    """
+    Check Shear Capacity AND Maximum Spacing (ACI 318)
+    """
+    Vu = abs(Vu_kN) * 1000 # N
     
-    # Vc (Concrete Capacity)
+    # 1. Vc: Concrete Capacity (Simplified Eq 22.5.5.1)
+    # Vc = 0.17 * lambda * sqrt(fc) * b * d (lambda=1 normal weight)
     Vc = 0.17 * np.sqrt(fc) * b * d
     phi = 0.85
     phi_Vc = phi * Vc
     
-    # Vs (Steel Capacity)
+    # 2. Vs: Steel Capacity
     Av = 2 * (np.pi * (stir_db/2)**2) # 2 legs
-    if spacing <= 0: spacing = 1000 # Prevent division by zero
+    if spacing <= 0: spacing = 1000
     
     Vs = (Av * fy * d) / spacing
     phi_Vs = phi * Vs
+    
     phi_Vn = phi_Vc + phi_Vs
     
-    status = "OK" if phi_Vn >= Vu else "FAIL"
+    # 3. Maximum Spacing Check (ACI 9.7.6.2.2)
+    # Case 1: Vs <= 0.33 * sqrt(fc) * b * d  --> Max spacing = min(d/2, 600)
+    # Case 2: Vs > 0.33 * sqrt(fc) * b * d   --> Max spacing = min(d/4, 300)
+    
+    threshold = 0.33 * np.sqrt(fc) * b * d
+    if Vs <= threshold:
+        s_max_limit = min(d/2, 600)
+    else:
+        s_max_limit = min(d/4, 300)
+        
+    # Validation
+    is_strength_ok = phi_Vn >= Vu
+    is_spacing_ok = spacing <= s_max_limit
+    
+    if not is_strength_ok:
+        status = "FAIL (Strength)"
+    elif not is_spacing_ok:
+        status = f"FAIL (Space > {s_max_limit:.0f})"
+    else:
+        status = "OK"
+
     return status, phi_Vn/1000, phi_Vc/1000, phi_Vs/1000, Vc, Vs
 
 def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
@@ -457,3 +499,4 @@ else:
         st.error(f"❌ Application Error: {e}")
         import traceback
         st.code(traceback.format_exc())
+
