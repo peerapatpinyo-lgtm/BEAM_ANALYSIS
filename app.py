@@ -21,18 +21,25 @@ def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     m = fy / (0.85 * fc)
     Rn = Mu / (phi * b_mm * d_eff_mm**2)
     try:
-        rho = (1/m) * (1 - np.sqrt(1 - (2*m*Rn)/fy))
+        # Check if Rn is too high (Section too small)
+        term = 1 - (2 * m * Rn) / fy
+        if term < 0:
+            rho = 0.0 # Fail / Complex number
+        else:
+            rho = (1/m) * (1 - np.sqrt(term))
     except:
-        rho = 0.0 # Error case (Over reinforced / Section too small)
+        rho = 0.0 # Error case
     
     as_req = rho * b_mm * d_eff_mm
     
     # Min Reinforcement Check
-    as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
-    as_min2 = (1.4 / fy) * b_mm * d_eff_mm
-    as_min = max(as_min1, as_min2)
+    if as_req > 0: # Check min only if moment exists
+        as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
+        as_min2 = (1.4 / fy) * b_mm * d_eff_mm
+        as_min = max(as_min1, as_min2)
+        return max(as_req, as_min)
     
-    return max(as_req, as_min)
+    return 0.0
 
 def get_phi_Mn(n, db, d_eff, b, fc, fy):
     """คำนวณ Capacity รับโมเมนต์จริง (phi Mn)"""
@@ -53,6 +60,7 @@ def check_shear(Vu_kN, b, d, fc, fy, stir_db, spacing):
     
     Av = 2 * (np.pi * (stir_db/2)**2) # 2 legs
     if spacing <= 0: spacing = 1000 # prevent div by zero
+    
     Vs = (Av * fy * d) / spacing
     phi_Vn = phi_Vc + (phi * Vs)
     
@@ -102,7 +110,7 @@ else:
     # --- 5. LOAD CALCULATIONS & COMBINATIONS ---
     try:
         # 5.1 Self-Weight Calculation (Unit Weight = 24 kN/m³)
-        w_sw_base_kN = params['b'] * params['h'] * 24.0    
+        w_sw_base_kN = params['b'] * params['h'] * 24.0     
         w_sw_factored_kN = w_sw_base_kN * f_dl
         
         # 5.2 Initialize Total UDL per span (Newton (N/m))
@@ -169,7 +177,7 @@ else:
         res_df = pd.DataFrame({
             'x': x_eval,
             'moment': M, 
-            'shear': V,  
+            'shear': V,   
             'deflection': D * 1000 # m to mm
         })
         
@@ -264,8 +272,9 @@ else:
 
                     # 2. Bottom Steel (Positive Moment)
                     st.markdown("##### 1. Bottom Bars (Mid-span)")
-                    d_eff_bot = h_mm - cover_mm - 9 - 10 # approx stirrup+half_bar
-                    as_req_bot = get_as_req(mu_pos, d_eff_bot, fc, fy, b_mm)
+                    # Approx d_eff for estimation
+                    d_eff_bot_est = h_mm - cover_mm - 9 - 10 
+                    as_req_bot = get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
                     
                     cb1, cb2, cb3, cb4 = st.columns([2, 1.5, 1.5, 2])
                     with cb1:
@@ -275,7 +284,10 @@ else:
                     with cb3:
                         bot_n = st.number_input(f"Qty", min_value=2, value=2, step=1, key=f"bn_{i}")
                     with cb4:
-                        phi_Mn_bot, as_prov_bot = get_phi_Mn(bot_n, bot_db, d_eff_bot, b_mm, fc, fy)
+                        # Update d_eff based on actual selection (assuming 9mm stirrup for cal)
+                        d_eff_bot_real = h_mm - cover_mm - 9 - (bot_db / 2)
+                        phi_Mn_bot, as_prov_bot = get_phi_Mn(bot_n, bot_db, d_eff_bot_real, b_mm, fc, fy)
+                        
                         status_b = "✅ OK" if phi_Mn_bot >= mu_pos else "❌ FAIL"
                         if status_b == "✅ OK":
                             st.success(f"{status_b} (Cap={phi_Mn_bot:.1f} kNm)")
@@ -284,8 +296,9 @@ else:
 
                     # 3. Top Steel (Negative Moment)
                     st.markdown("##### 2. Top Bars (Supports)")
-                    d_eff_top = h_mm - cover_mm - 9 - 10 
-                    as_req_top = get_as_req(mu_neg, d_eff_top, fc, fy, b_mm)
+                    # Approx d_eff for estimation
+                    d_eff_top_est = h_mm - cover_mm - 9 - 10 
+                    as_req_top = get_as_req(mu_neg, d_eff_top_est, fc, fy, b_mm)
                     
                     ct1, ct2, ct3, ct4 = st.columns([2, 1.5, 1.5, 2])
                     with ct1:
@@ -295,7 +308,10 @@ else:
                     with ct3:
                         top_n = st.number_input(f"Qty", min_value=2, value=2, step=1, key=f"tn_{i}")
                     with ct4:
-                        phi_Mn_top, as_prov_top = get_phi_Mn(top_n, top_db, d_eff_top, b_mm, fc, fy)
+                        # Update d_eff based on actual selection
+                        d_eff_top_real = h_mm - cover_mm - 9 - (top_db / 2)
+                        phi_Mn_top, as_prov_top = get_phi_Mn(top_n, top_db, d_eff_top_real, b_mm, fc, fy)
+                        
                         status_t = "✅ OK" if phi_Mn_top >= mu_neg else "❌ FAIL"
                         if status_t == "✅ OK":
                             st.success(f"{status_t} (Cap={phi_Mn_top:.1f} kNm)")
@@ -312,8 +328,8 @@ else:
                     with cs3:
                         stir_s = st.number_input(f"Spacing (mm)", value=150, step=10, key=f"ss_{i}")
                     with cs4:
-                        d_shear = d_eff_bot
-                        status_v, phi_Vn, phi_Vc = check_shear(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s) # use fy main for simplicity or input fys
+                        d_shear = d_eff_bot_real # Use calculated effective depth
+                        status_v, phi_Vn, phi_Vc = check_shear(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s)
                         if status_v == "OK":
                             st.success(f"✅ OK (Cap={phi_Vn:.1f})")
                         else:
