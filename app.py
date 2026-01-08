@@ -192,141 +192,179 @@ else:
                     st.write(f"Allowable (L/240): {limit_mm:.2f} mm")
                     if d_abs_max_mm <= limit_mm: st.success("Deflection: PASS")
                     else: st.error("Deflection: FAIL")
-
-        # ================= TAB 2: RC DESIGN =================
+                # ================= TAB 2: RC DESIGN =================
         with tab2:
             st.header(f"Reinforced Concrete Design ({tag})")
             
             if is_service:
-                st.error("⚠️ Error: Strength Design requires 'Ultimate Load' factors. Please switch mode above.")
-            else:
-                # --- Design Configuration UI ---
-                st.markdown("### 🛠️ Design Configuration")
-                c1, c2, c3 = st.columns(3)
-                with c1:
-                    user_db_main = st.selectbox("Main Bar (DB)", [12, 16, 20, 25, 28], index=1)
-                with c2:
-                    user_db_stir = st.selectbox("Stirrup (RB/DB)", [6, 9, 10, 12], index=0)
-                with c3:
-                    user_cover = st.number_input("Concrete Cover (mm)", 20, 75, 25, 5)
-                st.divider()
+                st.warning("⚠️ Note: You are designing with Service Loads (Factor=1.0). Steel may be insufficient for Ultimate Limit State.")
+            
+            st.markdown("### 🛠️ Reinforcement Selection (Per Span)")
+            st.info("Select reinforcement for each span independently. Calculations will update automatically.")
 
-                design_res = []
-                offsets = [0] + list(np.cumsum(spans))
-
-                # Loop through spans for design
-                for i in range(n_spans):
-                    s_start, s_end = offsets[i], offsets[i+1]
-                    span_data = res_df[(res_df['x'] >= s_start - 1e-6) & (res_df['x'] <= s_end + 1e-6)]
-                    
-                    if not span_data.empty:
-                        # 1. Get Max Forces
-                        mu_pos = span_data['moment'].max() / 1000.0
-                        mu_neg = abs(span_data['moment'].min()) / 1000.0
-                        vu_max = span_data['shear'].abs().max() / 1000.0
-                        
-                        # 2. Design Flexure (Uses new function with h, cover, db)
-                        res_pos, steps_pos = rc_design.design_beam_flexure(
-                            mu_pos, params['b'], params['h'], user_cover, 
-                            user_db_main, user_db_stir, params['fc'], params['fy']
-                        )
-                        
-                        res_neg, steps_neg = rc_design.design_beam_flexure(
-                            mu_neg, params['b'], params['h'], user_cover, 
-                            user_db_main, user_db_stir, params['fc'], params['fy']
-                        )
-                        
-                        # 3. Design Shear (Uses new function with db_stir)
-                        # Use d from flexure design (safe side use min d if different, but usually similar)
-                        d_shear = res_pos['d_used'] 
-                        s_req, status_shear, steps_shear = rc_design.check_shear(
-                            vu_max, params['b'], d_shear, params['fc'], params['fy'], user_db_stir
-                        )
-                        
-                        # 4. Store Results
-                        design_res.append({
-                            'span': i+1, 
-                            'db': user_db_main,
-                            'pos': {'n': res_pos['n_bars'], 'As': res_pos['As_prov']}, 
-                            'neg': {'n': res_neg['n_bars'], 'As': res_neg['As_prov']}, 
-                            'shear': {'s': s_req, 'db': user_db_stir}
-                        })
-                        
-                        # 5. Display Per-Span Results
-                        with st.expander(f"📘 Span {i+1} Design Calculation", expanded=False):
-                            st.info(f"Design Loads: Mu(+)={mu_pos:.2f} kNm, Mu(-)={mu_neg:.2f} kNm, Vu={vu_max:.2f} kN")
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.markdown("##### Bottom Steel (Mid-span)")
-                                st.success(f"**Provide: {res_pos['n_bars']}-DB{user_db_main}**")
-                                for s in steps_pos: st.latex(s)
-                            with col2:
-                                st.markdown("##### Top Steel (Supports)")
-                                st.success(f"**Provide: {res_neg['n_bars']}-DB{user_db_main}**")
-                                for s in steps_neg: st.latex(s)
-                            
-                            st.markdown("---")
-                            st.markdown("##### Shear Design (Stirrups)")
-                            st.warning(f"**Provide: RB/DB{user_db_stir} @ {s_req} mm c/c** ({status_shear})")
-                            for s in steps_shear: st.latex(s)
-
-                # --- 🚀 DETAILING SECTION ---
-                st.markdown("---")
-                st.subheader("🛠️ Structural Detailing (Professional View)")
+            # --- 1. COLLECT USER INPUTS PER SPAN ---
+            span_inputs = []
+            
+            # Create columns for the inputs
+            # Header
+            h1, h2, h3, h4, h5 = st.columns([1, 2, 2, 2, 2])
+            h1.markdown("**Span**")
+            h2.markdown("**Top Bar (Supports)**")
+            h3.markdown("**Bottom Bar (Mid)**")
+            h4.markdown("**Stirrup**")
+            h5.markdown("**Cover (mm)**")
+            
+            for i in range(n_spans):
+                c1, c2, c3, c4, c5 = st.columns([1, 2, 2, 2, 2])
                 
-                if design_res:
-                    # 1. LONGITUDINAL SECTION (TOP - Full Width)
-                    st.markdown("### 1. Longitudinal Section (General Arrangement)")
-                    st.info("💡 Shows the entire beam span, supports, and longitudinal reinforcement arrangement.")
+                c1.write(f"**{i+1}**")
+                
+                with c2:
+                    # Key must be unique for each widget
+                    top_db = st.selectbox(f"Top DB (Span {i+1})", [12, 16, 20, 25, 28, 32], index=1, key=f"top_{i}")
+                with c3:
+                    bot_db = st.selectbox(f"Bot DB (Span {i+1})", [12, 16, 20, 25, 28, 32], index=1, key=f"bot_{i}")
+                with c4:
+                    stir_db = st.selectbox(f"Stirrup (Span {i+1})", [6, 9, 10, 12], index=0, key=f"stir_{i}")
+                with c5:
+                    cover = st.number_input(f"Cv (Span {i+1})", 20, 75, 25, 5, key=f"cov_{i}", label_visibility="collapsed")
+                
+                span_inputs.append({
+                    'top_db': top_db,
+                    'bot_db': bot_db,
+                    'stir_db': stir_db,
+                    'cover': cover
+                })
+            
+            st.divider()
+
+            # --- 2. PERFORM CALCULATION LOOP ---
+            design_res = []
+            offsets = [0] + list(np.cumsum(spans))
+
+            # Loop through spans for design
+            for i in range(n_spans):
+                inputs = span_inputs[i] # Get inputs for this specific span
+                
+                s_start, s_end = offsets[i], offsets[i+1]
+                span_data = res_df[(res_df['x'] >= s_start - 1e-6) & (res_df['x'] <= s_end + 1e-6)]
+                
+                if not span_data.empty:
+                    # 1. Get Max Forces
+                    mu_pos = span_data['moment'].max() / 1000.0
+                    mu_neg = abs(span_data['moment'].min()) / 1000.0
+                    vu_max = span_data['shear'].abs().max() / 1000.0
                     
-                    fig_long = section_plotter.plot_longitudinal_section_detailed(
-                        spans, sup_df, design_res, params['h'], user_cover
+                    # 2. Design Flexure 
+                    # Note: We pass the specific DB size so 'd' (effective depth) is calculated correctly for Top vs Bottom
+                    
+                    # Positive Moment (Bottom Steel) -> Use bot_db
+                    res_pos, steps_pos = rc_design.design_beam_flexure(
+                        mu_pos, params['b'], params['h'], inputs['cover'], 
+                        inputs['bot_db'], inputs['stir_db'], params['fc'], params['fy']
                     )
-                    st.pyplot(fig_long, use_container_width=True)
                     
-                    st.markdown("---")
+                    # Negative Moment (Top Steel) -> Use top_db
+                    res_neg, steps_neg = rc_design.design_beam_flexure(
+                        mu_neg, params['b'], params['h'], inputs['cover'], 
+                        inputs['top_db'], inputs['stir_db'], params['fc'], params['fy']
+                    )
                     
-                    # 2. CROSS SECTIONS (BOTTOM - Tabs for Scalability)
-                    st.markdown("### 2. Cross Section Details")
-                    st.write("Select a span to view cross-section details:")
+                    # 3. Design Shear
+                    d_shear = res_pos['d_used'] 
+                    s_req, status_shear, steps_shear = rc_design.check_shear(
+                        vu_max, params['b'], d_shear, params['fc'], params['fy'], inputs['stir_db']
+                    )
                     
-                    # Dynamic Tabs
-                    span_tabs = st.tabs([f"Span {i+1}" for i in range(n_spans)])
+                    # 4. Store Results
+                    design_res.append({
+                        'span': i+1, 
+                        'top_db': inputs['top_db'],
+                        'bot_db': inputs['bot_db'],
+                        'stir_db': inputs['stir_db'],
+                        'cover': inputs['cover'],
+                        'pos': {'n': res_pos['n_bars'], 'As': res_pos['As_prov']}, 
+                        'neg': {'n': res_neg['n_bars'], 'As': res_neg['As_prov']}, 
+                        'shear': {'s': s_req}
+                    })
                     
-                    for i, tab in enumerate(span_tabs):
-                        with tab:
-                            res = design_res[i]
-                            c_det1, c_det2 = st.columns(2)
-                            
-                            # Section A-A: Mid Span
-                            with c_det1:
-                                st.markdown(f"**Section A-A (Mid-span {i+1})**")
-                                st.caption(f"Bottom Bars: {res['pos']['n']}-DB{res['db']}")
-                                fig_a = section_plotter.plot_section(
-                                    params['b'], params['h'], user_cover, user_db_main, 
-                                    2, # Top bars (Min hanger)
-                                    res['pos']['n'], # Bottom bars (Calc)
-                                    f"RB{user_db_stir}@{int(res['shear']['s'])}", 
-                                    params['fc'], params['fy'], f"SECTION A-A (Span {i+1})"
-                                )
-                                st.pyplot(fig_a, use_container_width=True)
-                            
-                            # Section B-B: Support
-                            with c_det2:
-                                st.markdown(f"**Section B-B (Support {i+1})**")
-                                st.caption(f"Top Bars: {res['neg']['n']}-DB{res['db']}")
-                                fig_b = section_plotter.plot_section(
-                                    params['b'], params['h'], user_cover, user_db_main, 
-                                    res['neg']['n'], # Top bars (Calc)
-                                    2, # Bottom bars (Min hanger)
-                                    f"RB{user_db_stir}@{int(res['shear']['s'])}", 
-                                    params['fc'], params['fy'], f"SECTION B-B (Span {i+1})"
-                                )
-                                st.pyplot(fig_b, use_container_width=True)
+                    # 5. Display Per-Span Results
+                    with st.expander(f"📘 Span {i+1} Design Calculation", expanded=False):
+                        st.info(f"Design Loads: Mu(+)={mu_pos:.2f} kNm, Mu(-)={mu_neg:.2f} kNm, Vu={vu_max:.2f} kN")
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("##### Bottom Steel (Mid-span)")
+                            st.success(f"**Provide: {res_pos['n_bars']}-DB{inputs['bot_db']}**")
+                            for s in steps_pos: st.latex(s)
+                        with col2:
+                            st.markdown("##### Top Steel (Supports)")
+                            st.success(f"**Provide: {res_neg['n_bars']}-DB{inputs['top_db']}**")
+                            for s in steps_neg: st.latex(s)
+                        
+                        st.markdown("---")
+                        st.markdown("##### Shear Design (Stirrups)")
+                        st.warning(f"**Provide: RB/DB{inputs['stir_db']} @ {s_req} mm c/c** ({status_shear})")
+                        for s in steps_shear: st.latex(s)
+
+            # --- 3. DETAILING SECTION ---
+            st.markdown("---")
+            st.subheader("🛠️ Structural Detailing")
+            
+            if design_res:
+                # 1. LONGITUDINAL SECTION
+                st.markdown("### 1. Longitudinal Section")
+                # Note: We assume constant beam height (h) for the longitudinal plot for now
+                fig_long = section_plotter.plot_longitudinal_section_detailed(
+                    spans, sup_df, design_res, params['h'], span_inputs[0]['cover']
+                )
+                st.pyplot(fig_long, use_container_width=True)
+                
+                st.markdown("---")
+                
+                # 2. CROSS SECTIONS (Dynamic Tabs)
+                st.markdown("### 2. Cross Section Details")
+                st.write("Select a span to view cross-section details:")
+                
+                span_tabs = st.tabs([f"Span {i+1}" for i in range(n_spans)])
+                
+                for i, tab in enumerate(span_tabs):
+                    with tab:
+                        res = design_res[i]
+                        c_det1, c_det2 = st.columns(2)
+                        
+                        # Section A-A: Mid Span (Show Bottom Bars dominant)
+                        with c_det1:
+                            st.markdown(f"**Section A-A (Mid-span {i+1})**")
+                            # Plot using specific top/bottom sizes
+                            fig_a = section_plotter.plot_section(
+                                params['b'], params['h'], res['cover'], 
+                                res['top_db'], res['bot_db'], # Pass both sizes
+                                2, # Top bars (Min hanger - Visual only)
+                                res['pos']['n'], # Bottom bars (Calculated)
+                                f"RB{res['stir_db']}@{int(res['shear']['s'])}", 
+                                params['fc'], params['fy'], f"SECTION A-A (Span {i+1})"
+                            )
+                            st.pyplot(fig_a, use_container_width=True)
+                        
+                        # Section B-B: Support (Show Top Bars dominant)
+                        with c_det2:
+                            st.markdown(f"**Section B-B (Support {i+1})**")
+                            fig_b = section_plotter.plot_section(
+                                params['b'], params['h'], res['cover'], 
+                                res['top_db'], res['bot_db'], # Pass both sizes
+                                res['neg']['n'], # Top bars (Calculated)
+                                2, # Bottom bars (Min hanger - Visual only)
+                                f"RB{res['stir_db']}@{int(res['shear']['s'])}", 
+                                params['fc'], params['fy'], f"SECTION B-B (Span {i+1})"
+                            )
+                            st.pyplot(fig_b, use_container_width=True)
+
+
 
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
         st.exception(e)
 
 # --- END OF APP SCRIPT ---
+
