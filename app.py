@@ -241,45 +241,59 @@ else:
                         st.markdown("**Shear Design**")
                         for s in steps_shear: st.latex(s)
 
-            # --- 🚀 DETAILING SECTION (แก้ไขเพื่อแสดง A-A, B-B, Long. Sect) ---
+            # --- 🚀 DETAILING SECTION (NEW LAYOUT) ---
             st.markdown("---")
             st.subheader("🛠️ Structural Detailing (Professional View)")
             
             if design_res:
-                # ปรับเป็น 3 คอลัมน์: A-A | B-B | รูปตามยาว
-                c_det1, c_det2, c_det3 = st.columns([1, 1, 2])
+                # 1. LONGITUDINAL SECTION (TOP - Full Width)
+                st.markdown("### 1. Longitudinal Section (General Arrangement)")
+                st.info("💡 แสดงแนวคานทั้งหมด จุดรองรับ และการเสริมเหล็กตามยาว (Longitudinal Reinforcement)")
                 
-                with c_det1:
-                    st.markdown("**Section A-A (Mid-span)**")
-                    # กลางคาน (Moment +): เน้นเหล็กล่าง
-                    fig_a = section_plotter.plot_section(
-                        params['b'], params['h'], 40, db_main, 
-                        2, # Top bars (Min)
-                        design_res[0]['pos']['n'], # Bottom bars (Calc)
-                        f"RB6@{int(design_res[0]['shear']['s'])}", 
-                        params['fc'], params['fy'], "SECTION A-A"
-                    )
-                    st.pyplot(fig_a, use_container_width=False)
+                fig_long = section_plotter.plot_longitudinal_section_detailed(
+                    spans, sup_df, design_res, params['h'], 40
+                )
+                st.pyplot(fig_long, use_container_width=True)
                 
-                with c_det2:
-                    st.markdown("**Section B-B (Support)**")
-                    # หัวเสา (Moment -): เน้นเหล็กบน
-                    fig_b = section_plotter.plot_section(
-                        params['b'], params['h'], 40, db_main, 
-                        design_res[0]['neg']['n'], # Top bars (Calc)
-                        2, # Bottom bars (Min)
-                        f"RB6@{int(design_res[0]['shear']['s'])}", 
-                        params['fc'], params['fy'], "SECTION B-B"
-                    )
-                    st.pyplot(fig_b, use_container_width=False)
-
-                with c_det3:
-                    st.markdown("**Longitudinal Section**")
-                    # รูปตัดตามยาว แสดง Support (Hinge/Roller) และแนวตัด A/B
-                    fig_long = section_plotter.plot_longitudinal_section_detailed(
-                        spans, sup_df, design_res, params['h'], 40
-                    )
-                    st.pyplot(fig_long, use_container_width=False)
+                st.markdown("---")
+                
+                # 2. CROSS SECTIONS (BOTTOM - Tabs for Scalability)
+                st.markdown("### 2. Cross Section Details")
+                st.write("เลือกดูรายละเอียดหน้าตัดของแต่ละช่วงคาน (Select Span):")
+                
+                # สร้าง Tabs แบบ Dynamic ตามจำนวน Span
+                span_tabs = st.tabs([f"Span {i+1}" for i in range(n_spans)])
+                
+                for i, tab in enumerate(span_tabs):
+                    with tab:
+                        res = design_res[i]
+                        c_det1, c_det2 = st.columns(2)
+                        
+                        # Section A-A: Mid Span (เน้นเหล็กล่าง)
+                        with c_det1:
+                            st.markdown(f"**Section A-A (Mid-span {i+1})**")
+                            st.caption(f"Bottom Bars: {res['pos']['n']}-DB{res['db']}")
+                            fig_a = section_plotter.plot_section(
+                                params['b'], params['h'], 40, db_main, 
+                                2, # Top bars (Min)
+                                res['pos']['n'], # Bottom bars (Calc)
+                                f"RB6@{int(res['shear']['s'])}", 
+                                params['fc'], params['fy'], f"SECTION A-A (Span {i+1})"
+                            )
+                            st.pyplot(fig_a, use_container_width=True)
+                        
+                        # Section B-B: Support (เน้นเหล็กบน)
+                        with c_det2:
+                            st.markdown(f"**Section B-B (Support {i+1})**")
+                            st.caption(f"Top Bars: {res['neg']['n']}-DB{res['db']}")
+                            fig_b = section_plotter.plot_section(
+                                params['b'], params['h'], 40, db_main, 
+                                res['neg']['n'], # Top bars (Calc)
+                                2, # Bottom bars (Min)
+                                f"RB6@{int(res['shear']['s'])}", 
+                                params['fc'], params['fy'], f"SECTION B-B (Span {i+1})"
+                            )
+                            st.pyplot(fig_b, use_container_width=True)
 
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
