@@ -408,13 +408,17 @@ else:
                     d_shear = d_eff_bot_real 
                     status_v, phi_Vn, phi_Vc, phi_Vs, _, _ = check_shear_details(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s)
                     
+
                     with c4:
                         clr_v = "green" if status_v == "OK" else "red"
                         icon_v = "✅ OK" if status_v == "OK" else "❌ Fail"
                         
-                        # Shear check is strictly Capacity vs Demand
-                        st.markdown(f"**Strength**: $\phi V_n = :{clr_v}[{phi_Vn:.1f}] \ge V_u = {vu_max:.1f}$ kN")
-                        st.caption(f"($\phi V_c={phi_Vc:.1f} + \phi V_s={phi_Vs:.1f}$)")
+                        # --- แก้ไขบรรทัดนี้ (Fix Display) ---
+                        # แยก LaTeX ($) ออกจาก Color Syntax (:[]) และเติมหน่วย kN ให้ครบ
+                        st.markdown(f"**Strength:** $\phi V_n =$ :{clr_v}[**{phi_Vn:.1f}**] **kN** $\ge V_u =$ **{vu_max:.1f}** **kN**")
+                        
+                        # เพิ่มหน่วย kN ในวงเล็บด้วย
+                        st.caption(f"($\phi V_c={phi_Vc:.1f} + \phi V_s={phi_Vs:.1f}$ kN)")
                         # st.caption(f"Status: {icon_v}")
                     
                     full_cal_report += f"   [Shear]  Prov: RB{stir_db}@{stir_s}, phiVn={phi_Vn:.2f} >= Vu={vu_max:.2f} -> {icon_v}\n"
@@ -484,6 +488,7 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)  
+
 
 
 
