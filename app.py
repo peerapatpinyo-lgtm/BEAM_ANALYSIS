@@ -53,65 +53,56 @@ else:
         # 5.1 Self-Weight (Unit Weight = 24 kN/m³)
         w_sw_base_kN = params['b'] * params['h'] * 24.0   
         w_sw_factored_kN = w_sw_base_kN * f_dl
+
+        # 5.2 เตรียม List สำหรับเก็บโหลดที่จะส่งให้ Solver (หน่วย Newton ทั้งหมด)
+        final_solver_loads = []
         
-        # 5.2 Initialize Total UDL per span (Newton (N/m))
-        span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
-        combined_loads_list = []
-        
-        # 5.3 Process User-Defined Loads
+        # A. เพิ่ม Self-Weight (DL) ลงไปในทุก Span ก่อน
+        for i in range(n_spans):
+            final_solver_loads.append({
+                'span_index': i,
+                'type': 'U',
+                'mag': w_sw_factored_kN * 1000.0,  # kN/m -> N/m
+                'dist': spans[i],
+                'desc': 'Self-Weight'
+            })
+            
+        # B. เพิ่ม User-Defined Loads (DL/LL) จาก Sidebar
         if not loads_df.empty:
             for _, row in loads_df.iterrows():
-                try:
-                    s_idx = int(row['span_index'])
-                    if s_idx >= n_spans: continue 
-                    
-                    l_type = row['type']
-                    mag_base_kN = float(row['mag']) 
-                    
-                    # แปลงหน่วยเป็น Newton (N) และคูณ Factor
-                    mag_factored_N = mag_base_kN * f_ll * 1000.0 
-                    dist = float(row['dist']) 
-                    
-                    # Logic ยุบรวม UDL เต็มช่วง
-                    if l_type == 'U' and dist >= (spans[s_idx] - 0.01):
-                        span_total_udl_N[s_idx] += mag_factored_N
-                    else:
-                        combined_loads_list.append({
-                            'span_index': s_idx,
-                            'type': l_type,
-                            'mag': mag_factored_N, 
-                            'dist': dist,
-                            'desc': 'User (Partial/Point)'
-                        })
-                except Exception:
-                    continue
-        
-        # 5.4 รวม UDL ที่ยุบแล้วกลับเข้า list หลัก
-        for i in range(n_spans):
-            if span_total_udl_N[i] > 0:
-                combined_loads_list.append({
-                    'span_index': i,
-                    'type': 'U',
-                    'mag': span_total_udl_N[i], 
-                    'dist': spans[i],
-                    'desc': 'Total Combined UDL (Incl. SW)'
+                # ดึงค่า kN มาคูณ Factor และแปลงเป็น Newton
+                # สมมติโหลดที่ผู้ใช้กรอกเป็น Live Load (LL) ทั้งหมดตาม Logic เดิมของคุณ
+                mag_N = float(row['mag']) * f_ll * 1000.0 
+                
+                final_solver_loads.append({
+                    'span_index': int(row['span_index']),
+                    'type': row['type'],
+                    'mag': mag_N,
+                    'dist': float(row['dist']),
+                    'desc': 'User Load'
                 })
         
-        calc_loads_df = pd.DataFrame(combined_loads_list)
+        # สร้าง DataFrame ชุดสุดท้ายที่จะส่งเข้า Solver
+        calc_loads_df = pd.DataFrame(final_solver_loads)
 
         # --- 6. BEAM SOLVER ---
+        # ส่ง calc_loads_df ที่เป็นหน่วย Newton และรวมทุกอย่างแล้วเข้าไป
         x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
         res_df = pd.DataFrame({
             'x': x_eval,
-            'moment': M, 
-            'shear': V,  
-            'deflection': D * 1000 
+            'moment': M,  # N-m
+            'shear': V,   # N
+            'deflection': D * 1000 # mm
         })
         
-        # --- 7. DISPLAY RESULTS ---
-        tab1, tab2 = st.tabs(["📊 1. Analysis Results & Checks", "📝 2. RC Design & Report"])
-        
+        # --- 7. DISPLAY ---
+        with tab1:
+            # [จุดสำคัญ] ต้องส่ง calc_loads_df (หน่วย N) เข้าไปวาด 
+            # แต่ใน design_view.py ต้องสั่งให้มันหาร 1000 ก่อนโชว์ kN
+            fig_analysis = design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R)
+            st.plotly_chart(fig_analysis, use_container_width=True)
+  
         with tab1:
             st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R), use_container_width=True)
             
@@ -253,3 +244,4 @@ else:
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
         st.exception(e)
+
