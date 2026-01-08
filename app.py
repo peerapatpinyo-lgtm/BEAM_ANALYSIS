@@ -154,7 +154,7 @@ else:
             tag = "Ultimate"
             is_service = False
 
-    # --- 4.3 LOAD CALCULATION & SOLVER ---
+ # --- 4.3 LOAD CALCULATION PROCESS & SOLVER ---
     try:
         # Calculate Self-weight
         w_sw_base_kN = params['b'] * params['h'] * 24.0      
@@ -200,29 +200,36 @@ else:
         
         calc_loads_df = pd.DataFrame(combined_loads_list)
 
+        # ----------------------------------------------------------------------
         # RUN SOLVER
+        # ----------------------------------------------------------------------
         with st.spinner('Running Analysis...'):
             x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
-        res_df = pd.DataFrame({
-            'x': x_eval,
-            'moment': M, 
-            'shear': V,    
-            'deflection': D * 1000 # mm
+        # สร้าง DataFrame หลักตัวเดียว (Master DataFrame)
+        # หมายเหตุ: solver ปกติจะ return หน่วย SI พื้นฐาน (N, mm, N-mm)
+        master_df = pd.DataFrame({
+            'x': x_eval,                 # m
+            'M_Nmm': M,                  # N-mm
+            'V_N': V,                    # N
+            'D_m': D                     # m
         })
 
-        # Display DataFrame
-        res_df_display = res_df.copy()
+        # คำนวณหน่วย Engineering (kNm, kN, mm) เตรียมไว้เลย
+        master_df['M_kNm'] = master_df['M_Nmm'] / 1e6
+        master_df['V_kN'] = master_df['V_N'] / 1000.0
+        master_df['D_mm'] = master_df['D_m'] * 1000.0
+
+        # DataFrame สำหรับแสดงผล (เปลี่ยนชื่อ Column ให้สวยงาม)
+        res_df_display = master_df.copy()
         res_df_display.rename(columns={
             'x': 'x (m)',
-            'moment': 'Moment (N-mm)',
-            'shear': 'Shear (N)',
-            'deflection': 'Deflection (mm)'
+            'M_Nmm': 'Moment (N-mm)',
+            'M_kNm': 'Moment (kNm)',
+            'V_N': 'Shear (N)',
+            'V_kN': 'Shear (kN)',
+            'D_mm': 'Deflection (mm)'
         }, inplace=True)
-        
-        if not res_df_display.empty:
-            res_df_display['Moment (kNm)'] = res_df_display['Moment (N-mm)'] / 1e6
-            res_df_display['Shear (kN)'] = res_df_display['Shear (N)'] / 1000
 
         # --- 5. TABS INTERFACE ---
         tab1, tab2 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design & Detailing"])
@@ -231,22 +238,35 @@ else:
         with tab1:
             st.subheader("📈 Force Diagrams")
             
-            # 1. Plot Diagram
-            if not res_df_display.empty:
-                st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R), use_container_width=True)
+            # 1. Plot Diagram (ส่ง master_df หรือ res_df_display ที่มีหน่วยครบถ้วน)
+            # ต้องมั่นใจว่า design_view รองรับชื่อคอลัมน์ใหม่ หรือเราส่งแบบเดิม
+            # เพื่อความชัวร์ เราสร้าง df แบบเดิมส่งให้ฟังก์ชันวาดกราฟ
+            df_for_plot = pd.DataFrame({
+                'x': x_eval,
+                'moment': M, # N-mm
+                'shear': V,  # N
+                'deflection': D * 1000 # mm
+            })
+            
+            if not df_for_plot.empty:
+                st.plotly_chart(design_view.plot_analysis_results(df_for_plot, spans, sup_df, calc_loads_df, R), use_container_width=True)
             else:
                 st.info("ℹ️ Please input data and click 'Analyze'")
 
             # 2. Key Metrics
-            st.markdown("### 📌 Critical Values")
-            if not res_df_display.empty:
-                v_max_kN = res_df_display['Shear (kN)'].abs().max()
-                raw_max_m = res_df_display['Moment (kNm)'].max()
-                raw_min_m = res_df_display['Moment (kNm)'].min()
+            st.markdown("### 📌 Critical Values (Global)")
+            if not master_df.empty:
+                v_max_kN = master_df['V_kN'].abs().max()
+                
+                # Global Max/Min Moment
+                g_max_m = master_df['M_kNm'].max()
+                g_min_m = master_df['M_kNm'].min()
 
-                m_max_pos_kNm = raw_max_m if raw_max_m > 0 else 0.0
-                m_max_neg_kNm = abs(raw_min_m) if raw_min_m < 0 else 0.0
-                d_abs_max_mm = res_df_display['Deflection (mm)'].abs().max()
+                # แยกคิดค่าบวกและลบ
+                m_max_pos_kNm = g_max_m if g_max_m > 0 else 0.0
+                m_max_neg_kNm = abs(g_min_m) if g_min_m < 0 else 0.0
+                
+                d_abs_max_mm = master_df['D_mm'].abs().max()
                 
                 m1, m2, m3, m4 = st.columns(4)
                 m1.metric("Max Shear (Vu)", f"{v_max_kN:.2f} kN")
@@ -328,22 +348,41 @@ else:
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                span_data = res_df_display[(res_df_display['x (m)'] >= s_start - 1e-6) & (res_df_display['x (m)'] <= s_end + 1e-6)]
+                # ดึงข้อมูลจาก Master DataFrame โดยใช้คอลัมน์ kNm ที่คำนวณไว้แล้ว
+                # ใช้ buffer เล็กน้อย (+/- 1e-6) เพื่อกัน Floating point error
+                span_data = master_df[(master_df['x'] >= s_start - 1e-6) & (master_df['x'] <= s_end + 1e-6)]
                 
+                # --- CALCULATION LOGIC ---
                 if not span_data.empty:
-                    raw_max = span_data['Moment (kNm)'].max()
-                    mu_pos = max(0, raw_max) 
+                    # Positive Moment (Design Bottom Steel)
+                    # หาค่าสูงสุดใน span นี้
+                    raw_max_kNm = span_data['M_kNm'].max()
+                    mu_pos = max(0.0, raw_max_kNm) # ถ้าค่า max เป็นลบ (คานยื่น) ให้ถือว่าเป็น 0 สำหรับเหล็กล่าง
                     
-                    raw_min = span_data['Moment (kNm)'].min()
-                    mu_neg = abs(raw_min) if raw_min < 0 else 0
+                    # Negative Moment (Design Top Steel)
+                    # หาค่าต่ำสุด (ที่เป็นลบมากที่สุด) แล้วแปลงเป็น Absolute
+                    raw_min_kNm = span_data['M_kNm'].min()
+                    mu_neg = abs(raw_min_kNm) if raw_min_kNm < 0 else 0.0
                     
-                    vu_max = span_data['Shear (kN)'].abs().max()
+                    vu_max = span_data['V_kN'].abs().max()
                 else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
 
+                # --- DEBUG CHECKER ---
+                # ส่วนนี้สำคัญ: ช่วยให้คุณเช็คว่าค่าที่ Code เห็น ตรงกับที่คุณคิดไหม
+                with st.expander(f"🔍 Debug Data Check: Span {i+1}"):
+                    st.write(f"**Range X:** {s_start:.2f} to {s_end:.2f} m")
+                    st.write(f"**Raw Max kNm in Data:** {raw_max_kNm if 'raw_max_kNm' in locals() else 'No Data'}")
+                    st.write(f"**Raw Min kNm in Data:** {raw_min_kNm if 'raw_min_kNm' in locals() else 'No Data'}")
+                    st.write(f"👉 **Used for Design:** Mu(+) = {mu_pos:.2f}, Mu(-) = {mu_neg:.2f}")
+                    if not span_data.empty:
+                        st.dataframe(span_data[['x', 'M_kNm', 'V_kN']].describe())
+
+                # --- REPORT WRITING ---
                 full_cal_report += f"\n>> SPAN {i+1} (Length {s_len} m)\n"
                 full_cal_report += f"   Design Forces: Mu(+)={mu_pos:.2f} kNm, Mu(-)={mu_neg:.2f} kNm, Vu={vu_max:.2f} kN\n"
 
+                # --- UI DISPLAY ---
                 with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Forces: $M_u^+$ {mu_pos:.2f} kNm, $M_u^-$ {mu_neg:.2f} kNm, $V_u$ {vu_max:.2f} kN", expanded=True):
                     
                     c_const, c_cov = st.columns([3, 1])
