@@ -70,12 +70,29 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     # 1. วาดตัวคาน
     ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=1.2, edgecolor='#000000', facecolor='#ffffff', zorder=1))
     
-    # 2. วาด Support (สามเหลี่ยม)
-    for _, row in sup_df.iterrows():
-        x_sup = row['x'] * 1000
-        # วาดสามเหลี่ยมใต้คาน
-        poly = plt.Polygon([[x_sup-100, -250], [x_sup+100, -250], [x_sup, 0]], facecolor='#5d6d7e', edgecolor='black', lw=0.8, zorder=2)
-        ax.add_patch(poly)
+# 2. วาด Support (Hinge สำหรับจุดแรก, Roller สำหรับจุดที่เหลือ)
+    for i, (_, row) in enumerate(sup_df.iterrows()):
+        x_s = row['x'] * 1000
+        
+        if i == 0:
+            # วาด Hinge (สามเหลี่ยมมีขีดฐาน)
+            poly = plt.Polygon([[x_s-150, -300], [x_s+150, -300], [x_s, 0]], 
+                               facecolor='#ffffff', edgecolor='black', lw=1, zorder=2)
+            ax.add_patch(poly)
+            # ขีดฐานแสดงความแน่น
+            ax.plot([x_s-250, x_s+250], [-300, -300], color='black', lw=1.5)
+            for j in range(6): # ขีดเฉียงใต้ฐาน
+                ax.plot([x_s-250 + j*100, x_s-200 + j*100], [-350, -300], color='black', lw=0.8)
+        else:
+            # วาด Roller (สามเหลี่ยมมีช่องว่าง/วงกลมใต้ฐาน)
+            poly = plt.Polygon([[x_s-150, -250], [x_s+150, -250], [x_s, 0]], 
+                               facecolor='#ffffff', edgecolor='black', lw=1, zorder=2)
+            ax.add_patch(poly)
+            # วาดล้อ (วงกลมเล็กๆ 2 วง)
+            ax.add_patch(plt.Circle((x_s-70, -280), 30, color='black', fill=False, lw=0.8))
+            ax.add_patch(plt.Circle((x_s+70, -280), 30, color='black', fill=False, lw=0.8))
+            # เส้นพื้นดิน
+            ax.plot([x_s-250, x_s+250], [-310, -310], color='black', lw=1.2)
     
     # 3. วาดเหล็กและข้อความ
     for i, span_l_m in enumerate(spans):
