@@ -312,27 +312,46 @@ else:
             full_cal_report += f"  Load Factors: DL={f_dl}, LL={f_ll}\n"
             full_cal_report += "="*60 + "\n\n"
 
-# --- SPAN LOOP (Fixed: Units in Expander Header) ---
+
+           # --- วางทับ Loop เดิม (for i in range(n_spans):) ทั้งหมด ---
+            
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # Extract Forces
+                # 1. ดึงข้อมูลช่วงคาน (Slicing Data)
                 span_data = res_df_display[(res_df_display['x (m)'] >= s_start - 1e-6) & (res_df_display['x (m)'] <= s_end + 1e-6)]
                 
+                # --------------------------------------------------------
+                # 🛠️ DEBUG MODE: เช็คค่าดิบที่โปรแกรมอ่านได้ (ลบออกได้เมื่อหายสงสัย)
+                # --------------------------------------------------------
                 if not span_data.empty:
-                    mu_pos = span_data['Moment (kNm)'].max()
-                    mu_neg = abs(span_data['Moment (kNm)'].min())
+                    raw_max_moment = span_data['Moment (kNm)'].max()
+                    raw_min_moment = span_data['Moment (kNm)'].min()
+                    # ถ้าบรรทัดนี้โชว์ว่า Raw Max ติดลบ แปลว่าคานช่วงนั้นไม่มีโมเมนต์บวกเลย (ค่า 0.00 ที่สรุปจึงถูกต้องแล้ว)
+                    # st.info(f"🔍 Debug Span {i+1}: Raw Max={raw_max_moment:.4f}, Raw Min={raw_min_moment:.4f}") 
+                # --------------------------------------------------------
+
+                # 2. Extract Forces (Logic ที่ถูกต้องและปลอดภัย)
+                if not span_data.empty:
+                    # Mu Positive: ค่าสูงสุดของกราฟ ถ้ากราฟจมอยู่ใต้แกน (ติดลบหมด) ให้ถือว่าเป็น 0
+                    raw_max = span_data['Moment (kNm)'].max()
+                    mu_pos = max(0, raw_max) 
+                    
+                    # Mu Negative: ค่าต่ำสุดของกราฟ (ที่เป็นลบ) เอามาทำ Absolute
+                    raw_min = span_data['Moment (kNm)'].min()
+                    mu_neg = abs(raw_min) if raw_min < 0 else 0
+                    
+                    # Shear: ค่าสัมบูรณ์สูงสุด
                     vu_max = span_data['Shear (kN)'].abs().max()
                 else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
 
-                # Report Logic
+                # 3. Report String Update
                 full_cal_report += f"\n>> SPAN {i+1} (Length {s_len} m)\n"
                 full_cal_report += f"   Design Forces: Mu(+)={mu_pos:.2f} kNm, Mu(-)={mu_neg:.2f} kNm, Vu={vu_max:.2f} kN\n"
 
-                # UI Layout
-                # --- แก้ไขบรรทัดนี้: เพิ่มหน่วย kNm และ kN ในหัวข้อ ---
+                # 4. UI Layout (Expander)
                 with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Forces: $M_u^+$ {mu_pos:.2f} kNm, $M_u^-$ {mu_neg:.2f} kNm, $V_u$ {vu_max:.2f} kN", expanded=True):
                     
                     # Covering Input
@@ -343,7 +362,7 @@ else:
                         cover_mm = st.number_input(f"Covering (mm)", value=25.0, step=5.0, key=f"cov_{i}")
 
                     # ==================================================
-                    # 1. POSITIVE MOMENT DESIGN (Bottom Steel)
+                    # 5. POSITIVE MOMENT DESIGN (Bottom Steel)
                     # ==================================================
                     st.markdown("##### 1. Bottom Reinforcement (Mid-Span, $+M_u$)")
                     d_eff_bot_est = h_mm - cover_mm - 9 - 10 
@@ -369,7 +388,7 @@ else:
                     full_cal_report += f"   [Bottom] Prov: {bot_n}-DB{bot_db} (As={as_prov_bot:.0f}), phiMn={phi_Mn_bot:.2f} >= Mu={mu_pos:.2f} -> {icon_b}\n"
 
                     # ==================================================
-                    # 2. NEGATIVE MOMENT DESIGN (Top Steel)
+                    # 6. NEGATIVE MOMENT DESIGN (Top Steel)
                     # ==================================================
                     st.markdown("##### 2. Top Reinforcement (Supports, $-M_u$)")
                     d_eff_top_est = h_mm - cover_mm - 9 - 10 
@@ -395,7 +414,7 @@ else:
                     full_cal_report += f"   [Top]    Prov: {top_n}-DB{top_db} (As={as_prov_top:.0f}), phiMn={phi_Mn_top:.2f} >= Mu={mu_neg:.2f} -> {icon_t}\n"
 
                     # ==================================================
-                    # 3. SHEAR DESIGN (Stirrups)
+                    # 7. SHEAR DESIGN (Stirrups)
                     # ==================================================
                     st.markdown("##### 3. Shear Reinforcement (Stirrups, $V_u$)")
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -423,8 +442,7 @@ else:
                         'pos': {'n': bot_n, 'area': as_prov_bot, 'status': pass_b},
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': pass_t},
                         'shear': {'s': stir_s, 'status': status_v}
-                    })
-                    
+                    })         
             # --- SUMMARY & REPORT ---
             st.markdown("---")
             st.subheader("📋 Design Summary & Drawing")
@@ -480,6 +498,7 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)  
+
 
 
 
