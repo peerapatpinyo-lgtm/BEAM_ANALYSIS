@@ -232,94 +232,120 @@ else:
             'deflection': 'Deflection (mm)'
         }, inplace=True)
         
-        # เพิ่มหน่วย kNm และ kN เพื่อใช้ในการดึงค่ามาคำนวณ Design
-        res_df_display['Moment (kNm)'] = res_df_display['Moment (N-mm)'] / 1e6
-        res_df_display['Shear (kN)'] = res_df_display['Shear (N)'] / 1000
-        
+# --- 0. PREPARE DATA FOR DISPLAY ---
+        # สร้าง Copy เพื่อไม่ให้กระทบกับ res_df ต้นฉบับ และป้องกัน SettingWithCopyWarning
+        res_df_display = res_df.copy() if 'res_df' in locals() else pd.DataFrame()
+
+        if not res_df_display.empty:
+            # เพิ่มหน่วย kNm และ kN เพื่อใช้ในการแสดงผล
+            res_df_display['Moment (kNm)'] = res_df_display['Moment (N-mm)'] / 1e6
+            res_df_display['Shear (kN)'] = res_df_display['Shear (N)'] / 1000
+            res_df_display['Deflection (mm)'] = res_df_display['Deflection (mm)'] # (Optional: ย้ำว่าหน่วยเดิม)
+
         # --- 5. TABS INTERFACE ---
         tab1, tab2 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design & Detailing"])
         
         # ================= TAB 1: ANALYSIS =================
         with tab1:
             st.subheader("📈 Force Diagrams")
+            
             # 1. Plot Diagram
-            # ส่ง res_df (ตัวที่มีคอลัมน์ 'x') ไปให้ฟังก์ชัน plot
-            if 'res_df' in locals() and not res_df.empty:
+            if not res_df_display.empty:
+                # ส่ง res_df ต้นฉบับ (ที่มีหน่วย N-mm) ไป plot หรือจะปรับ function plot ให้รับหน่วยใหม่ก็ได้
+                # ตรงนี้สมมติว่า function plot รับค่าหน่วยเดิม
                 st.plotly_chart(design_view.plot_analysis_results(res_df, spans, sup_df, calc_loads_df, R), use_container_width=True)
             else:
-                st.warning("Please click 'Analyze' to generate diagrams.")
+                st.info("ℹ️ Please input data and click 'Analyze' to generate diagrams.")
 
             # 2. Key Metrics
             st.markdown("### 📌 Critical Values")
             if not res_df_display.empty:
+                # 2.1 Max Shear (Absolute)
                 v_max_kN = res_df_display['Shear (kN)'].abs().max()
                 
-                # Logic ดึงค่า Moment ที่ถูกต้อง (ป้องกันค่าติดลบแล้วสรุปเป็น 0)
-                raw_max = res_df_display['Moment (kNm)'].max()
-                m_max_pos_kNm = max(0, raw_max) 
+                # 2.2 Max Moment (+/-) แยกคิด
+                # ใช้ .max() และ .min() ตามปกติ แล้วค่อยจัดการค่า NaN หรือ กรณีไม่มีค่า
+                raw_max_m = res_df_display['Moment (kNm)'].max()
+                raw_min_m = res_df_display['Moment (kNm)'].min()
+
+                m_max_pos_kNm = raw_max_m if raw_max_m > 0 else 0.0
+                m_max_neg_kNm = abs(raw_min_m) if raw_min_m < 0 else 0.0
                 
-                raw_min = res_df_display['Moment (kNm)'].min()
-                m_max_neg_kNm = abs(raw_min) if raw_min < 0 else 0
-                
+                # 2.3 Max Deflection
                 d_abs_max_mm = res_df_display['Deflection (mm)'].abs().max()
                 
+                # Display Metrics
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Max Shear (Vu)", f"{v_max_kN:.2f} kN", delta_color="off")
-                m2.metric("Max Moment (+)", f"{m_max_pos_kNm:.2f} kNm", delta_color="off")
-                m3.metric("Max Moment (-)", f"{m_max_neg_kNm:.2f} kNm", delta_color="inverse")
-                m4.metric("Max Deflection", f"{d_abs_max_mm:.2f} mm", delta_color="off")
+                m1.metric("Max Shear (Vu)", f"{v_max_kN:.2f} kN")
+                m2.metric("Max Moment (+)", f"{m_max_pos_kNm:.2f} kNm")
+                m3.metric("Max Moment (-)", f"{m_max_neg_kNm:.2f} kNm")
+                m4.metric("Max Deflection", f"{d_abs_max_mm:.2f} mm")
 
             # 3. Support Reactions & Equilibrium Check
             st.markdown("### 📍 Support Reactions & Checks")
+            
             if R:
-                # 3.1 Reactions Table (แปลง N -> kN)
-                reaction_data = [{"Node": int(str(k).replace('R', '')), "Reaction (kN)": v/1000.0} for k, v in R.items()]
-                df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
-                
                 col_r1, col_r2 = st.columns([1, 2])
-                with col_r1:
-                    st.dataframe(df_reac.style.format({"Reaction (kN)": "{:.2f}"}), use_container_width=True, hide_index=True)
                 
-                with col_r2:
-                    # 3.2 Equilibrium Check (Important!)
+                # --- 3.1 Reactions Table ---
+                with col_r1:
+                    # แปลง Dictionary R เป็น DataFrame
+                    reaction_data = [{"Node": int(str(k).replace('R', '')), "Reaction (kN)": v/1000.0} for k, v in R.items()]
+                    df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
                     
-                    # A. Total Reaction (แปลงจาก N เป็น kN)
+                    # Style ตารางให้สวยงาม
+                    st.dataframe(
+                        df_reac.style.format({"Reaction (kN)": "{:.2f}"}).background_gradient(cmap="Blues", subset=["Reaction (kN)"]),
+                        use_container_width=True, 
+                        hide_index=True
+                    )
+                
+                # --- 3.2 Equilibrium Check ---
+                with col_r2:
+                    st.write("**Equilibrium Check (ΣFy = 0):**")
+                    
+                    # A. Total Reaction (Solver Result: N -> kN)
                     sum_R_kN = sum(R.values()) / 1000.0
                     
-                    # B. Total Applied Load (คำนวณใหม่ให้หน่วยตรงกัน)
-                    total_applied_kN = 0
-                    for _, l in calc_loads_df.iterrows():
-                        # สมมติ input ในตารางเป็น kN อยู่แล้ว ไม่ต้องหาร 1000 อีก
-                        # หรือถ้าจะให้ชัวร์คือ (kN * 1000 -> N) แล้วค่อย / 1000 กลับมา
-                        if l['type'] == 'P': 
-                            total_applied_kN += l['mag'] # บวกค่าตรงๆ (ถ้า input คือ kN)
-                        else: 
-                            total_applied_kN += (l['mag'] * l['dist']) # w * L (ถ้า input คือ kN/m)
-                    
-                    # แสดงผล
-                    
-                    st.write(f"**Equilibrium Check (ΣFy = 0):**")
-                    
-                    # เช็คผลต่าง
+                    # B. Total Applied Load (Input: kN)
+                    total_applied_kN = 0.0
+                    if 'calc_loads_df' in locals() and not calc_loads_df.empty:
+                        for _, l in calc_loads_df.iterrows():
+                            # ตรวจสอบประเภท Load เพื่อคำนวณ Total Load ให้ถูก
+                            if l['type'] == 'P': 
+                                total_applied_kN += l['mag']     # Point Load (kN)
+                            elif l['type'] == 'w':
+                                # Distributed Load (kN/m) * Distance (m)
+                                # เช็คว่าใน df มี column 'span' หรือ 'dist' ที่เก็บความยาว load หรือไม่
+                                dist = l.get('dist', 0) or l.get('span', 0) 
+                                total_applied_kN += (l['mag'] * dist)
+
+                    # C. Compare
                     diff = abs(sum_R_kN - total_applied_kN)
-                    
-                    if diff < 0.1: # ยอมรับความคลาดเคลื่อนได้เล็กน้อย
-                        st.success(f"✅ Balanced: Total Reactions ({sum_R_kN:.2f} kN) ≈ Total Loads ({total_applied_kN:.2f} kN)")
+                    is_balanced = diff < 0.1 # ยอมรับ Error ได้ < 0.1 kN (~10 kg)
+
+                    # Display Result Card
+                    if is_balanced:
+                        st.success(f"✅ **Balanced** | Diff: {diff:.4f} kN")
                     else:
-                        st.error(f"⚠️ Unbalanced Forces!")
-                        st.write(f"Reactions: {sum_R_kN:.2f} kN | Loads: {total_applied_kN:.2f} kN")
-                        st.caption("Tip: เช็คหน่วยของ Load Input ว่าเป็น kN หรือ N")
+                        st.error(f"⚠️ **Unbalanced** | Diff: {diff:.4f} kN")
+
+                    # Detail Breakdown
+                    c1, c2 = st.columns(2)
+                    c1.metric("Total Reactions (Up)", f"{sum_R_kN:.2f} kN")
+                    c2.metric("Total Loads (Down)", f"{total_applied_kN:.2f} kN")
 
             # 4. Export Data Button
             if not res_df_display.empty:
+                st.markdown("---")
                 csv = res_df_display.to_csv(index=False).encode('utf-8')
                 st.download_button(
                     label="📥 Download Analysis Results (CSV)",
                     data=csv,
-                    file_name=f'Analysis_Results_{project_name}.csv',
+                    file_name=f'Analysis_Results.csv',
                     mime='text/csv',
+                    type='primary' # ทำให้ปุ่มเด่นขึ้น
                 )
-
         # ================= TAB 2: INTERACTIVE DESIGN =================
         with tab2:
             st.header(f"🏗️ Interactive RC Design ({tag})")
@@ -513,6 +539,7 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)  
+
 
 
 
