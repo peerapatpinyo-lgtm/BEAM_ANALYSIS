@@ -93,11 +93,16 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     
     # 2. Supports
     for _, row in sup_df.iterrows():
-        sx = row['position']
+        # --- 🔴 แก้ไขจุดที่ Error ตรงนี้ครับ (เปลี่ยนจาก row['position'] เป็น row['x']) ---
+        sx = row['x'] 
+        
         # Draw triangle support
         triangle = patches.Polygon([[sx-0.2, -100], [sx+0.2, -100], [sx, 0]], closed=True, edgecolor='black', facecolor='grey')
         ax.add_patch(triangle)
-        ax.text(sx, -150, row['support_id'], ha='center', fontsize=10, fontweight='bold')
+        
+        # Check if 'support_id' exists, if not use index or generic name
+        s_id = row.get('support_id', 'Sup')
+        ax.text(sx, -150, str(s_id), ha='center', fontsize=10, fontweight='bold')
 
     # 3. Reinforcement Visualization (Simplified)
     offsets = [0] + list(np.cumsum(spans))
@@ -110,12 +115,10 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
         res = design_res[i]
         
         # Bottom Bar (Blue) - Span center
-        # Assuming bottom bar runs full span minus cover (simplified)
         ax.plot([start + 0.2, end - 0.2], [50, 50], color='#1f77b4', linewidth=3)
         ax.text(start + length/2, 80, f"{res['pos']['n']}-DB{res['bot_db']}", ha='center', color='#1f77b4', fontsize=9)
         
         # Top Bar (Red) - Supports
-        # Only drawing conceptual top bars at supports/continuous
         ax.plot([start, end], [h_mm-50, h_mm-50], color='#d62728', linewidth=3)
         ax.text(start + length/2, h_mm-90, f"{res['neg']['n']}-DB{res['top_db']}", ha='center', color='#d62728', fontsize=9)
         
@@ -125,7 +128,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     # Decoration
     ax.set_xlim(-1, total_length + 1)
     ax.set_ylim(-200, h_mm + 100)
-    ax.set_aspect('equal', adjustable='box') # Keep aspect ratio but allow width to fit
+    ax.set_aspect('equal', adjustable='box') 
     ax.axis('off')
     ax.set_title("Longitudinal Section (Reinforcement Layout)", fontsize=12, fontweight='bold')
     
