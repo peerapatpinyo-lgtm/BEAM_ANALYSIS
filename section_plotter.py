@@ -95,7 +95,9 @@ def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_te
     ax.plot([-100, -100], [0, h], color='black', lw=0.8)
     ax.plot([-80, -120], [0, 0], color='black', lw=0.8)
     ax.plot([-80, -120], [h, h], color='black', lw=0.8)
-    ax.text([-150], h/2, f"{int(h)} mm", ha='right', va='center', rotation=90, fontsize=GLOBAL_FONT)
+    
+    # --- 🟢 จุดที่แก้ (เอาวงเล็บ [] ออกจาก -150) ---
+    ax.text(-150, h/2, f"{int(h)} mm", ha='right', va='center', rotation=90, fontsize=GLOBAL_FONT)
     
     # Material Box
     mat_text = f"fc' = {fc} MPa\nfy = {fy} MPa"
