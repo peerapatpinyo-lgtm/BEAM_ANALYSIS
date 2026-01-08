@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -392,6 +393,8 @@ else:
                     final_design_res.append({
                         'span_id': i,
                         'L': s_len,
+                        'b': params['b'], 'h': params['h'],
+                        'fc': fc, 'fy': fy,
                         # Ultimate Loads
                         'Mu_pos': mu_pos,
                         'Mu_neg': mu_neg,
@@ -401,10 +404,16 @@ else:
                         'top_db': top_db, 'bot_db': bot_db, 'stir_db': stir_db,
                         'pos': {'n': bot_n, 'area': as_prov_bot, 'status': pass_b},
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': pass_t},
-                        'shear': {'s': stir_s, 'status': status_v},
+                        'shear': {'s': stir_s, 'db': stir_db, 'status': status_v}, # Fixed: Added db here
                         # Service Loads (For Report Deflection Check)
                         'Ma_pos_svc': ma_pos_svc,
-                        'delta_svc_mm': delta_svc_mm
+                        'delta_svc_mm': delta_svc_mm,
+                        # Detailed Objects
+                        'bot': {'n': bot_n, 'db': bot_db},
+                        'top': {'n': top_n, 'db': top_db},
+                        'Vu': vu_max, # Alias for reporter convenience
+                        'Ma_pos': ma_pos_svc, # Alias
+                        'delta_svc': delta_svc_mm # Alias
                     })
 
             # --- SUMMARY & REPORT BUTTONS ---
@@ -441,23 +450,10 @@ else:
             else:
                 for i, res in enumerate(final_design_res):
                     with st.expander(f"📘 Calculation Sheet: Span {i+1}", expanded=False):
-                        # Call Reporter with BOTH Ultimate and Service Data
-                        reporter.render_calculation_report(
-                            span_idx=i,
-                            span_len=res['L'],
-                            b=params['b'],
-                            h=params['h'],
-                            fc=params['fc'],
-                            fy=params['fy'],
-                            Mu_pos=res['Mu_pos'],
-                            Mu_neg=res['Mu_neg'],
-                            Vu=res['Vu_max'],
-                            res_data=res,
-                            # Service Results passed here
-                            Ma_pos=res['Ma_pos_svc'],
-                            delta_analysis_mm=res['delta_svc_mm']
-                        )
+                        # Call Reporter with the unified results dictionary
+                        reporter.render_calculation_report(res)
 
     except Exception as e:
         st.error(f"❌ Application Error: {e}")
-        st.exception(e)
+        import traceback
+        st.code(traceback.format_exc())
