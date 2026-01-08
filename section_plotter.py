@@ -3,29 +3,24 @@ import matplotlib.patches as patches
 import numpy as np
 
 # --- 📏 Configuration ---
-DPI_VALUE = 300     # ความคมชัดสูงป้องกันภาพแตก
+DPI_VALUE = 300     
+GLOBAL_FONT = 7.5
 
 def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, fc, fy):
-    """ Cross Section: แก้ไขให้รูปใหญ่ขึ้น ตัวหนังสือ 7.5 เท่าเดิม """
-    # ⬇️ ปรับลดสเกลลงเพื่อให้รูปหน้าตัดขยายใหญ่ขึ้นในหน้าจอ (เดิมอาจจะเป็น 800-900)
+    """ Cross Section: รูปใหญ่ ตัวหนังสือ 7.5 """
     SECTION_SCALE = 500  
-    
     b, h = b_m * 1000, h_m * 1000
     cover, ds, db = cover_mm, 6, db_main_mm
     
-    # Viewport รอบหน้าตัด
     view_left, view_right = -300, b + 700
     view_bottom, view_top = -400, h + 400
     
-    # คำนวณขนาดนิ้ว (Inches) ให้ใหญ่ขึ้นตาม SECTION_SCALE
     width_inches = (view_right - view_left) / SECTION_SCALE 
     height_inches = (view_top - view_bottom) / SECTION_SCALE
     
     fig, ax = plt.subplots(figsize=(width_inches, height_inches), dpi=DPI_VALUE)
     
-    # วาดหน้าตัดคอนกรีต
     ax.add_patch(patches.Rectangle((0, 0), b, h, linewidth=1.2, edgecolor='#000000', facecolor='#ffffff'))
-    # วาดเหล็กปลอก
     ax.add_patch(patches.Rectangle((cover, cover), b-2*cover, h-2*cover, linewidth=0.7, edgecolor='#2c3e50', facecolor='none', ls='--'))
     
     def draw_bars(n, y_pos, color):
@@ -39,19 +34,16 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     draw_bars(n_bottom, y_bot, '#a93226')
     draw_bars(n_top, y_top, '#1f618d')
     
-    # 📝 ตัวหนังสือขนาด 7.5 (ล็อคค่าคงที่)
-    f_size = 7.5
-    ax.text(b + 50, y_top, f"{int(n_top)}-DB{int(db)}", va='center', color='#1f618d', fontweight='bold', fontsize=f_size)
-    ax.text(b + 50, y_bot, f"{int(n_bottom)}-DB{int(db)}", va='center', color='#a93226', fontweight='bold', fontsize=f_size)
-    ax.text(b/2, h + 100, f"{stirrup_name}", ha='center', color='#1d8348', fontweight='bold', fontsize=f_size)
+    ax.text(b + 50, y_top, f"{int(n_top)}-DB{int(db)}", va='center', color='#1f618d', fontweight='bold', fontsize=GLOBAL_FONT)
+    ax.text(b + 50, y_bot, f"{int(n_bottom)}-DB{int(db)}", va='center', color='#a93226', fontweight='bold', fontsize=GLOBAL_FONT)
+    ax.text(b/2, h + 120, f"{stirrup_name}", ha='center', color='#1d8348', fontweight='bold', fontsize=GLOBAL_FONT)
 
-    # Dimension Lines
     def draw_tick_dim(p1, p2, text, vert=False):
         ax.plot([p1[0], p2[0]], [p1[1], p2[1]], color='#000000', lw=0.5)
         tick = 15
         for p in [p1, p2]: ax.plot([p[0]-tick, p[0]+tick], [p[1]-tick, p[1]+tick], color='#000000', lw=0.8)
-        if vert: ax.text(p1[0]-60, (p1[1]+p2[1])/2, text, va='center', ha='right', rotation=90, fontsize=f_size-0.5)
-        else: ax.text((p1[0]+p2[0])/2, p1[1]-60, text, ha='center', va='top', fontsize=f_size-0.5)
+        if vert: ax.text(p1[0]-60, (p1[1]+p2[1])/2, text, va='center', ha='right', rotation=90, fontsize=GLOBAL_FONT-0.5)
+        else: ax.text((p1[0]+p2[0])/2, p1[1]-60, text, ha='center', va='top', fontsize=GLOBAL_FONT-0.5)
 
     draw_tick_dim([0, -120], [b, -120], f"{int(b)}")
     draw_tick_dim([-120, 0], [-120, h], f"{int(h)}", vert=True)
@@ -63,39 +55,54 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """ Longitudinal Section: ใช้สเกลปกติเพื่อให้เห็นภาพรวมยาวๆ """
-    LONG_SCALE = 850
+    """ Longitudinal Section: แก้ไข Support หาย และตัวหนังสือทับคาน """
+    LONG_SCALE = 800
     h_beam = h_m * 1000 
     total_L = sum(spans) * 1000
     offsets = [0] + list(np.cumsum(spans) * 1000)
     
-    width_inches = (total_L + 1500) / LONG_SCALE
-    height_inches = 2500 / LONG_SCALE 
+    # ขยายความสูงภาพ (height_inches) เพื่อให้มีพื้นที่วาด Support ด้านล่าง
+    width_inches = (total_L + 1600) / LONG_SCALE
+    height_inches = 4000 / LONG_SCALE 
     
     fig, ax = plt.subplots(figsize=(width_inches, height_inches), dpi=DPI_VALUE)
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=1.2, edgecolor='#000000', facecolor='#ffffff'))
     
-    f_size = 7.5
+    # 1. วาดตัวคาน
+    ax.add_patch(patches.Rectangle((0, 0), total_L, h_beam, linewidth=1.2, edgecolor='#000000', facecolor='#ffffff', zorder=1))
+    
+    # 2. วาด Support (สามเหลี่ยม)
+    for _, row in sup_df.iterrows():
+        x_sup = row['x'] * 1000
+        # วาดสามเหลี่ยมใต้คาน
+        poly = plt.Polygon([[x_sup-100, -250], [x_sup+100, -250], [x_sup, 0]], facecolor='#5d6d7e', edgecolor='black', lw=0.8, zorder=2)
+        ax.add_patch(poly)
+    
+    # 3. วาดเหล็กและข้อความ
     for i, span_l_m in enumerate(spans):
         L_mm, x_s, x_e = span_l_m * 1000, offsets[i], offsets[i+1]
         res = design_res[i]
         mid_x = (x_s + x_e) / 2
         
-        # เหล็กล่าง
-        ax.plot([x_s+40, x_e-40], [cover_mm, cover_mm], color='#a93226', lw=1.5)
-        ax.text(mid_x, cover_mm + 40, f"{int(res['pos']['n'])}-DB{int(res['db'])}", ha='center', color='#a93226', fontsize=f_size, fontweight='bold')
+        # --- เหล็กล่าง (ขยับ Text ลงมาด้านล่างเส้นเหล็ก) ---
+        y_rebar_bot = cover_mm
+        ax.plot([x_s+50, x_e-50], [y_rebar_bot, y_rebar_bot], color='#a93226', lw=1.5, zorder=3)
+        ax.text(mid_x, y_rebar_bot - 120, f"{int(res['pos']['n'])}-DB{int(res['db'])}", 
+                ha='center', va='top', color='#a93226', fontsize=GLOBAL_FONT, fontweight='bold')
         
-        # เหล็กบน
-        y_top = h_beam - cover_mm
-        ax.plot([x_s, x_s + L_mm*0.3], [y_top, y_top], color='#1f618d', lw=1.5)
-        ax.plot([x_e - L_mm*0.3, x_e], [y_top, y_top], color='#1f618d', lw=1.5)
-        ax.text(x_s + 60, y_top + 40, f"{int(res['neg']['n'])}-DB{int(res['db'])}", ha='left', color='#1f618d', fontsize=f_size, fontweight='bold')
+        # --- เหล็กบน (ขยับ Text ขึ้นไปด้านบนเส้นเหล็ก) ---
+        y_rebar_top = h_beam - cover_mm
+        ax.plot([x_s, x_s + L_mm*0.3], [y_rebar_top, y_rebar_top], color='#1f618d', lw=1.5, zorder=3)
+        ax.plot([x_e - L_mm*0.3, x_e], [y_rebar_top, y_rebar_top], color='#1f618d', lw=1.5, zorder=3)
+        ax.text(mid_x, y_rebar_top + 120, f"{int(res['neg']['n'])}-DB{int(res['db'])}", 
+                ha='center', va='bottom', color='#1f618d', fontsize=GLOBAL_FONT, fontweight='bold')
         
-        # เหล็กปลอก
-        ax.text(mid_x, h_beam + 120, f"RB6@{int(res['shear']['s'])}", ha='center', color='#1d8348', fontsize=f_size, fontweight='bold')
+        # --- ข้อความเหล็กปลอก (อยู่เหนือคาน) ---
+        ax.text(mid_x, h_beam + 250, f"RB6@{int(res['shear']['s'])}", 
+                ha='center', va='bottom', color='#1d8348', fontsize=GLOBAL_FONT, fontweight='bold')
 
+    # ปรับ Viewport ให้เห็น Support (ylim ด้านล่างต้องติดลบพอสมควร)
     ax.set_xlim(-800, total_L + 800)
-    ax.set_ylim(-1200, 1200)
+    ax.set_ylim(-1500, h_beam + 1500) 
     ax.set_aspect('equal')
     ax.axis('off')
     return fig
