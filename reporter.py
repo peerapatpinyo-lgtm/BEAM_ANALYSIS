@@ -52,7 +52,8 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
         d_bot = h_mm - cover - stir_db - (bot_db/2)
         st.markdown(f"**2.1 Effective Depth ($d$):**")
         st.latex(r"d = h - c_c - d_{stirrup} - \frac{d_b}{2}")
-        st.latex(f"d = {h_mm:.0f} - {cover} - {stir_db} - {bot_db/2:.1f} = \\mathbf{{{d_bot:.1f}}} \\text{ mm}")
+        # Fix: use {{ }} for LaTeX units inside f-string
+        st.latex(f"d = {h_mm:.0f} - {cover} - {stir_db} - {bot_db/2:.1f} = \\mathbf{{{d_bot:.1f}}} \\text{{ mm}}")
 
         # 2.2 Required Reinforcement
         st.markdown(f"**2.2 Design Moment & Reinforcement:**")
@@ -61,14 +62,14 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
         # Calculate As provided
         As_prov = bot_n * (np.pi * (bot_db/2)**2)
         st.write(f"Provide: **{bot_n}-DB{bot_db}**")
-        st.latex(f"A_{{s,prov}} = {bot_n} \\times \\pi \\times ({bot_db}/2)^2 = \\mathbf{{{As_prov:.0f}}} \\text{ mm}^2")
+        st.latex(f"A_{{s,prov}} = {bot_n} \\times \\pi \\times ({bot_db}/2)^2 = \\mathbf{{{As_prov:.0f}}} \\text{{ mm}}^2")
 
         # 2.3 Calculate Capacity (Phi Mn)
         st.markdown(f"**2.3 Moment Capacity Check ($\phi M_n$):**")
         
         # a = As*fy / (0.85*fc*b)
         a = (As_prov * fy) / (0.85 * fc * b_mm)
-        st.latex(r"a = \frac{A_s f_y}{0.85 f_c' b} = " + f"\\frac{{{As_prov:.0f} \\cdot {fy}}}{{0.85 \\cdot {fc} \\cdot {b_mm:.0f}}} = {a:.2f} \\text{ mm}")
+        st.latex(r"a = \frac{A_s f_y}{0.85 f_c' b} = " + f"\\frac{{{As_prov:.0f} \\cdot {fy}}}{{0.85 \\cdot {fc} \\cdot {b_mm:.0f}}} = {a:.2f} \\text{{ mm}}")
         
         # c = a / beta1
         c = a / beta1
@@ -90,7 +91,7 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
         
         st.latex(r"\phi M_n = \phi A_s f_y (d - \frac{a}{2})")
         st.latex(f"\\phi M_n = {phi} \\cdot {As_prov:.0f} \\cdot {fy} \\cdot ({d_bot:.1f} - {a:.2f}/2) \\cdot 10^{{-6}}")
-        st.latex(f"\\phi M_n = \\mathbf{{{phiMn:.2f}}} \\text{ kNm}")
+        st.latex(f"\\phi M_n = \\mathbf{{{phiMn:.2f}}} \\text{{ kNm}}")
         
         if phiMn >= mu:
             st.success(f"✅ PASS: Capacity ({phiMn:.2f} kNm) > Demand ({mu:.2f} kNm)")
@@ -104,7 +105,7 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
         as_min = max(as_min1, as_min2)
         
         st.latex(r"A_{s,min} = \max \left( \frac{0.25\sqrt{f_c'}}{f_y} b_w d, \frac{1.4}{f_y} b_w d \right)")
-        st.latex(f"A_{{s,min}} = \\max({as_min1:.0f}, {as_min2:.0f}) = \\mathbf{{{as_min:.0f}}} \\text{ mm}^2")
+        st.latex(f"A_{{s,min}} = \\max({as_min1:.0f}, {as_min2:.0f}) = \\mathbf{{{as_min:.0f}}} \\text{{ mm}}^2")
         
         if As_prov >= as_min:
             st.caption(f"✅ OK: Provided {As_prov:.0f} > Min {as_min:.0f}")
@@ -126,7 +127,7 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
         
         # 3.1 Effective Depth
         d_top = h_mm - cover - stir_db - (top_db/2)
-        st.latex(f"d = {h_mm:.0f} - {cover} - {stir_db} - {top_db/2:.1f} = \\mathbf{{{d_top:.1f}}} \\text{ mm}")
+        st.latex(f"d = {h_mm:.0f} - {cover} - {stir_db} - {top_db/2:.1f} = \\mathbf{{{d_top:.1f}}} \\text{{ mm}}")
 
         # 3.2 Capacity
         As_prov_top = top_n * (np.pi * (top_db/2)**2)
@@ -134,11 +135,11 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
         st.write(f"Provide: **{top_n}-DB{top_db}** ($A_s = {As_prov_top:.0f}$ mm²)")
         
         a_top = (As_prov_top * fy) / (0.85 * fc * b_mm)
-        phi_top = 0.9 # Simplify check for report, but ideally check strain again
+        phi_top = 0.9 # Simplify check for report
         Mn_top = As_prov_top * fy * (d_top - a_top/2) * 1e-6
         phiMn_top = phi_top * Mn_top
         
-        st.latex(f"a = {a_top:.2f} \\text{ mm} \\quad \\to \\quad \\phi M_n = \\mathbf{{{phiMn_top:.2f}}} \\text{ kNm}")
+        st.latex(f"a = {a_top:.2f} \\text{{ mm}} \\quad \\to \\quad \\phi M_n = \\mathbf{{{phiMn_top:.2f}}} \\text{{ kNm}}")
         
         if phiMn_top >= mu_n:
             st.success(f"✅ PASS: Capacity ({phiMn_top:.2f}) > Demand ({mu_n:.2f})")
@@ -156,17 +157,15 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     st.write(f"Factored Shear Force ($V_u$): **{vu:.2f}** kN")
     
     # 4.1 Concrete Capacity (Vc)
-    # ACI Simplified: Vc = 0.17 * sqrt(fc) * b * d
-    # Use d from positive moment region as conservative or average
     d_shear = d_bot 
     Vc = 0.17 * np.sqrt(fc) * b_mm * d_shear / 1000.0 # kN
-    phi_v = 0.85 # Using 0.85 (common in older ACI/Thai) or 0.75 (New ACI). Matching App logic.
+    phi_v = 0.85 
     phiVc = phi_v * Vc
     
     st.markdown("**4.1 Concrete Shear Capacity ($\phi V_c$)**")
     st.latex(r"V_c = 0.17 \sqrt{f_c'} b_w d")
-    st.latex(f"V_c = 0.17 \\sqrt{{{fc}}} \\cdot {b_mm:.0f} \\cdot {d_shear:.1f} / 1000 = {Vc:.2f} \\text{ kN}")
-    st.latex(f"\\phi V_c = {phi_v} \\times {Vc:.2f} = \\mathbf{{{phiVc:.2f}}} \\text{ kN}")
+    st.latex(f"V_c = 0.17 \\sqrt{{{fc}}} \\cdot {b_mm:.0f} \\cdot {d_shear:.1f} / 1000 = {Vc:.2f} \\text{{ kN}}")
+    st.latex(f"\\phi V_c = {phi_v} \\times {Vc:.2f} = \\mathbf{{{phiVc:.2f}}} \\text{{ kN}}")
     
     # 4.2 Shear Reinforcement Check
     st.markdown("**4.2 Stirrup Requirement**")
@@ -182,27 +181,24 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
         st.write("👉 Shear reinforcement **REQUIRED**.")
         
         # Calculate Vs required
-        # Vu <= phi(Vc + Vs)  -> Vs >= Vu/phi - Vc
         Vs_req = (vu / phi_v) - Vc
         st.latex(r"V_s = \frac{V_u}{\phi} - V_c")
-        st.latex(f"V_s = \\frac{{{vu:.2f}}}{{{phi_v}}} - {Vc:.2f} = \\mathbf{{{Vs_req:.2f}}} \\text{ kN}")
+        st.latex(f"V_s = \\frac{{{vu:.2f}}}{{{phi_v}}} - {Vc:.2f} = \\mathbf{{{Vs_req:.2f}}} \\text{{ kN}}")
         
-        # Check Section Size limit (Vs <= 4*Vc is roughly sqrt(fc)/3 limit check, simplified here)
-        # Max Vs allowed = 0.66 sqrt(fc) b d ~ 4 * Vc_simplified
         if Vs_req > 4 * Vc:
             st.error("❌ DANGER: $V_s$ too high! Section dimensions too small. Increase Depth (h).")
 
     # 4.3 Provided Stirrups
     st.markdown(f"**4.3 Provided Stirrups: RB{stir_db_shear} @ {stir_s} mm**")
     Av = 2 * (np.pi * (stir_db_shear/2)**2) # 2 legs
-    st.latex(f"A_v = 2 \\times \\pi \\times ({stir_db_shear}/2)^2 = {Av:.1f} \\text{ mm}^2")
+    st.latex(f"A_v = 2 \\times \\pi \\times ({stir_db_shear}/2)^2 = {Av:.1f} \\text{{ mm}}^2")
     
     # Vs provided
     Vs_prov = (Av * fy * d_shear) / stir_s / 1000.0
     phiVn = phiVc + (phi_v * Vs_prov)
     
     st.latex(r"V_{s,prov} = \frac{A_v f_y d}{s}")
-    st.latex(f"V_{{s,prov}} = \\frac{{{Av:.1f} \\cdot {fy} \\cdot {d_shear:.1f}}}{{{stir_s}}} \\cdot 10^{{-3}} = {Vs_prov:.2f} \\text{ kN}")
+    st.latex(f"V_{{s,prov}} = \\frac{{{Av:.1f} \\cdot {fy} \\cdot {d_shear:.1f}}}{{{stir_s}}} \\cdot 10^{{-3}} = {Vs_prov:.2f} \\text{{ kN}}")
     
     st.write(f"Total Capacity $\phi V_n = {phiVc:.2f} + {phi_v*Vs_prov:.2f} = \\mathbf{{{phiVn:.2f}}}$ **kN**")
     
@@ -214,13 +210,12 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     # 4.4 Maximum Spacing Check (ACI)
     st.markdown("**4.4 Maximum Spacing Check ($s_{max}$)**")
     
-    # Standard max spacing
     s_max_1 = d_shear / 2
     s_max_2 = 600
     s_max = min(s_max_1, s_max_2)
     
     st.latex(r"s_{max} = \min(d/2, 600 \text{ mm})")
-    st.latex(f"s_{{max}} = \\min({s_max_1:.1f}, 600) = \\mathbf{{{s_max:.0f}}} \\text{ mm}")
+    st.latex(f"s_{{max}} = \\min({s_max_1:.1f}, 600) = \\mathbf{{{s_max:.0f}}} \\text{{ mm}}")
     
     if stir_s <= s_max:
          st.caption(f"✅ Spacing {stir_s} mm <= Max {s_max:.0f} mm")
