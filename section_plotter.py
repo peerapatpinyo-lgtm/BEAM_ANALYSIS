@@ -76,7 +76,10 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     ax.plot([-100, -100], [0, h], color='black', lw=0.8)
     ax.plot([-80, -120], [0, 0], color='black', lw=0.8)
     ax.plot([-80, -120], [h, h], color='black', lw=0.8)
-    ax.text([-180], h/2, f"{int(h)} mm", ha='right', va='center', rotation=90, fontsize=GLOBAL_FONT)
+    
+    # --- จุดที่แก้ไข (Fixed Line) ---
+    # เปลี่ยน [-180] เป็น -180 เพื่อให้เป็น Scalar
+    ax.text(-180, h/2, f"{int(h)} mm", ha='right', va='center', rotation=90, fontsize=GLOBAL_FONT)
 
     # Title
     ax.text(b/2, view_top - 100, title, ha='center', fontweight='bold', fontsize=GLOBAL_FONT+2)
