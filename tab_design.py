@@ -1,121 +1,128 @@
-# tab_design.py
 import streamlit as st
-import numpy as np
 import pandas as pd
-import calcs
-import section_plotter # สมมติว่ามีไฟล์วาดรูปตัด
+import numpy as np
 
-def render(n_spans, spans, params, x_ult, M_ult, V_ult, x_svc, M_svc, D_svc, is_service):
-    st.header(f"🏗️ Interactive RC Design")
-    if is_service: 
-        st.warning("⚠️ Warning: Viewing Service Loads, but Design logic uses Ultimate Loads.")
-
-    # ดึงค่าคงที่และแปลงหน่วย
-    b_mm, h_mm = calcs.normalize_section_units(params['b'], params['h'])
-    fc, fy = params['fc'], params['fy']
+def calculate_as_req(Mu, b, d, fc, fy):
+    """
+    ฟังก์ชันคำนวณหน้าตัดเหล็กเสริมรับโมเมนต์ดัด (USD Method)
+    Mu: kNm
+    b, d: cm
+    fc, fy: ksc
+    Return: As_req (cm^2)
+    """
+    if Mu == 0:
+        return 0.0
     
-    final_design_res = [] # ตัวแปรที่จะเก็บผลลัพธ์ส่งกลับ
-    offsets = [0] + list(np.cumsum(spans))
+    # แปลงหน่วย
+    Mu_kgcm = Mu * 1000 * 100 # kNm -> kg.cm
+    phi = 0.9
+    
+    # คำนวณ Rn
+    Rn = Mu_kgcm / (phi * b * d**2)
+    
+    # อัตราส่วนเหล็กเสริม (rho)
+    m = fy / (0.85 * fc)
+    try:
+        rho = (1/m) * (1 - np.sqrt(1 - (2 * m * Rn / fy)))
+    except ValueError:
+        return 999.99 # Section too small (Error)
+
+    As = rho * b * d
+    
+    # เหล็กขั้นต่ำ (As min) ตาม ACI/EIT
+    as_min1 = (14 / fy) * b * d
+    as_min2 = (0.8 * np.sqrt(fc) / fy) * b * d
+    as_min = max(as_min1, as_min2)
+    
+    return max(As, as_min)
+
+def render(n_spans, spans, params, x_ult, M_ult, V_ult, x_svc, M_svc, D_svc, is_service, sup_df):
+    """
+    ฟังก์ชันหลักสำหรับแสดงผล Tab Design
+    รับ sup_df เข้ามาเพื่อแก้ปัญหา TypeError
+    """
+    st.header("2. Concrete Beam Design (USD)")
+
+    # --- 1. ดึงค่าพารามิเตอร์ ---
+    # ใช้ .get() เพื่อป้องกัน Error ถ้า key ไม่มี
+    fc = params.get('fc', 240)
+    fy = params.get('fy', 4000)
+    b = params.get('b', 25)
+    h = params.get('h', 50)
+    cover = params.get('cover', 4.0) # Covering to centroid
+    d = h - cover
+    
+    # แสดงค่า Design Parameters
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("f'c (ksc)", f"{fc}")
+    c2.metric("fy (ksc)", f"{fy}")
+    c3.metric("Size b x h (cm)", f"{b} x {h}")
+    c4.metric("d (cm)", f"{d}")
+
+    # --- 2. วนลูปคำนวณแต่ละช่วงคาน (Span) ---
+    design_data = []
+    
+    current_x = 0.0
     
     for i in range(n_spans):
-        s_len = spans[i]
-        s_start, s_end = offsets[i], offsets[i+1]
+        span_length = spans[i]
+        end_x = current_x + span_length
         
-        # กรองหาค่า Max ในแต่ละช่วงคาน (Span)
-        mask_ult = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
-        if any(mask_ult):
-            mu_pos = max(0.0, (M_ult[mask_ult] / 1000.0).max())
-            mu_neg = abs(min(0.0, (M_ult[mask_ult] / 1000.0).min()))
-            vu_max = abs((V_ult[mask_ult] / 1000.0)).max()
-        else: mu_pos, mu_neg, vu_max = 0, 0, 0
+        # กรองข้อมูลเฉพาะ Span นี้ (โดยใช้ index array เทียบกับ x)
+        # หมายเหตุ: x_ult อาจมีจุดทศนิยม ต้องกรองช่วง [current_x, end_x]
+        mask = (x_ult >= current_x) & (x_ult <= end_x)
         
-        # Service Load Data (สำหรับดู Deflection ประกอบ)
-        mask_svc = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
-        if any(mask_svc):
-            ma_pos_svc = max(0.0, (M_svc[mask_svc] / 1000.0).max())
-            delta_svc_mm = abs((D_svc[mask_svc] * 1000.0)).max()
-        else: ma_pos_svc, delta_svc_mm = 0, 0
+        # ตัดข้อมูล Moment และ Shear ในช่วงนี้
+        m_span = M_ult[mask]
+        v_span = V_ult[mask]
+        
+        # หาค่า Max Positive Moment (กลางช่วง) และ Max Negative (แถวหัวท้าย)
+        # Note: การหาตำแหน่ง Support ที่แม่นยำอาจซับซ้อน ในที่นี้ใช้ Min/Max ของช่วง
+        mu_pos_max = np.max(m_span) if len(m_span) > 0 else 0
+        mu_neg_max = np.min(m_span) if len(m_span) > 0 else 0 # เป็นลบ
+        vu_max = np.max(np.abs(v_span)) if len(v_span) > 0 else 0
 
-        # --- UI ส่วนเลือกเหล็ก ---
-        with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Forces: Mu+={mu_pos:.1f}, Mu-={mu_neg:.1f}", expanded=True):
-            c_const, c_cov = st.columns([3, 1])
-            with c_const: st.caption(f"Size {b_mm:.0f}x{h_mm:.0f} mm | fc'={fc} | fy={fy}")
-            with c_cov: cover_mm = st.number_input(f"Cover (mm)", 20.0, 50.0, 25.0, key=f"cov_{i}")
+        # คำนวณเหล็กเสริม (เหล็กบน และ เหล็กล่าง)
+        as_bot = calculate_as_req(max(0, mu_pos_max), b, d, fc, fy)
+        as_top = calculate_as_req(abs(mu_neg_max), b, d, fc, fy)
+        
+        # ตรวจสอบ Deflection (Service Load)
+        if is_service and len(D_svc) > 0:
+            d_span = D_svc[(x_svc >= current_x) & (x_svc <= end_x)]
+            d_max = np.max(np.abs(d_span)) if len(d_span) > 0 else 0
+            d_allow = (span_length * 100) / 240 # L/240 convert m to cm
+            d_status = "OK" if d_max <= d_allow else "Fail"
+        else:
+            d_max = 0.0
+            d_allow = (span_length * 100) / 240
+            d_status = "N/A"
 
-            d_est = h_mm - cover_mm - 20 
-
-            # 1. เหล็กล่าง (Bottom)
-            st.markdown("##### 1. Bottom Reinforcement")
-            as_req_bot, _, _ = calcs.get_as_req(mu_pos, d_est, fc, fy, b_mm)
-            
-            c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-            with c1: st.info(f"Req As: {as_req_bot:.0f}")
-            with c2: bot_db = st.selectbox("DB", [12, 16, 20, 25], index=1, key=f"bdb_{i}")
-            with c3: bot_n = st.number_input("Qty", 2, 10, 2, key=f"bn_{i}")
-            
-            d_real = h_mm - cover_mm - 9 - (bot_db / 2)
-            phi_Mn_bot, as_prov_bot, _, _, _, _ = calcs.get_phi_Mn_details(bot_n, bot_db, d_real, b_mm, fc, fy)
-            pass_b = (phi_Mn_bot >= mu_pos)
-            with c4: 
-                st.metric("Capacity", f"{phi_Mn_bot:.2f} kNm", delta="OK" if pass_b else "FAIL")
-
-            # 2. เหล็กบน (Top)
-            st.markdown("##### 2. Top Reinforcement")
-            as_req_top, _, _ = calcs.get_as_req(mu_neg, d_est, fc, fy, b_mm)
-            
-            c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-            with c1: st.info(f"Req As: {as_req_top:.0f}")
-            with c2: top_db = st.selectbox("DB", [12, 16, 20, 25], index=1, key=f"tdb_{i}")
-            with c3: top_n = st.number_input("Qty", 2, 10, 2, key=f"tn_{i}")
-            
-            d_top_real = h_mm - cover_mm - 9 - (top_db / 2)
-            phi_Mn_top, as_prov_top, _, _, _, _ = calcs.get_phi_Mn_details(top_n, top_db, d_top_real, b_mm, fc, fy)
-            pass_t = (phi_Mn_top >= mu_neg)
-            with c4:
-                st.metric("Capacity", f"{phi_Mn_top:.2f} kNm", delta="OK" if pass_t else "FAIL")
-
-            # 3. เหล็กปลอก (Shear)
-            st.markdown("##### 3. Shear Stirrup")
-            c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-            with c1: st.markdown(f"Vu: **{vu_max:.1f}** kN")
-            with c2: stir_db = st.selectbox("RB", [6, 9], index=0, key=f"sdb_{i}")
-            with c3: stir_s = st.number_input("@Spacing", 50, 300, 150, 10, key=f"ss_{i}")
-            
-            status_v, phi_Vn, _, _, _, _ = calcs.check_shear_details(vu_max, b_mm, d_real, fc, fy, stir_db, stir_s)
-            with c4: st.write(f"Status: **{status_v}**")
-
-            # เก็บข้อมูลเข้า List
-           
-# tab_design.py
-
-# ... (โค้ดส่วนบนเหมือนเดิม) ...
-
-        # เก็บข้อมูลเข้า List
-        final_design_res.append({
-            'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
-            'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max,
-            'cover': cover_mm, 
-            
-            # --- ส่วนที่ต้องเพิ่ม (Update) ---
-            'Ma_pos_svc': ma_pos_svc,      # <--- เพิ่มบรรทัดนี้
-            'delta_svc_mm': delta_svc_mm,  # <--- เพิ่มบรรทัดนี้
-            # ---------------------------
-            
-            'pos': {'n': bot_n, 'db': bot_db, 'status': pass_b},
-            'neg': {'n': top_n, 'db': top_db, 'status': pass_t},
-            'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
-            
-            # เผื่อไว้: หาก reporter.py ของคุณต้องการ key ชื่อ 'bot' หรือ 'top' แยกต่างหาก (ตามเวอร์ชั่นแรก)
-            'bot': {'n': bot_n, 'db': bot_db}, 
-            'top': {'n': top_n, 'db': top_db},
+        # เก็บข้อมูลลง List
+        design_data.append({
+            "Span No.": i + 1,
+            "Length (m)": span_length,
+            "Mu+ (kNm)": round(mu_pos_max, 2),
+            "As Bot (cm2)": round(as_bot, 2),
+            "Mu- (kNm)": round(mu_neg_max, 2),
+            "As Top (cm2)": round(as_top, 2),
+            "Vu Max (kN)": round(vu_max, 2),
+            "Deflect (cm)": round(d_max * 100, 3), # แปลง m เป็น cm
+            "Allow (cm)": round(d_allow, 3),
+            "Check": d_status
         })
+        
+        current_x += span_length
 
-    # ... (โค้ดส่วนล่างเหมือนเดิม) ...
-    # ปุ่ม Generate Drawing (Optional)
-    if st.button("Generat Section Drawing", type="primary"):
-         try:
-            fig = section_plotter.plot_longitudinal_section_detailed(spans, final_design_res, h_mm)
-            st.pyplot(fig)
-         except: st.error("Drawing module not ready")
+    # --- 3. สร้าง DataFrame ผลลัพธ์ ---
+    df_results = pd.DataFrame(design_data)
+    
+    st.subheader("Design Results Table")
+    st.dataframe(df_results, use_container_width=True)
 
-    return final_design_res
+    # --- 4. แสดงข้อมูล Support (ที่รับมาจาก sup_df) ---
+    st.subheader("Support Information")
+    st.info("Support data received for design detailing check.")
+    st.dataframe(sup_df, use_container_width=True)
+
+    # --- 5. Return ผลลัพธ์กลับไปให้ app.py (เพื่อส่งต่อให้ tab_report) ---
+    return df_results
