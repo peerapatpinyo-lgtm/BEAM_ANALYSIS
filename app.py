@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -6,6 +5,7 @@ import io
 import time
 
 # --- 1. IMPORT CUSTOM MODULES ---
+# Ensure these files exist in your directory
 import input_handler
 import solver
 import design_view
@@ -20,7 +20,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Custom CSS for better readability
 st.markdown("""
 <style>
     .main-header {font-size: 2.5rem; font-weight: bold; color: #1E3A8A; margin-bottom: 0px;}
@@ -36,9 +36,9 @@ st.markdown("""
 # --- 3. HELPER FUNCTIONS: RC DESIGN LOGIC ---
 
 def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
-    """คำนวณปริมาณเหล็กเสริมที่ต้องการ (As required) USD Concept"""
+    """Calculate Required Steel Area (As) based on USD Method"""
     if Mu_kNm == 0: return 0.0, 0.0, False
-    Mu = abs(Mu_kNm) * 1e6 # N-mm
+    Mu = abs(Mu_kNm) * 1e6 # Convert to N-mm
     phi = 0.9 
     
     m = fy / (0.85 * fc)
@@ -51,7 +51,7 @@ def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
         term = 1 - (2 * m * Rn) / fy
         if term < 0:
             rho = 0.0 
-            is_error = True # Section too small
+            is_error = True # Section too small (Compression failure)
         else:
             rho = (1/m) * (1 - np.sqrt(term))
     except:
@@ -70,12 +70,13 @@ def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     return as_req, rho, is_error
 
 def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
-    """คำนวณ Moment Capacity (Phi Mn) และ Strain"""
+    """Calculate Moment Capacity (Phi Mn) and check Strain"""
     Ast = n * (np.pi * (db/2)**2)
     if Ast == 0: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
     # Whitney Stress Block
     a = (Ast * fy) / (0.85 * fc * b)
+    # Beta1 factor
     beta1 = 0.85 if fc <= 30 else max(0.65, 0.85 - 0.05 * (fc - 30) / 7)
     c = a / beta1
     
@@ -84,26 +85,32 @@ def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
     if c > 0:
         strain_t = 0.003 * (dt - c) / c
     else:
-        strain_t = 0.005
+        strain_t = 0.005 # Infinite strain (tension)
         
-    phi = 0.9 
+    # Phi Factor
+    if strain_t >= 0.005:
+        phi = 0.9
+    elif strain_t <= 0.002:
+        phi = 0.65
+    else:
+        phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
     Mn = Ast * fy * (d_eff - a/2)
-    phi_Mn = phi * Mn / 1e6 # kNm
+    phi_Mn = phi * Mn / 1e6 # Convert to kNm
     return phi_Mn, Ast, a, Mn, c, strain_t
 
 def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
-    """คำนวณ Shear Capacity (Phi Vn)"""
-    Vu = abs(Vu_kN) * 1000 # N
+    """Calculate Shear Capacity (Phi Vn)"""
+    Vu = abs(Vu_kN) * 1000 # Convert to N
     
-    # Vc
+    # Vc (Concrete Capacity)
     Vc = 0.17 * np.sqrt(fc) * b * d
     phi = 0.85
     phi_Vc = phi * Vc
     
-    # Vs
-    Av = 2 * (np.pi * (stir_db/2)**2) 
-    if spacing <= 0: spacing = 1000 
+    # Vs (Steel Capacity)
+    Av = 2 * (np.pi * (stir_db/2)**2) # 2 legs
+    if spacing <= 0: spacing = 1000 # Prevent division by zero
     
     Vs = (Av * fy * d) / spacing
     phi_Vs = phi * Vs
@@ -113,15 +120,20 @@ def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
     return status, phi_Vn/1000, phi_Vc/1000, phi_Vs/1000, Vc, Vs
 
 def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
-    """Helper function to prepare load dataframe for solver"""
-    # 1. Self-weight
+    """
+    Helper function to prepare load dataframe for solver.
+    Scales loads by Load Factors (f_dl, f_ll).
+    """
+    # 1. Self-weight (Calculated from dimensions)
+    # Density approx 24 kN/m3
     w_sw_base_kN = params['b'] * params['h'] * 24.0      
     w_sw_factored_kN = w_sw_base_kN * f_dl
     
+    # Initialize dictionary for Total UDL per span
     span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
     combined_loads_list = []
     
-    # 2. User Loads
+    # 2. User Defined Loads from DataFrame
     if not raw_loads_df.empty:
         for _, row in raw_loads_df.iterrows():
             try:
@@ -129,9 +141,12 @@ def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
                 if s_idx >= n_spans: continue 
                 
                 l_type = row['type']
+                # Determine factor based on case
                 u_factor = f_dl if row['case'] == 'DL' else f_ll
+                
                 mag_base_kN = float(row['mag']) 
                 mag_factored_N = mag_base_kN * u_factor * 1000.0 
+                
                 dist = float(row['dist'])
                 d_start = float(row['d_start'])
                 
@@ -141,6 +156,7 @@ def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
                         'd_start': d_start, 'dist': 0.0
                     })
                 elif l_type == 'U':
+                    # If Full Span UDL, add to the base accumulator
                     if d_start <= 0.01 and dist >= (spans[s_idx] - 0.01):
                         span_total_udl_N[s_idx] += mag_factored_N
                     else:
@@ -150,7 +166,7 @@ def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
                         })
             except Exception: continue
     
-    # Add Self-weight + Full Span UDLs
+    # Add Self-weight + Full Span UDLs combined
     for i in range(n_spans):
         if span_total_udl_N[i] > 0:
             combined_loads_list.append({
@@ -173,7 +189,8 @@ with st.sidebar:
     engineer_name = st.text_input("Engineer", "Eng. Somchai")
     st.markdown("---")
     
-    # เรียก Input Handler
+    # Call Input Handler (External Module)
+    # Must return params dict, n_spans, spans list, supports df, loads df, and stability flag
     params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
@@ -195,7 +212,7 @@ else:
         if "Service" in mode_select:
             f_dl, f_ll = 1.0, 1.0
             tag = "Service"
-            st.info("ℹ️ Service Mode: Load Factors = 1.0")
+            st.info("ℹ️ Service Mode: Load Factors = 1.0 (DL+LL)")
             is_service = True
         else:
             with c1: f_dl = st.number_input("Dead Load (DL)", 1.4, 1.6, 1.4, 0.1)
@@ -203,25 +220,25 @@ else:
             tag = "Ultimate"
             is_service = False
 
- # --- 4.3 LOAD CALCULATION PROCESS & SOLVER ---
+    # --- 4.3 LOAD CALCULATION PROCESS & SOLVER ---
     try:
         with st.spinner('Running Analysis...'):
             # =================================================================
             # RUN 1: ULTIMATE LOAD ANALYSIS (For Strength Design)
             # =================================================================
+            # Factors: e.g., 1.4DL + 1.7LL
             calc_loads_ult = prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
             x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
             
             # =================================================================
             # RUN 2: SERVICE LOAD ANALYSIS (For Deflection Check)
             # =================================================================
-            # Force factors to 1.0 for Serviceability Limit State
+            # Factors: 1.0DL + 1.0LL
             calc_loads_svc = prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
             x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
-        # --- PREPARE DATA FOR DISPLAY (Based on User Selection) ---
-        # If user selected Service Mode, show Service results in graphs.
-        # If Ultimate Mode, show Ultimate results.
+        # --- PREPARE DATA FOR PLOTTING (Based on User Selection) ---
+        # The user sees the graphs corresponding to the selected mode
         if is_service:
             x_plot, M_plot, V_plot, D_plot, R_plot = x_svc, M_svc, V_svc, D_svc, R_svc
             display_loads = calc_loads_svc
@@ -229,7 +246,7 @@ else:
             x_plot, M_plot, V_plot, D_plot, R_plot = x_ult, M_ult, V_ult, D_ult, R_ult
             display_loads = calc_loads_ult
 
-        # Master DataFrame for Plotting (Current Mode)
+        # Master DataFrame for Plotting metrics
         master_df = pd.DataFrame({
             'x': x_plot,
             'M_Nmm': M_plot,
@@ -245,7 +262,7 @@ else:
         
         final_design_res = []
 
-        # ================= TAB 1: ANALYSIS =================
+        # ================= TAB 1: ANALYSIS RESULTS =================
         with tab1:
             st.subheader(f"📈 Force Diagrams ({tag} Load)")
             
@@ -259,7 +276,7 @@ else:
             if not df_for_plot.empty:
                 st.plotly_chart(design_view.plot_analysis_results(df_for_plot, spans, sup_df, display_loads, R_plot), use_container_width=True)
             
-            # Key Metrics
+            # Key Metrics Display
             v_max = master_df['V_kN'].abs().max()
             m_max = master_df['M_kNm'].max()
             m_min = master_df['M_kNm'].min()
@@ -275,18 +292,22 @@ else:
         with tab2:
             st.header(f"🏗️ Interactive RC Design")
             if is_service:
-                st.warning("⚠️ You are in Service Mode. Design should be based on Ultimate Loads.")
+                st.warning("⚠️ You are viewing Service Load graphs, but Design below uses Ultimate Loads (factored).")
             
             b_mm, h_mm = params['b'] * 1000, params['h'] * 1000
             fc, fy = params['fc'], params['fy']
+            
+            # Calculate start/end x-coordinates for each span
             offsets = [0] + list(np.cumsum(spans))
             
-            # --- SPAN LOOP ---
+            # --- SPAN LOOP (Iterate through each beam span) ---
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # 1. Get ULTIMATE Forces for Strength Design
+                # -------------------------------------------------------------
+                # 1. EXTRACT ULTIMATE FORCES (For Strength Design)
+                # -------------------------------------------------------------
                 mask_ult = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 if any(mask_ult):
                     mu_pos = max(0.0, (M_ult[mask_ult] / 1000.0).max())
@@ -295,16 +316,20 @@ else:
                 else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
                 
-                # 2. Get SERVICE Forces for Deflection Check
+                # -------------------------------------------------------------
+                # 2. EXTRACT SERVICE FORCES (For Deflection/Crack Check)
+                # -------------------------------------------------------------
                 mask_svc = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
                 if any(mask_svc):
+                    # Max Positive Moment under Service Load
                     ma_pos_svc = max(0.0, (M_svc[mask_svc] / 1000.0).max())
+                    # Max Deflection under Service Load (Elastic)
                     delta_svc_mm = abs((D_svc[mask_svc] * 1000.0)).max()
                 else:
                     ma_pos_svc, delta_svc_mm = 0, 0
 
-                # --- UI DISPLAY ---
-                with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Strength Design Forces", expanded=True):
+                # --- UI DISPLAY FOR THIS SPAN ---
+                with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Design Forces: Mu+={mu_pos:.1f}, Mu-={mu_neg:.1f}, Vu={vu_max:.1f}", expanded=True):
                     
                     c_const, c_cov = st.columns([3, 1])
                     with c_const:
@@ -314,7 +339,7 @@ else:
 
                     # 1. Bottom Steel (+Moment)
                     st.markdown("##### 1. Bottom Reinforcement (Mid-Span)")
-                    d_eff_bot_est = h_mm - cover_mm - 20
+                    d_eff_bot_est = h_mm - cover_mm - 20 # Initial estimate
                     as_req_bot, _, _ = get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
                     
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -322,7 +347,8 @@ else:
                     with c2: bot_db = st.selectbox("DB", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
                     with c3: bot_n = st.number_input("Qty", 2, 10, 2, key=f"bn_{i}")
                     
-                    d_eff_bot_real = h_mm - cover_mm - 9 - (bot_db / 2)
+                    # Exact d check
+                    d_eff_bot_real = h_mm - cover_mm - 9 - (bot_db / 2) # Assume stirrup 9mm
                     phi_Mn_bot, as_prov_bot, _, _, _, _ = get_phi_Mn_details(bot_n, bot_db, d_eff_bot_real, b_mm, fc, fy)
                     pass_b = phi_Mn_bot >= mu_pos
                     
@@ -362,24 +388,26 @@ else:
                         clr_v = "green" if status_v == "OK" else "red"
                         st.markdown(f"$\phi V_n$: :{clr_v}[**{phi_Vn:.1f}**] kN")
                     
-                    # Store results for Report
+                    # --- STORE DATA FOR REPORT ---
                     final_design_res.append({
                         'span_id': i,
                         'L': s_len,
+                        # Ultimate Loads
                         'Mu_pos': mu_pos,
                         'Mu_neg': mu_neg,
                         'Vu_max': vu_max,
+                        # Design
                         'cover': cover_mm,
                         'top_db': top_db, 'bot_db': bot_db, 'stir_db': stir_db,
                         'pos': {'n': bot_n, 'area': as_prov_bot, 'status': pass_b},
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': pass_t},
                         'shear': {'s': stir_s, 'status': status_v},
-                        # Service Load Results for Report
+                        # Service Loads (For Report Deflection Check)
                         'Ma_pos_svc': ma_pos_svc,
                         'delta_svc_mm': delta_svc_mm
                     })
 
-            # --- SUMMARY & REPORT ---
+            # --- SUMMARY & REPORT BUTTONS ---
             st.markdown("---")
             st.subheader("📋 Design Summary")
             
@@ -394,7 +422,7 @@ else:
                 })
             st.table(pd.DataFrame(summary_data))
             
-            # Drawings Button
+            # Drawings
             if st.button("🔄 Generate Drawings", type="primary"):
                 try:
                     st.write("**Longitudinal Section:**")
@@ -413,6 +441,7 @@ else:
             else:
                 for i, res in enumerate(final_design_res):
                     with st.expander(f"📘 Calculation Sheet: Span {i+1}", expanded=False):
+                        # Call Reporter with BOTH Ultimate and Service Data
                         reporter.render_calculation_report(
                             span_idx=i,
                             span_len=res['L'],
@@ -424,7 +453,7 @@ else:
                             Mu_neg=res['Mu_neg'],
                             Vu=res['Vu_max'],
                             res_data=res,
-                            # Pass Service Results here
+                            # Service Results passed here
                             Ma_pos=res['Ma_pos_svc'],
                             delta_analysis_mm=res['delta_svc_mm']
                         )
