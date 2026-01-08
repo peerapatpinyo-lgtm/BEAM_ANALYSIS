@@ -312,12 +312,12 @@ else:
             full_cal_report += f"  Load Factors: DL={f_dl}, LL={f_ll}\n"
             full_cal_report += "="*60 + "\n\n"
 
-# --- SPAN LOOP (Revised Display Logic) ---
+# --- SPAN LOOP (Final Fix: Units & Display) ---
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # Extract Forces (หน่วย kNm และ kN ถูกต้องแล้วจาก process ก่อนหน้า)
+                # Extract Forces
                 span_data = res_df_display[(res_df_display['x (m)'] >= s_start - 1e-6) & (res_df_display['x (m)'] <= s_end + 1e-6)]
                 
                 if not span_data.empty:
@@ -337,7 +337,7 @@ else:
                     # Covering Input
                     c_const, c_cov = st.columns([3, 1])
                     with c_const:
-                        st.caption(f"Design Constants: fc'={fc} MPa, fy={fy} MPa, Size {b_mm:.0f}x{h_mm:.0f} mm")
+                        st.caption(f"Design Constants: fc'={fc}, fy={fy}, Size {b_mm:.0f}x{h_mm:.0f} mm")
                     with c_cov:
                         cover_mm = st.number_input(f"Covering (mm)", value=25.0, step=5.0, key=f"cov_{i}")
 
@@ -358,14 +358,12 @@ else:
                     pass_b = phi_Mn_bot >= mu_pos
                     
                     with c4: 
-                        # Comparison Display
                         clr_b = "green" if pass_b else "red"
                         icon_b = "✅ OK" if pass_b else "❌ Fail"
                         
-                        # Line 1: Area Check
+                        # Display Fixed
                         st.markdown(f"**$A_{{s,prov}}$**: :{clr_b}[**{as_prov_bot:.0f}**] vs **{as_req_bot:.0f}** mm²")
-                        # Line 2: Strength Check (Inequality format)
-                        st.markdown(f"**Strength**: $\phi M_n = {phi_Mn_bot:.2f} \ge M_u = {mu_pos:.2f}$ kNm")
+                        st.markdown(f"**Strength**: $\phi M_n =$ :{clr_b}[**{phi_Mn_bot:.2f}**] **kNm** $\ge M_u =$ **{mu_pos:.2f}** **kNm**")
                         st.caption(f"Status: {icon_b}")
                     
                     full_cal_report += f"   [Bottom] Prov: {bot_n}-DB{bot_db} (As={as_prov_bot:.0f}), phiMn={phi_Mn_bot:.2f} >= Mu={mu_pos:.2f} -> {icon_b}\n"
@@ -391,7 +389,7 @@ else:
                         icon_t = "✅ OK" if pass_t else "❌ Fail"
                         
                         st.markdown(f"**$A_{{s,prov}}$**: :{clr_t}[**{as_prov_top:.0f}**] vs **{as_req_top:.0f}** mm²")
-                        st.markdown(f"**Strength**: $\phi M_n = {phi_Mn_top:.2f} \ge M_u = {mu_neg:.2f}$ kNm")
+                        st.markdown(f"**Strength**: $\phi M_n =$ :{clr_t}[**{phi_Mn_top:.2f}**] **kNm** $\ge M_u =$ **{mu_neg:.2f}** **kNm**")
                         st.caption(f"Status: {icon_t}")
 
                     full_cal_report += f"   [Top]    Prov: {top_n}-DB{top_db} (As={as_prov_top:.0f}), phiMn={phi_Mn_top:.2f} >= Mu={mu_neg:.2f} -> {icon_t}\n"
@@ -408,18 +406,12 @@ else:
                     d_shear = d_eff_bot_real 
                     status_v, phi_Vn, phi_Vc, phi_Vs, _, _ = check_shear_details(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s)
                     
-
                     with c4:
                         clr_v = "green" if status_v == "OK" else "red"
                         icon_v = "✅ OK" if status_v == "OK" else "❌ Fail"
                         
-                        # --- แก้ไขบรรทัดนี้ (Fix Display) ---
-                        # แยก LaTeX ($) ออกจาก Color Syntax (:[]) และเติมหน่วย kN ให้ครบ
-                        st.markdown(f"**Strength:** $\phi V_n =$ :{clr_v}[**{phi_Vn:.1f}**] **kN** $\ge V_u =$ **{vu_max:.1f}** **kN**")
-                        
-                        # เพิ่มหน่วย kN ในวงเล็บด้วย
+                        st.markdown(f"**Strength**: $\phi V_n =$ :{clr_v}[**{phi_Vn:.1f}**] **kN** $\ge V_u =$ **{vu_max:.1f}** **kN**")
                         st.caption(f"($\phi V_c={phi_Vc:.1f} + \phi V_s={phi_Vs:.1f}$ kN)")
-                        # st.caption(f"Status: {icon_v}")
                     
                     full_cal_report += f"   [Shear]  Prov: RB{stir_db}@{stir_s}, phiVn={phi_Vn:.2f} >= Vu={vu_max:.2f} -> {icon_v}\n"
                     full_cal_report += "-"*30
@@ -488,6 +480,7 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)  
+
 
 
 
