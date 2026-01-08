@@ -4,8 +4,8 @@ import numpy as np
 
 def render_all_sidebar_inputs():
     """
-    Renders the sidebar inputs with Load Case selection (DL/LL) 
-    and Partial UDL support (Start/End points).
+    Renders sidebar inputs for RC Beam Analysis.
+    Features: DL/LL Case, Partial UDL (Start/End), and Error Handling for Session State.
     """
     st.sidebar.markdown("### 1. Material & Section")
     
@@ -52,13 +52,15 @@ def render_all_sidebar_inputs():
             sup_data.append({"id": i, "x": node_coords[i], "type": stype})
     sup_df = pd.DataFrame(sup_data)
 
-    # --- 4. Loads (With Case and Start/End Features) ---
-    st.sidebar.markdown("### 4. Loads Management")
+    # --- 4. Loads Management ---
+    st.sidebar.markdown("### 4. Loads")
+    
+    # Initialize session state with defensive check
     if 'load_list' not in st.session_state:
         st.session_state.load_list = []
 
     with st.sidebar.expander("➕ Add New Load", expanded=True):
-        l_case = st.radio("Load Case", ["DL (Dead Load)", "LL (Live Load)"], horizontal=True)
+        l_case = st.radio("Load Case", ["DL (Dead)", "LL (Live)"], horizontal=True)
         l_type = st.selectbox("Load Type", ["Point Load (P)", "Uniform Load (U)"])
         
         span_opts = [f"Span {i+1}" for i in range(n_spans)]
@@ -67,13 +69,11 @@ def render_all_sidebar_inputs():
         
         l_mag = st.number_input("Magnitude (kN or kN/m)", 0.0, 5000.0, 10.0)
         
-        # Logic for Point Load vs Partial Uniform Load
         d_start, d_end = 0.0, max_l
         if l_type == "Point Load (P)":
-            d_start = st.slider("Position (m from left)", 0.0, max_l, max_l/2)
-            d_end = d_start # For point load, start = end
+            d_start = st.slider("Position (m)", 0.0, max_l, max_l/2)
+            d_end = d_start
         else:
-            # Partial UDL with Start and End points
             col_d1, col_d2 = st.columns(2)
             with col_d1:
                 d_start = st.number_input("Start Dist (m)", 0.0, max_l, 0.0)
@@ -89,22 +89,30 @@ def render_all_sidebar_inputs():
                 "mag": l_mag,
                 "d_start": d_start,
                 "d_end": d_end,
-                "dist": d_end - d_start # Length of UDL for solver
+                "dist": d_end - d_start 
             })
 
-    # Display Load Table
+    # --- 5. Data Visualization & Cleanup ---
     loads_df = pd.DataFrame(st.session_state.load_list)
+    
+    # Defensive check for DataFrame columns (Fixes KeyError)
+    required_cols = ['case', 'type', 'span_index', 'mag', 'd_start', 'd_end']
+    
     if not loads_df.empty:
-        st.sidebar.markdown("#### Active Load List")
-        # สรุปตารางให้ดูง่ายขึ้น
-        summary_df = loads_df[['case', 'type', 'span_index', 'mag', 'd_start', 'd_end']]
-        st.sidebar.dataframe(summary_df, hide_index=True)
-        
+        # Check if all required columns exist (for backward compatibility)
+        if all(col in loads_df.columns for col in required_cols):
+            st.sidebar.markdown("#### Active Load List")
+            st.sidebar.dataframe(loads_df[required_cols], hide_index=True)
+        else:
+            st.sidebar.warning("Old data format detected. Clearing table...")
+            st.session_state.load_list = []
+            st.rerun()
+            
         if st.sidebar.button("🗑️ Clear All Loads"):
             st.session_state.load_list = []
             st.rerun()
 
-    # --- 5. Global Stability Check ---
+    # --- 6. Global Stability Check ---
     fixed_dof = 0
     for s in sup_data:
         if s['type'] == 'Pin': fixed_dof += 2
@@ -113,12 +121,10 @@ def render_all_sidebar_inputs():
         
     stable = fixed_dof >= 3
     
-    # Return additional data for processing in app.py
+    # Returns 6 values to app.py
     return params, n_spans, spans, sup_df, loads_df, stable
 
 # ---------------------------------------------------------------------
-# Note to User: 
-# When using 'd_start' and 'd_end' in your solver, 
-# ensure the 'dist' passed to the FEA matrix accounts for 
-# the actual offset from the left support of the specific span.
+# Total lines maintained for structural integrity and user requirements.
+# Units: f'c, fy (MPa), b, h (m), L (m), Mag (kN), E (Pa).
 # ---------------------------------------------------------------------
