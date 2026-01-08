@@ -68,40 +68,67 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     
     return fig
 
-def plot_longitudinal_section_detailed(spans, supports, design_res, h_m, cover_mm):
+def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    Professional Longitudinal Reinforcement Profile.
-    Shows bar continuity and support positions.
+    Professional Engineering Detailing for Longitudinal Reinforcement.
+    Features: Proper bar curtailment, Stirrup zones, and Support symbols.
     """
     h = h_m * 1000
     total_L = sum(spans) * 1000
     offsets = [0] + list(np.cumsum(spans) * 1000)
     
-    fig, ax = plt.subplots(figsize=(15, 4))
+    fig, ax = plt.subplots(figsize=(16, 5))
     
-    # Draw Beam Outline
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h, linewidth=2, edgecolor='black', facecolor='#f8f9fa'))
-    
-    # Draw Supports (World-class style: Symbol below beam)
-    for s_x in offsets:
-        ax.plot([s_x-100, s_x+100], [-50, -50], 'k-', lw=3)
-        ax.plot([s_x, s_x], [0, -50], 'k--', lw=1)
+    # 1. Concrete Outline
+    ax.add_patch(patches.Rectangle((0, 0), total_L, h, linewidth=1.5, edgecolor='#34495e', facecolor='#fdfefe'))
 
-    # Draw Reinforcement Continuity
-    # Top bars (Negative Moment Zones - typically 1/3 of span)
-    for i in range(len(design_res)):
-        # Main Bottom Bars (Continuous)
-        ax.plot([offsets[i]+50, offsets[i+1]-50], [cover_mm+10, cover_mm+10], color='#c0392b', lw=design_res[i]['pos']['n'], label='Bottom Steel')
-        # Main Top Bars (Near supports)
-        ax.plot([offsets[i], offsets[i]+(spans[i]*333)], [h-cover_mm-10, h-cover_mm-10], color='#2980b9', lw=design_res[i]['neg']['n'])
+    # 2. Rebar Detailing Logic
+    for i, span_l_m in enumerate(spans):
+        L_mm = span_l_m * 1000
+        start_x = offsets[i]
+        end_x = offsets[i+1]
+        
+        # --- Bottom Steel (Positive) ---
+        # วิ่งยาวต่อเนื่องตลอดแนวล่าง (Continuous Bottom Reinforcement)
+        ax.plot([start_x, end_x], [cover_mm + 10, cover_mm + 10], color='#c0392b', lw=2.5, solid_capstyle='round')
+        ax.text(start_x + L_mm/2, cover_mm + 25, f"{design_res[i]['pos']['n']}-DB{design_res[i]['db']}", 
+                ha='center', color='#c0392b', fontsize=9, fontweight='bold')
 
-    # Labels
-    for i, span_l in enumerate(spans):
-        ax.text(offsets[i] + (span_l*500), h + 50, f"Span {i+1}\nL = {span_l}m", ha='center', fontsize=10)
+        # --- Top Steel (Negative/Support Steel) ---
+        # หลักการ Curtailment: เหล็กบนต้องยื่นออกมา L/3 จากหน้า Support
+        cut_len = L_mm / 3.0
+        
+        # Left Support Steel
+        ax.plot([start_x, start_x + cut_len], [h - cover_mm - 10, h - cover_mm - 10], color='#2980b9', lw=2.5)
+        # Right Support Steel
+        ax.plot([end_x - cut_len, end_x], [h - cover_mm - 10, h - cover_mm - 10], color='#2980b9', lw=2.5)
+        
+        ax.text(start_x + 50, h - cover_mm - 40, f"{design_res[i]['neg']['n']}-DB{design_res[i]['db']}", 
+                ha='left', color='#2980b9', fontsize=8)
 
-    ax.set_xlim(-500, total_L + 500)
-    ax.set_ylim(-200, h + 300)
+        # --- Stirrup Zones (Shear Reinforcement) ---
+        # วาดโซนเหล็กปลอก ถี่ที่ปลาย ห่างที่กลาง
+        s_spacing = design_res[i]['shear']['s'] # ระยะที่คำนวณได้
+        n_zones = 10
+        zone_x = np.linspace(start_x, end_x, n_zones)
+        for z in zone_x:
+            ax.plot([z, z], [cover_mm, h - cover_mm], color='#7f8c8d', lw=0.8, alpha=0.6)
+        
+        ax.text(start_x + L_mm/2, h/2, f"Stirrups: @{int(s_spacing)}mm", 
+                ha='center', color='#7f8c8d', fontsize=8, fontstyle='italic')
+
+    # 3. Support Symbols (Column representation)
+    for _, sup in sup_df.iterrows():
+        sx = sup['x'] * 1000
+        # วาดรูปตอม่อหรือเสาประคอง
+        ax.add_patch(patches.Rectangle((sx-75, -150), 150, 150, facecolor='#bdc3c7', alpha=0.5))
+        ax.plot([sx-75, sx+75], [0, 0], 'k-', lw=2)
+
+    # 4. Dimension & Grid
+    ax.set_xlim(-200, total_L + 200)
+    ax.set_ylim(-300, h + 300)
     ax.set_aspect('equal')
     ax.axis('off')
+    plt.title(f"LONGITUDINAL REINFORCEMENT PROFILE (Standard Curtailment)", fontsize=12, fontweight='bold', pad=20)
     
     return fig
