@@ -311,13 +311,12 @@ else:
             full_cal_report += f"DESIGN PARAMETERS:\n  fc' = {fc} MPa\n  fy = {fy} MPa\n  Section: {b_mm:.0f}x{h_mm:.0f} mm\n"
             full_cal_report += f"  Load Factors: DL={f_dl}, LL={f_ll}\n"
             full_cal_report += "="*60 + "\n\n"
-
-            # --- SPAN LOOP ---
+# --- SPAN LOOP (Copy ทับ Loop เดิมใน Tab 2) ---
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # Extract Forces for this span (ใช้ res_df_display เพราะมีหน่วย kNm และ x (m) ที่เราเตรียมไว้)
+                # Extract Forces
                 span_data = res_df_display[(res_df_display['x (m)'] >= s_start - 1e-6) & (res_df_display['x (m)'] <= s_end + 1e-6)]
                 
                 if not span_data.empty:
@@ -356,8 +355,14 @@ else:
                     pass_b = phi_Mn_bot >= mu_pos
                     
                     with c4: 
-                        ratio_b = min(phi_Mn_bot / (mu_pos + 1e-6) * 100, 100) if mu_pos > 0 else 100
-                        st.progress(ratio_b / 100, text=f"Capacity: {phi_Mn_bot:.1f} kNm ({'✅ Pass' if pass_b else '❌ Fail'})")
+                        # --- ปรับปรุงการแสดงผลให้ชัดเจน ---
+                        util_b = (mu_pos / phi_Mn_bot * 100) if phi_Mn_bot > 0 else 0
+                        color_b = "green" if pass_b else "red"
+                        icon_b = "✅" if pass_b else "❌"
+                        
+                        st.markdown(f"Demand: **{mu_pos:.2f}** vs Cap: :{color_b}[**{phi_Mn_bot:.2f}**] kNm")
+                        # Progress Bar แสดง % Utilization
+                        st.progress(min(util_b/100, 1.0), text=f"Usage: {util_b:.1f}% {icon_b}")
                     
                     full_cal_report += f"   [Bottom] Req: {as_req_bot:.0f} mm2 | Prov: {bot_n}-DB{bot_db} ({as_prov_bot:.0f} mm2)\n"
                     full_cal_report += f"            PhiMn: {phi_Mn_bot:.2f} kNm vs Mu: {mu_pos:.2f} kNm -> {'OK' if pass_b else 'FAIL'}\n"
@@ -377,8 +382,13 @@ else:
                     pass_t = phi_Mn_top >= mu_neg
                     
                     with c4:
-                        ratio_t = min(phi_Mn_top / (mu_neg + 1e-6) * 100, 100) if mu_neg > 0 else 100
-                        st.progress(ratio_t / 100, text=f"Capacity: {phi_Mn_top:.1f} kNm ({'✅ Pass' if pass_t else '❌ Fail'})")
+                        # --- ปรับปรุงการแสดงผลให้ชัดเจน ---
+                        util_t = (mu_neg / phi_Mn_top * 100) if phi_Mn_top > 0 else 0
+                        color_t = "green" if pass_t else "red"
+                        icon_t = "✅" if pass_t else "❌"
+                        
+                        st.markdown(f"Demand: **{mu_neg:.2f}** vs Cap: :{color_t}[**{phi_Mn_top:.2f}**] kNm")
+                        st.progress(min(util_t/100, 1.0), text=f"Usage: {util_t:.1f}% {icon_t}")
 
                     full_cal_report += f"   [Top]    Req: {as_req_top:.0f} mm2 | Prov: {top_n}-DB{top_db} ({as_prov_top:.0f} mm2)\n"
                     full_cal_report += f"            PhiMn: {phi_Mn_top:.2f} kNm vs Mu: {mu_neg:.2f} kNm -> {'OK' if pass_t else 'FAIL'}\n"
@@ -394,10 +404,12 @@ else:
                     status_v, phi_Vn, phi_Vc, phi_Vs, _, _ = check_shear_details(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s)
                     
                     with c4:
-                        if status_v == "OK":
-                            st.success(f"PhiVn = {phi_Vn:.1f} kN (✅ OK)")
-                        else:
-                            st.error(f"PhiVn = {phi_Vn:.1f} kN (❌ FAIL)")
+                        color_v = "green" if status_v == "OK" else "red"
+                        icon_v = "✅" if status_v == "OK" else "❌"
+                        st.markdown(f"Demand: **{vu_max:.1f}** vs Cap: :{color_v}[**{phi_Vn:.1f}**] kN")
+                        
+                        # Shear อาจจะไม่มี usage ratio ชัดเจนในฟังก์ชันเดิม แต่โชว์ผลลัพธ์แบบนี้ชัดกว่า
+                        st.caption(f"Status: {status_v} {icon_v}")
                     
                     full_cal_report += f"   [Shear]  Prov: RB{stir_db}@{stir_s} mm | PhiVn: {phi_Vn:.2f} kN vs Vu: {vu_max:.2f} kN -> {status_v}\n"
                     full_cal_report += "-"*30 + "\n"
@@ -466,3 +478,4 @@ else:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)  
+
