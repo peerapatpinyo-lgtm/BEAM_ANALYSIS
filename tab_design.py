@@ -85,15 +85,32 @@ def render(n_spans, spans, params, x_ult, M_ult, V_ult, x_svc, M_svc, D_svc, is_
             with c4: st.write(f"Status: **{status_v}**")
 
             # เก็บข้อมูลเข้า List
-            final_design_res.append({
-                'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
-                'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max,
-                'cover': cover_mm, 
-                'pos': {'n': bot_n, 'db': bot_db, 'status': pass_b},
-                'neg': {'n': top_n, 'db': top_db, 'status': pass_t},
-                'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
-            })
+           
+# tab_design.py
 
+# ... (โค้ดส่วนบนเหมือนเดิม) ...
+
+        # เก็บข้อมูลเข้า List
+        final_design_res.append({
+            'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
+            'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max,
+            'cover': cover_mm, 
+            
+            # --- ส่วนที่ต้องเพิ่ม (Update) ---
+            'Ma_pos_svc': ma_pos_svc,      # <--- เพิ่มบรรทัดนี้
+            'delta_svc_mm': delta_svc_mm,  # <--- เพิ่มบรรทัดนี้
+            # ---------------------------
+            
+            'pos': {'n': bot_n, 'db': bot_db, 'status': pass_b},
+            'neg': {'n': top_n, 'db': top_db, 'status': pass_t},
+            'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
+            
+            # เผื่อไว้: หาก reporter.py ของคุณต้องการ key ชื่อ 'bot' หรือ 'top' แยกต่างหาก (ตามเวอร์ชั่นแรก)
+            'bot': {'n': bot_n, 'db': bot_db}, 
+            'top': {'n': top_n, 'db': top_db},
+        })
+
+    # ... (โค้ดส่วนล่างเหมือนเดิม) ...
     # ปุ่ม Generate Drawing (Optional)
     if st.button("Generat Section Drawing", type="primary"):
          try:
