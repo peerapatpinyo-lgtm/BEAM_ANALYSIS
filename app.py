@@ -15,7 +15,7 @@ st.set_page_config(page_title="Beam Analysis & Design Pro", layout="wide")
 st.title("🏗️ RC Beam Analysis & Design Pro (Timoshenko)")
 
 # --- 3. SIDEBAR INPUTS ---
-# รับค่า Parameters และรูปพรรณคานจาก Sidebar ผ่าน input_handler
+# Get parameters and beam configuration from Sidebar via input_handler
 params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
@@ -84,7 +84,7 @@ else:
                             'desc': f'User Point ({row["case"]})'
                         })
                     elif l_type == 'U':
-                        # ยุบรวม UDL เต็มคานเข้ากับ Self-Weight เพื่อลดความซับซ้อนของเมทริกซ์
+                        # Merge full-span UDL with Self-Weight to reduce matrix complexity
                         if d_start <= 0.01 and dist >= (spans[s_idx] - 0.01):
                             span_total_udl_N[s_idx] += mag_factored_N
                         else:
@@ -99,7 +99,7 @@ else:
                 except Exception:
                     continue
         
-        # 5.4 รวม UDL ที่ยุบแล้วเข้าสู่ List หลัก
+        # 5.4 Add merged UDL to main list
         for i in range(n_spans):
             if span_total_udl_N[i] > 0:
                 combined_loads_list.append({
@@ -116,7 +116,7 @@ else:
         # --- 6. BEAM SOLVER ---
         x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
-        # แปลงผลลัพธ์ใส่ DataFrame เพื่อใช้ Plot และออกแบบ
+        # Convert results to DataFrame
         res_df = pd.DataFrame({
             'x': x_eval,
             'moment': M, 
@@ -203,7 +203,7 @@ else:
             db_main = 16 
             offsets = [0] + list(np.cumsum(spans))
 
-            # วนลูปออกแบบเหล็กเสริมในแต่ละ Span
+            # Loop through spans for design
             for i in range(n_spans):
                 s_start, s_end = offsets[i], offsets[i+1]
                 span_data = res_df[(res_df['x'] >= s_start - 1e-6) & (res_df['x'] <= s_end + 1e-6)]
@@ -214,7 +214,7 @@ else:
                     vu_max = span_data['shear'].abs().max() / 1000.0
                     d_eff = params['h'] - 0.05 # Cover 5 cm
                     
-                    # เรียกใช้ฟังก์ชันออกแบบจาก rc_design
+                    # Call design functions
                     As_pos, _, _, steps_pos = rc_design.design_beam_flexure(mu_pos, params['b'], d_eff, params['fc'], params['fy'])
                     As_neg, _, _, steps_neg = rc_design.design_beam_flexure(mu_neg, params['b'], d_eff, params['fc'], params['fy'])
                     s_req, _, steps_shear = rc_design.check_shear(vu_max, params['b'], d_eff, params['fc'], params['fy'])
@@ -241,14 +241,14 @@ else:
                         st.markdown("**Shear Design**")
                         for s in steps_shear: st.latex(s)
 
-            # --- 🚀 DETAILING SECTION (NEW LAYOUT) ---
+            # --- 🚀 DETAILING SECTION (English) ---
             st.markdown("---")
             st.subheader("🛠️ Structural Detailing (Professional View)")
             
             if design_res:
                 # 1. LONGITUDINAL SECTION (TOP - Full Width)
                 st.markdown("### 1. Longitudinal Section (General Arrangement)")
-                st.info("💡 แสดงแนวคานทั้งหมด จุดรองรับ และการเสริมเหล็กตามยาว (Longitudinal Reinforcement)")
+                st.info("💡 Shows the entire beam span, supports, and longitudinal reinforcement arrangement.")
                 
                 fig_long = section_plotter.plot_longitudinal_section_detailed(
                     spans, sup_df, design_res, params['h'], 40
@@ -259,9 +259,9 @@ else:
                 
                 # 2. CROSS SECTIONS (BOTTOM - Tabs for Scalability)
                 st.markdown("### 2. Cross Section Details")
-                st.write("เลือกดูรายละเอียดหน้าตัดของแต่ละช่วงคาน (Select Span):")
+                st.write("Select a span to view cross-section details:")
                 
-                # สร้าง Tabs แบบ Dynamic ตามจำนวน Span
+                # Dynamic Tabs
                 span_tabs = st.tabs([f"Span {i+1}" for i in range(n_spans)])
                 
                 for i, tab in enumerate(span_tabs):
@@ -269,7 +269,7 @@ else:
                         res = design_res[i]
                         c_det1, c_det2 = st.columns(2)
                         
-                        # Section A-A: Mid Span (เน้นเหล็กล่าง)
+                        # Section A-A: Mid Span
                         with c_det1:
                             st.markdown(f"**Section A-A (Mid-span {i+1})**")
                             st.caption(f"Bottom Bars: {res['pos']['n']}-DB{res['db']}")
@@ -282,7 +282,7 @@ else:
                             )
                             st.pyplot(fig_a, use_container_width=True)
                         
-                        # Section B-B: Support (เน้นเหล็กบน)
+                        # Section B-B: Support
                         with c_det2:
                             st.markdown(f"**Section B-B (Support {i+1})**")
                             st.caption(f"Top Bars: {res['neg']['n']}-DB{res['db']}")
