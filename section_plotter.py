@@ -143,7 +143,7 @@ def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_te
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """ Longitudinal Section - Corrected """
+    """ Longitudinal Section - Corrected Variable Name """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     h_mm = h_m * 1000
@@ -170,12 +170,13 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
         
         # --- Top Bars (Support) ---
         top_y = h_mm - cover_mm - 25
-        L_neg = span_L * 0.25
+        L_neg = span_L * 0.25 # Define Anchor Length
         
         # Draw Lines
         ax.plot([x_cursor, x_cursor + L_neg], [top_y, top_y], color=COLOR_TOP, lw=3, solid_capstyle='round')
         ax.plot([end_cursor - L_neg, end_cursor], [top_y, top_y], color=COLOR_TOP, lw=3, solid_capstyle='round')
-        ax.plot([x_cursor + L_anch, end_cursor - L_anch], [top_y, top_y], color=COLOR_TOP, lw=0.8, ls=':') # Hanger
+        # Hanger Bars (เส้นประเชื่อมตรงกลาง) - แก้ไขชื่อตัวแปร L_anch -> L_neg
+        ax.plot([x_cursor + L_neg, end_cursor - L_neg], [top_y, top_y], color=COLOR_TOP, lw=0.8, ls=':') 
         
         # Text Top (อยู่สูงกว่า Dimension Line ไปอีก หรืออยู่ใต้เส้น Dimension เล็กน้อย แต่เหนือคาน)
         # แก้ปัญหาทับกัน: ให้ text อยู่เหนือเส้นเหล็กขึ้นไปเยอะๆ (ใต้ Dimension หลัก)
