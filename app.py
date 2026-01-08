@@ -81,31 +81,34 @@ def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     
     return max(as_req, as_min), rho, False
 
+# ในไฟล์ app.py แก้ไขฟังก์ชันนี้ครับ
+
 def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
     """
-    Calculate Capacity with Strain Check (ACI 318-19 Table 21.2.2)
+    Calculate Capacity with Strain Check (ACI 318 Metric)
+    Fix: Prevents negative capacity when section is too small (Over-reinforced)
     """
     Ast = n * (np.pi * (db/2)**2)
     if Ast == 0: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
-    # Whitney Stress Block
+    # 1. Whitney Stress Block Depth (a)
     a = (Ast * fy) / (0.85 * fc * b)
     beta1 = get_beta1(fc)
     c = a / beta1
     
-    # Strain in extreme tension steel
-    # epsilon_t = 0.003 * (d - c) / c
+    # --- ERROR CHECK: Section too small? ---
+    # ถ้า a > d แสดงว่าต้องใช้คอนกรีตรับแรงอัดลึกกว่าความลึกคาน (เป็นไปไม่ได้)
+    if a >= d_eff: 
+        # Return 0 capacity to indicate failure
+        return 0.0, Ast, a, 0.0, c, -1.0 
+
+    # 2. Strain in extreme tension steel
     if c > 0:
         strain_t = 0.003 * (d_eff - c) / c
     else:
         strain_t = 999.0 # Infinite
-        
-    # Phi Factor Calculation (ACI Fig R21.2.2b)
-    # Compression controlled: 0.65
-    # Tension controlled: 0.90 (strain >= 0.005)
-    # Transition: 0.65 + 0.25 * (strain - ty) / (0.005 - ty)
-    # Assume ty = 0.002 for Grade 40/60 (approx)
-    
+
+    # 3. Phi Factor Calculation (ACI 318)
     if strain_t >= 0.005:
         phi = 0.9
     elif strain_t <= 0.002:
@@ -113,8 +116,10 @@ def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
     else:
         phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
+    # 4. Moment Capacity
+    # Mn = As * fy * (d - a/2)
     Mn = Ast * fy * (d_eff - a/2)
-    phi_Mn = phi * Mn / 1e6 # kNm
+    phi_Mn = phi * Mn / 1e6 # Convert to kNm
     
     return phi_Mn, Ast, a, Mn, c, strain_t
 
@@ -499,4 +504,5 @@ else:
         st.error(f"❌ Application Error: {e}")
         import traceback
         st.code(traceback.format_exc())
+
 
