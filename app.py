@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -10,6 +11,7 @@ import input_handler
 import solver
 import design_view
 import section_plotter
+import reporter  # <--- เพิ่ม Module ใหม่ตรงนี้
 
 # --- 2. PAGE CONFIGURATION & STYLING ---
 st.set_page_config(
@@ -207,7 +209,6 @@ else:
             x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, calc_loads_df, params)
         
         # สร้าง DataFrame หลักตัวเดียว (Master DataFrame)
-        # หมายเหตุ: solver ปกติจะ return หน่วย SI พื้นฐาน (N, mm, N-mm)
         master_df = pd.DataFrame({
             'x': x_eval,                 # m
             'M_Nmm': M,                  # N-mm
@@ -220,7 +221,7 @@ else:
         master_df['V_kN'] = master_df['V_N'] / 1000.0
         master_df['D_mm'] = master_df['D_m'] * 1000.0
 
-        # DataFrame สำหรับแสดงผล (เปลี่ยนชื่อ Column ให้สวยงาม)
+        # DataFrame สำหรับแสดงผล
         res_df_display = master_df.copy()
         res_df_display.rename(columns={
             'x': 'x (m)',
@@ -232,15 +233,17 @@ else:
         }, inplace=True)
 
         # --- 5. TABS INTERFACE ---
-        tab1, tab2 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design & Detailing"])
+        # เพิ่ม Tab 3 สำหรับ Calculation Report
+        tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design & Detailing", "📘 3. Detailed Calculation Report"])
         
+        # สร้างตัวแปร final_design_res ไว้ข้างนอก เพื่อให้ Tab 3 มองเห็นได้
+        final_design_res = []
+
         # ================= TAB 1: ANALYSIS =================
         with tab1:
             st.subheader("📈 Force Diagrams")
             
-            # 1. Plot Diagram (ส่ง master_df หรือ res_df_display ที่มีหน่วยครบถ้วน)
-            # ต้องมั่นใจว่า design_view รองรับชื่อคอลัมน์ใหม่ หรือเราส่งแบบเดิม
-            # เพื่อความชัวร์ เราสร้าง df แบบเดิมส่งให้ฟังก์ชันวาดกราฟ
+            # 1. Plot Diagram
             df_for_plot = pd.DataFrame({
                 'x': x_eval,
                 'moment': M, # N-mm
@@ -257,12 +260,9 @@ else:
             st.markdown("### 📌 Critical Values (Global)")
             if not master_df.empty:
                 v_max_kN = master_df['V_kN'].abs().max()
-                
-                # Global Max/Min Moment
                 g_max_m = master_df['M_kNm'].max()
                 g_min_m = master_df['M_kNm'].min()
 
-                # แยกคิดค่าบวกและลบ
                 m_max_pos_kNm = g_max_m if g_max_m > 0 else 0.0
                 m_max_neg_kNm = abs(g_min_m) if g_min_m < 0 else 0.0
                 
@@ -333,54 +333,31 @@ else:
             b_mm, h_mm = params['b'] * 1000, params['h'] * 1000
             fc, fy = params['fc'], params['fy']
             
-            final_design_res = []
             offsets = [0] + list(np.cumsum(spans))
             
-            full_cal_report = f"PROJECT: {project_name}\nENGINEER: {engineer_name}\n"
-            full_cal_report += f"DATE: {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
-            full_cal_report += "="*60 + "\n"
-            full_cal_report += f"DESIGN PARAMETERS:\n  fc' = {fc} MPa\n  fy = {fy} MPa\n  Section: {b_mm:.0f}x{h_mm:.0f} mm\n"
-            full_cal_report += f"  Load Factors: DL={f_dl}, LL={f_ll}\n"
-            full_cal_report += "="*60 + "\n\n"
-
+            # Note: We build final_design_res here so it can be used in Tab 3
+            
             # --- SPAN LOOP ---
             for i in range(n_spans):
                 s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
                 
-                # ดึงข้อมูลจาก Master DataFrame โดยใช้คอลัมน์ kNm ที่คำนวณไว้แล้ว
-                # ใช้ buffer เล็กน้อย (+/- 1e-6) เพื่อกัน Floating point error
+                # Fetch data for this span
                 span_data = master_df[(master_df['x'] >= s_start - 1e-6) & (master_df['x'] <= s_end + 1e-6)]
                 
                 # --- CALCULATION LOGIC ---
                 if not span_data.empty:
-                    # Positive Moment (Design Bottom Steel)
-                    # หาค่าสูงสุดใน span นี้
+                    # Positive Moment
                     raw_max_kNm = span_data['M_kNm'].max()
-                    mu_pos = max(0.0, raw_max_kNm) # ถ้าค่า max เป็นลบ (คานยื่น) ให้ถือว่าเป็น 0 สำหรับเหล็กล่าง
+                    mu_pos = max(0.0, raw_max_kNm)
                     
-                    # Negative Moment (Design Top Steel)
-                    # หาค่าต่ำสุด (ที่เป็นลบมากที่สุด) แล้วแปลงเป็น Absolute
+                    # Negative Moment
                     raw_min_kNm = span_data['M_kNm'].min()
                     mu_neg = abs(raw_min_kNm) if raw_min_kNm < 0 else 0.0
                     
                     vu_max = span_data['V_kN'].abs().max()
                 else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
-
-                # --- DEBUG CHECKER ---
-                # ส่วนนี้สำคัญ: ช่วยให้คุณเช็คว่าค่าที่ Code เห็น ตรงกับที่คุณคิดไหม
-                with st.expander(f"🔍 Debug Data Check: Span {i+1}"):
-                    st.write(f"**Range X:** {s_start:.2f} to {s_end:.2f} m")
-                    st.write(f"**Raw Max kNm in Data:** {raw_max_kNm if 'raw_max_kNm' in locals() else 'No Data'}")
-                    st.write(f"**Raw Min kNm in Data:** {raw_min_kNm if 'raw_min_kNm' in locals() else 'No Data'}")
-                    st.write(f"👉 **Used for Design:** Mu(+) = {mu_pos:.2f}, Mu(-) = {mu_neg:.2f}")
-                    if not span_data.empty:
-                        st.dataframe(span_data[['x', 'M_kNm', 'V_kN']].describe())
-
-                # --- REPORT WRITING ---
-                full_cal_report += f"\n>> SPAN {i+1} (Length {s_len} m)\n"
-                full_cal_report += f"   Design Forces: Mu(+)={mu_pos:.2f} kNm, Mu(-)={mu_neg:.2f} kNm, Vu={vu_max:.2f} kN\n"
 
                 # --- UI DISPLAY ---
                 with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Forces: $M_u^+$ {mu_pos:.2f} kNm, $M_u^-$ {mu_neg:.2f} kNm, $V_u$ {vu_max:.2f} kN", expanded=True):
@@ -411,8 +388,6 @@ else:
                         st.markdown(f"**Area**: $A_{{s,prov}} =$ :{clr_b}[**{as_prov_bot:.0f}**] **mm²** vs $A_{{req}} =$ **{as_req_bot:.0f}** **mm²**")
                         st.markdown(f"**Strength**: $\phi M_n =$ :{clr_b}[**{phi_Mn_bot:.2f}**] **kNm** $\ge M_u =$ **{mu_pos:.2f}** **kNm**")
                     
-                    full_cal_report += f"   [Bottom] Prov: {bot_n}-DB{bot_db} (As={as_prov_bot:.0f}), phiMn={phi_Mn_bot:.2f} >= Mu={mu_pos:.2f} -> {icon_b}\n"
-
                     # 2. Top Steel (-Moment)
                     st.markdown("##### 2. Top Reinforcement (Supports, $-M_u$)")
                     d_eff_top_est = h_mm - cover_mm - 9 - 10 
@@ -433,8 +408,6 @@ else:
                         st.markdown(f"**Area**: $A_{{s,prov}} =$ :{clr_t}[**{as_prov_top:.0f}**] **mm²** vs $A_{{req}} =$ **{as_req_top:.0f}** **mm²**")
                         st.markdown(f"**Strength**: $\phi M_n =$ :{clr_t}[**{phi_Mn_top:.2f}**] **kNm** $\ge M_u =$ **{mu_neg:.2f}** **kNm**")
 
-                    full_cal_report += f"   [Top]    Prov: {top_n}-DB{top_db} (As={as_prov_top:.0f}), phiMn={phi_Mn_top:.2f} >= Mu={mu_neg:.2f} -> {icon_t}\n"
-
                     # 3. Shear
                     st.markdown("##### 3. Shear Reinforcement (Stirrups, $V_u$)")
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -451,11 +424,14 @@ else:
                         st.markdown(f"**Strength**: $\phi V_n =$ :{clr_v}[**{phi_Vn:.1f}**] **kN** $\ge V_u =$ **{vu_max:.1f}** **kN**")
                         st.caption(f"($\phi V_c={phi_Vc:.1f} + \phi V_s={phi_Vs:.1f}$ kN)")
                     
-                    full_cal_report += f"   [Shear]  Prov: RB{stir_db}@{stir_s}, phiVn={phi_Vn:.2f} >= Vu={vu_max:.2f} -> {icon_v}\n"
-                    full_cal_report += "-"*30
-
+                    # Store results for Report and Summary
                     final_design_res.append({
-                        'span': i+1, 'cover': cover_mm,
+                        'span_id': i,
+                        'L': s_len,
+                        'Mu_pos': mu_pos,
+                        'Mu_neg': mu_neg,
+                        'Vu_max': vu_max,
+                        'cover': cover_mm,
                         'top_db': top_db, 'bot_db': bot_db, 'stir_db': stir_db,
                         'pos': {'n': bot_n, 'area': as_prov_bot, 'status': pass_b},
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': pass_t},
@@ -469,7 +445,7 @@ else:
             summary_data = []
             for item in final_design_res:
                 summary_data.append({
-                    "Span": item['span'],
+                    "Span": item['span_id'] + 1,
                     "Bottom Rebar": f"{item['pos']['n']}-DB{item['bot_db']}",
                     "Top Rebar": f"{item['neg']['n']}-DB{item['top_db']}",
                     "Stirrup": f"RB{item['stir_db']}@{item['shear']['s']}",
@@ -497,18 +473,35 @@ else:
                         st.error(f"Error plotting: {e}")
             
             with col_act2:
-                st.download_button(
-                    label="📄 Download Calculation Report (.txt)",
-                    data=full_cal_report,
-                    file_name=f"Design_Report_{project_name}.txt",
-                    mime="text/plain"
-                )
-                
-                with st.expander("View Report Preview"):
-                    st.text(full_cal_report)
+                # Text Report (Old style) can be kept here if needed, but we have Tab 3 now.
+                st.info("💡 Go to **Tab 3** to view detailed Step-by-Step Calculation Sheets.")
+
+        # ================= TAB 3: DETAILED REPORT (NEW) =================
+        with tab3:
+            st.header("📝 Detailed Calculation Reports")
+            st.markdown(f"**Project:** {project_name} | **Engineer:** {engineer_name}")
+            st.write("Click on each span below to view the full engineering calculation sheet (English/LaTeX).")
+            
+            if not final_design_res:
+                st.warning("⚠️ Please complete the design in Tab 2 first.")
+            else:
+                for i, res in enumerate(final_design_res):
+                    with st.expander(f"📘 Calculation Sheet: Span {i+1}", expanded=False):
+                        # เรียกใช้งาน Function จาก reporter.py
+                        reporter.render_calculation_report(
+                            span_idx=i,
+                            span_len=res['L'],
+                            b=params['b'],
+                            h=params['h'],
+                            fc=params['fc'],
+                            fy=params['fy'],
+                            Mu_pos=res['Mu_pos'],
+                            Mu_neg=res['Mu_neg'],
+                            Vu=res['Vu_max'],
+                            res_data=res
+                        )
 
     except Exception as e:
         st.error(f"❌ Calculation Error: {e}")
         st.warning("Please check your input loads or support conditions.")
         st.exception(e)
-
