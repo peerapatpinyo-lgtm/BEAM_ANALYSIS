@@ -1,10 +1,10 @@
 # ===========================================================================================
-# 🏗️ RC BEAM ANALYSIS & DESIGN SYSTEM: PROFESSIONAL ENTERPRISE EDITION
+# 🏗️ RC BEAM ANALYSIS & DESIGN SYSTEM: ENTERPRISE PROFESSIONAL EDITION
 # ===========================================================================================
-# Version: 4.2.1 (Syntax Corrected)
-# Engine: Finite Element Stiffness Matrix Method
-# Design Standard: ACI 318-14 / Strength Design Method (SDM)
-# Description: Advanced structural analysis suite for continuous beams.
+# Version: 4.4.0 (Enhanced Load Traceability & Logic Documentation)
+# Structural Core: Finite Element Method (FEM) using Matrix Stiffness
+# Design Standard: ACI 318-14 Strength Design Method (SDM)
+# Language: English (Full Localization)
 # ===========================================================================================
 
 import streamlit as st
@@ -12,10 +12,10 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
-import time
+import sys
 
-# --- 1. CORE ENGINE MODULES ---
-# Loading external engineering logic modules
+# --- 1. EXTERNAL MODULE INTEGRATION ---
+# Ensuring all engineering sub-modules are loaded correctly.
 try:
     import input_handler
     import solver
@@ -23,262 +23,248 @@ try:
     import design_view
     import section_plotter
 except ImportError as e:
-    st.error(f"❌ CRITICAL ERROR: Dependency missing - {e}")
-    st.info("Check if input_handler.py, solver.py, rc_design.py, design_view.py, and section_plotter.py exist.")
+    st.error(f"❌ CRITICAL ERROR: System dependencies missing - {e}")
+    st.info("Ensure input_handler.py, solver.py, rc_design.py, design_view.py, and section_plotter.py are in the root directory.")
     st.stop()
 
-# --- 2. GLOBAL PAGE CONFIGURATION ---
+# --- 2. APPLICATION CONFIGURATION ---
 st.set_page_config(
-    page_title="RC Beam Pro | Structural Engineering Suite",
+    page_title="RC Beam Pro | Structural Design Suite",
     page_icon="🏗️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# --- 3. ADVANCED CUSTOM STYLING (CSS) ---
+# --- 3. PROFESSIONAL UI STYLING (CSS) ---
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap');
-    .main-title { font-size: 38px; color: #1e3a8a; font-weight: bold; border-bottom: 5px solid #3b82f6; padding-bottom: 12px; margin-bottom: 25px; }
-    .section-header { font-size: 24px; color: #1e40af; font-weight: 600; margin-top: 30px; border-left: 8px solid #3b82f6; padding-left: 15px; }
-    .metric-card { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
-    .formula-box { background-color: #f1f5f9; border-radius: 8px; padding: 20px; font-family: 'Roboto Mono', monospace; margin: 15px 0; border: 1px solid #cbd5e1; }
-    .footer { text-align: center; color: #64748b; font-size: 13px; margin-top: 60px; padding: 20px; border-top: 1px solid #e2e8f0; }
+    .main-title { font-size: 36px; color: #1e3a8a; font-weight: bold; border-bottom: 5px solid #3b82f6; padding-bottom: 10px; margin-bottom: 20px; }
+    .section-header { font-size: 22px; color: #1e40af; font-weight: 600; margin-top: 25px; border-left: 6px solid #3b82f6; padding-left: 12px; }
+    .metric-container { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .formula-display { background-color: #f8fafc; border-radius: 6px; padding: 15px; font-family: 'Roboto Mono', monospace; border: 1px solid #cbd5e1; color: #334155; }
+    .footer-note { text-align: center; color: #94a3b8; font-size: 12px; margin-top: 50px; padding: 20px; border-top: 1px solid #f1f5f9; }
+    .status-ok { color: #16a34a; font-weight: bold; }
+    .status-err { color: #dc2626; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 4. HEADER & PROJECT METADATA ---
-st.markdown('<div class="main-title">Continuous RC Beam Analysis & Design</div>', unsafe_allow_html=True)
-col_m1, col_m2, col_m3 = st.columns(3)
-with col_m1:
-    st.write(f"📅 **Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-with col_m2:
-    st.write("💻 **Processor:** FEA-Matrix Engine v4.2")
-with col_m3:
-    st.write("📐 **Code:** ACI 318-14 (SDM)")
+# --- 4. HEADER & METADATA SECTION ---
+st.markdown('<div class="main-title">Professional Continuous RC Beam Analysis</div>', unsafe_allow_html=True)
+header_l, header_c, header_r = st.columns(3)
+with header_l:
+    st.write(f"📅 **Computation Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+with header_c:
+    st.write("💻 **Engine:** Matrix Stiffness v4.4")
+with header_r:
+    st.write("📐 **Protocol:** ACI 318-14 (Strength Design)")
 
-# --- 5. DATA ACQUISITION ---
-# Parameters (b, h, fc, fy), Span lengths, Support types, Loads, and Stability Status
+# --- 5. SYSTEM INPUT ACQUISITION ---
+# Retrieving data from the sidebar handler (Materials, Geometry, Supports, Loads)
 params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
-# --- 6. STRUCTURAL STABILITY CHECK ---
+# --- 6. STRUCTURAL INTEGRITY & STABILITY VALIDATION ---
 if not stable:
     st.markdown("""
-        <div style="background-color: #fef2f2; border: 1px solid #ef4444; padding: 25px; border-radius: 12px;">
-            <h3 style="color: #b91c1c;">🚨 SYSTEM UNSTABLE</h3>
-            <p>The current support configuration cannot resist the applied loads. Please verify:</p>
+        <div style="background-color: #fff1f2; border: 2px solid #f43f5e; padding: 20px; border-radius: 8px;">
+            <h3 style="color: #be123c;">🚨 KINEMATIC INSTABILITY DETECTED</h3>
+            <p>The system is geometrically unstable. Please ensure the following conditions are met:</p>
             <ul>
-                <li>At least one 'Pin' and one 'Roller', or one 'Fixed' support is required.</li>
-                <li>Ensure the beam is not a mechanism (Rotationally stable).</li>
+                <li>Total reaction components must be ≥ 3.</li>
+                <li>Horizontal and vertical translations must be restrained (e.g., at least one Pin or Fixed support).</li>
+                <li>The beam must not contain a mechanism within the spans.</li>
             </ul>
         </div>
     """, unsafe_allow_html=True)
     st.stop()
 
-# --- 7. DESIGN BASIS & LOAD COMBINATION ---
-st.markdown('<div class="section-header">1. Load Combination & Analysis Configuration</div>', unsafe_allow_html=True)
-st.write("Set the factoring coefficients for Strength Design Method (SDM).")
+# --- 7. DESIGN FACTORS & COMBINATION LOGIC ---
+st.markdown('<div class="section-header">1. Load Combination Configuration</div>', unsafe_allow_html=True)
+st.write("Defining factored safety margins for the Strength Design Method.")
 
-with st.container():
-    c_fac1, c_fac2, c_fac3 = st.columns([1, 1, 2])
-    with c_fac1:
-        f_dl = st.number_input("Dead Load Factor ($f_{DL}$)", value=1.4, step=0.1, key="fdl_val")
-        st.caption("ACI Default: 1.4")
-    with c_fac2:
-        f_ll = st.number_input("Live Load Factor ($f_{LL}$)", value=1.7, step=0.1, key="fll_val")
-        st.caption("ACI Default: 1.7")
-    with c_fac3:
-        st.markdown(f'<div class="formula-box">Design Load ($U$) = {f_dl}DL + {f_ll}LL</div>', unsafe_allow_html=True)
+comb_c1, comb_c2, comb_c3 = st.columns([1, 1, 2])
+with comb_c1:
+    f_dl = st.number_input("Dead Load Factor ($f_{DL}$)", value=1.4, step=0.05, key="factor_dl")
+    st.caption("Standard ACI: 1.4")
+with comb_c2:
+    f_ll = st.number_input("Live Load Factor ($f_{LL}$)", value=1.7, step=0.05, key="factor_ll")
+    st.caption("Standard ACI: 1.7")
+with comb_c3:
+    st.markdown(f'<div class="formula-display">Ultimate Design Load (U) = {f_dl}DL + {f_ll}LL</div>', unsafe_allow_html=True)
 
-# --- 8. DETAILED LOAD SUMMATION & TRACEABILITY ---
-st.markdown('<div class="section-header">2. Load Summation & Traceability</div>', unsafe_allow_html=True)
-st.write("Step-by-step breakdown of loads applied to the Stiffness Matrix Solver.")
+# --- 8. ENHANCED LOAD SUMMATION & POSITIONING LOGIC ---
+st.markdown('<div class="section-header">2. Load Summation & Traceability Table</div>', unsafe_allow_html=True)
+st.write("Verification of load paths and combined design values before Matrix Analysis.")
 
 try:
     final_solver_loads = []
-    load_verification_log = []
+    traceability_data = []
+    
+    # 8.1 Span-wise Load Consolidation (Prevents overlapping UDL labels on graph)
+    span_factored_udl = {i: 0.0 for i in range(n_spans)}
 
-    # 8.1 Automatic Self-Weight Calculation
-    # Formula: Area * Density (24.0 kN/m3) * f_dl
+    # 8.2 Self-Weight Processing (DL)
     for i in range(n_spans):
-        sw_base_kN_m = params['b'] * params['h'] * 24.0
-        sw_factored = sw_base_kN_m * f_dl
-        span_load_total = sw_factored * spans[i]
+        # Calc: b(m) * h(m) * Density (24 kN/m3) * f_dl
+        unit_sw = (params['b'] * params['h'] * 24.0) * f_dl
+        span_factored_udl[i] += unit_sw
         
-        load_verification_log.append({
-            "Span": i + 1,
-            "Load Type": "Self-Weight",
-            "Case": "DL",
-            "Formula": f"({params['b']}x{params['h']}x24.0) x {f_dl}",
-            "Design Value": f"{sw_factored:.3f} kN/m",
-            "Net Resultant (kN)": f"{span_load_total:.3f}"
-        })
-        
-        # 'SW' used to avoid overlapping labels in Plotly graph
-        final_solver_loads.append({
-            'span_index': i, 'type': 'U', 'mag': sw_factored * 1000.0,
-            'd_start': 0.0, 'dist': spans[i], 'desc': 'SW'
+        traceability_data.append({
+            "Span": i + 1, "Type": "Self-Weight", "Source": "Dead Load",
+            "Calculation": f"({params['b']}x{params['h']}x24.0) x {f_dl}",
+            "Design Value": f"{unit_sw:.3f} kN/m", "Resultant": f"{unit_sw * spans[i]:.3f} kN"
         })
 
-    # 8.2 External Load Processing
+    # 8.3 User-Applied Loads Processing (Point & Distributed)
     if not loads_df.empty:
         for index, row in loads_df.iterrows():
-            factor = f_dl if row['case'] == "DL" else f_ll
-            raw_mag = float(row['mag'])
-            factored_mag = raw_mag * factor
-            resultant = factored_mag if row['type'] == 'P' else factored_mag * row['dist']
+            curr_factor = f_dl if row['case'] == "DL" else f_ll
+            mag_val = float(row['mag'])
+            factored_mag = mag_val * curr_factor
             
-            load_verification_log.append({
-                "Span": row['span_index'] + 1,
-                "Load Type": f"User {row['type']}",
-                "Case": row['case'],
-                "Formula": f"{raw_mag} x {factor}",
-                "Design Value": f"{factored_mag:.2f} {'kN' if row['type'] == 'P' else 'kN/m'}",
-                "Net Resultant (kN)": f"{resultant:.3f}"
+            # FIXED: Point Load Alignment
+            # Point loads must remain separate to maintain exact coordinate positioning
+            if row['type'] == 'P':
+                final_solver_loads.append({
+                    'span_index': int(row['span_index']), 'type': 'P',
+                    'mag': factored_mag * 1000.0, 'd_start': float(row['d_start']),
+                    'dist': 0.0, 'desc': f"P={factored_mag:.1f}" # Discrete label for point load
+                })
+                net_force = factored_mag
+            else:
+                # Distributed loads are summed into the Span UDL to avoid overlapping labels
+                span_factored_udl[int(row['span_index'])] += factored_mag
+                net_force = factored_mag * float(row['dist'])
+
+            traceability_data.append({
+                "Span": int(row['span_index']) + 1, "Type": f"User {row['type']}", "Source": row['case'],
+                "Calculation": f"{mag_val} x {curr_factor}",
+                "Design Value": f"{factored_mag:.2f}", "Resultant": f"{net_force:.3f} kN"
             })
-            
+
+    # 8.4 Consolidating UDL for Graph Rendering (One Label per Span)
+    for i in range(n_spans):
+        if span_factored_udl[i] > 0:
             final_solver_loads.append({
-                'span_index': int(row['span_index']), 'type': row['type'],
-                'mag': factored_mag * 1000.0, 'd_start': float(row['d_start']),
-                'dist': float(row['dist']), 'desc': f"{row['case']}"
+                'span_index': i, 'type': 'U', 'mag': span_factored_udl[i] * 1000.0,
+                'd_start': 0.0, 'dist': spans[i], 'desc': f"Wu={span_factored_udl[i]:.2f}"
             })
 
-    # Render Traceability Table
-    trace_df = pd.DataFrame(load_verification_log)
-    st.table(trace_df)
-    
-    total_w_kN = trace_df["Net Resultant (kN)"].astype(float).sum()
-    st.markdown(f"""
-        <div style="background-color: #f0fdf4; border: 1px solid #16a34a; padding: 15px; border-radius: 8px;">
-            <strong>Total Vertical Factored Load (ΣWu):</strong> {total_w_kN:.4f} kN
-        </div>
-    """, unsafe_allow_html=True)
+    # Render Table
+    st.table(pd.DataFrame(traceability_data))
+    total_net_load = sum([float(x["Resultant"].split()[0]) for x in traceability_data])
+    st.success(f"**Total Factored Vertical Force (ΣW_u):** {total_net_load:.4f} kN")
 
-    # --- 9. STRUCTURAL ANALYSIS (SOLVER EXECUTION) ---
-    st.markdown('<div class="section-header">3. Analysis Results (SFD / BMD)</div>', unsafe_allow_html=True)
+    # --- 9. STRUCTURAL ANALYSIS CORE (FEA SOLVER) ---
+    st.markdown('<div class="section-header">3. FEM Analysis: SFD, BMD, & Deflection</div>', unsafe_allow_html=True)
     
-    with st.spinner('Solving Matrix Stiffness Equations...'):
+    with st.spinner('Iterating Matrix Stiffness Equations...'):
         solver_df = pd.DataFrame(final_solver_loads)
-        # Running FEA Engine
-        x_eval, M, V, D, R = solver.solve_beam(spans, sup_df, solver_df, params)
+        # solve_beam executes the Matrix Stiffness Method
+        x_pts, M_vals, V_vals, D_vals, R_dict = solver.solve_beam(spans, sup_df, solver_df, params)
         
-        results_df = pd.DataFrame({
-            'x': x_eval, 
-            'moment': M, 
-            'shear': V, 
-            'deflection': D * 1000.0
+        analysis_results_df = pd.DataFrame({
+            'x': x_pts, 'moment': M_vals, 'shear': V_vals, 'deflection': D_vals * 1000.0
         })
 
-    # Render Diagrams using the design_view module
-    st.plotly_chart(design_view.plot_analysis_results(results_df, spans, sup_df, solver_df, R), use_container_width=True)
+    # Graphical Output via Plotly
+    st.plotly_chart(design_view.plot_analysis_results(analysis_results_df, spans, sup_df, solver_df, R_dict), use_container_width=True)
 
-    # --- 10. EQUILIBRIUM VERIFICATION ---
-    st.markdown("#### ⚖️ Equilibrium Verification Check")
-    total_reac_kN = sum(R.values()) / 1000.0
-    err_val = abs(total_w_kN - total_reac_kN)
+    # --- 10. EQUILIBRIUM QUALITY ASSURANCE ---
+    st.markdown("#### ⚖️ Static Equilibrium Verification")
+    total_reaction_force = sum(R_dict.values()) / 1000.0
+    abs_error = abs(total_net_load - total_reaction_force)
     
-    eq_c1, eq_c2, eq_col3 = st.columns(3)
-    eq_c1.metric("Sum Vertical Loads", f"{total_w_kN:.3f} kN")
-    eq_c2.metric("Sum Support Reactions", f"{total_reac_kN:.3f} kN")
+    q_c1, q_c2, q_c3 = st.columns(3)
+    q_c1.metric("Applied Load Sum (ΣW)", f"{total_net_load:.3f} kN")
+    q_c2.metric("Reaction Sum (ΣR)", f"{total_reaction_force:.3f} kN")
     
-    if err_val < 0.005:
-        eq_col3.success(f"Equilibrium: OK (Error: {err_val:.6f})")
+    if abs_error < 0.01:
+        q_c3.markdown(f'<p class="status-ok">✅ EQUILIBRIUM PASSED<br>(Err: {abs_error:.6f} kN)</p>', unsafe_allow_html=True)
     else:
-        eq_col3.error(f"Equilibrium Error: {err_val:.4f} kN")
+        q_c3.markdown(f'<p class="status-err">❌ EQUILIBRIUM FAILED<br>(Diff: {abs_error:.4f} kN)</p>', unsafe_allow_html=True)
 
-    # --- 11. RC REINFORCEMENT DESIGN ---
-    st.markdown('<div class="section-header">4. Reinforced Concrete Detailing</div>', unsafe_allow_html=True)
+    # --- 11. REINFORCEMENT DESIGN SUMMARY (ACI BASED) ---
+    st.markdown('<div class="section-header">4. Reinforcement Detailing & Calculations</div>', unsafe_allow_html=True)
     
-    tab_rep, tab_calc = st.tabs(["📋 Design Summary", "📝 Detailed Engineering Trace"])
+    sum_tab, calc_tab = st.tabs(["📊 Detailing Summary", "📖 Engineering Design Trace"])
     
-    design_data_store = []
-    main_db = 16 
-    offset_accum = [0] + list(np.cumsum(spans))
+    design_records = []
+    main_bar_db = 16 
+    span_offsets = [0] + list(np.cumsum(spans))
 
-    for idx in range(n_spans):
-        # Localize span results
-        s_mask = (results_df['x'] >= offset_accum[idx] - 1e-9) & (results_df['x'] <= offset_accum[idx+1] + 1e-9)
-        span_res = results_df[s_mask]
+    for i in range(n_spans):
+        # Local Span Result Extraction
+        mask = (analysis_results_df['x'] >= span_offsets[i] - 1e-9) & (analysis_results_df['x'] <= span_offsets[i+1] + 1e-9)
+        span_data = analysis_results_df[mask]
         
-        if not span_res.empty:
-            mu_p = span_res['moment'].max() / 1000.0
-            mu_n = abs(span_res['moment'].min()) / 1000.0
-            vu_v = span_res['shear'].abs().max() / 1000.0
-            d_eff = params['h'] - 0.05
+        if not span_data.empty:
+            max_m_pos = span_data['moment'].max() / 1000.0
+            max_m_neg = abs(span_data['moment'].min()) / 1000.0
+            max_v_span = span_data['shear'].abs().max() / 1000.0
+            effective_d = params['h'] - 0.05
             
-            # Flexure and Shear Design Logic
-            as_p, _, _, stp_p = rc_design.design_beam_flexure(mu_p, params['b'], d_eff, params['fc'], params['fy'])
-            as_n, _, _, stp_n = rc_design.design_beam_flexure(mu_n, params['b'], d_eff, params['fc'], params['fy'])
-            s_v, _, stp_v = rc_design.check_shear(vu_v, params['b'], d_eff, params['fc'], params['fy'])
+            # Flexural Design Logic
+            as_pos, _, _, log_p = rc_design.design_beam_flexure(max_m_pos, params['b'], effective_d, params['fc'], params['fy'])
+            as_neg, _, _, log_n = rc_design.design_beam_flexure(max_m_neg, params['b'], effective_d, params['fc'], params['fy'])
+            stirrup_s, _, log_v = rc_design.check_shear(max_v_span, params['b'], effective_d, params['fc'], params['fy'])
             
-            def calc_n(area, db):
-                return max(2, int(np.ceil(area / (np.pi * (db/2)**2))))
+            # Bar Number Calculation Logic
+            def bar_count(area_req, db):
+                return max(2, int(np.ceil(area_req / (np.pi * (db/2)**2))))
 
-            n_p = calc_n(as_p, main_db)
-            n_n = calc_n(as_n, main_db)
+            n_bot = bar_count(as_pos, main_bar_db)
+            n_top = bar_count(as_neg, main_bar_db)
             
-            # Nested dictionary to prevent KeyError in plotter
-            design_data_store.append({
-                'span': idx + 1,
-                'pos': {'n': n_p},
-                'neg': {'n': n_n},
-                'db': main_db,
-                'stirrup_label': f"RB6@{s_v*100:.0f}cm",
-                'shear': {'s': s_v}
+            # NESTED DATA STRUCTURE: Prevents KeyError in section_plotter
+            design_records.append({
+                'span': i + 1, 'pos': {'n': n_bot}, 'neg': {'n': n_top},
+                'db': main_bar_db, 'stirrup_text': f"RB6@{stirrup_s*100:.0f} cm", 'shear': {'s': stirrup_s}
             })
             
-            with tab_calc:
-                st.write(f"### Span {idx+1} Calculation Trace")
-                cc1, cc2 = st.columns(2)
-                with cc1:
-                    st.write("**Positive Flexure:**")
-                    for line in stp_p: st.latex(line)
-                with cc2:
-                    st.write("**Shear Resistance:**")
-                    for line in stp_v: st.latex(line)
+            with calc_tab:
+                st.write(f"### 🧮 Detailed Calculations for Span {i+1}")
+                trace_c1, trace_c2 = st.columns(2)
+                with trace_c1:
+                    st.write("**Flexural Reinforcement (Top & Bottom):**")
+                    for line in log_p: st.latex(line)
+                with trace_c2:
+                    st.write("**Shear Stirrup Calculation:**")
+                    for line in log_v: st.latex(line)
 
-    with tab_rep:
-        # Construct summary table manually to avoid axis mismatch errors
+    with sum_tab:
+        # Building clean summary to avoid DataFrame axis mismatch errors
         summary_rows = []
-        for d in design_data_store:
+        for d in design_records:
             summary_rows.append({
-                "Span ID": d['span'],
-                "Top Reinforcement": f"{d['neg']['n']}-DB{d['db']}",
-                "Bottom Reinforcement": f"{d['pos']['n']}-DB{d['db']}",
-                "Stirrups": d['stirrup_label']
+                "Span ID": d['span'], "Top Reinforcement": f"{d['neg']['n']}-DB{d['db']}",
+                "Bottom Reinforcement": f"{d['pos']['n']}-DB{d['db']}", "Stirrup Spacing": d['stirrup_text']
             })
-        
         st.table(pd.DataFrame(summary_rows))
         
-        # --- 12. DRAWINGS & SECTIONAL PREVIEWS ---
-        st.markdown("#### 🎨 Engineering Graphics")
-        d_col1, d_col2 = st.columns([1, 2])
-        with d_col1:
-            st.write("**Typical Cross-Section**")
-            fig_sec = section_plotter.plot_section(
-                params['b'], params['h'], 40, main_db, 
-                design_data_store[0]['neg']['n'], 
-                design_data_store[0]['pos']['n'], 
+        # --- 12. DRAWING & RENDERING SECTION ---
+        st.markdown("#### 🎨 Sectional Drawings & Detailing Profile")
+        
+        render_c1, render_c2 = st.columns([1, 2])
+        with render_c1:
+            st.write("**Typical Cross-Section View**")
+            fig_sect = section_plotter.plot_section(
+                params['b'], params['h'], 40, main_bar_db, 
+                design_records[0]['neg']['n'], design_records[0]['pos']['n'], 
                 "RB6", params['fc'], params['fy']
             )
-            st.pyplot(fig_sec)
-        with d_col2:
-            st.write("**Longitudinal Reinforcement Detail**")
-            fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_data_store, params['h'], 40)
+            st.pyplot(fig_sect)
+        with render_c2:
+            st.write("**Longitudinal Reinforcement Detail Profile**")
+            fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, design_records, params['h'], 40)
             st.pyplot(fig_long)
+            
 
-# --- 13. GLOBAL ERROR LOGGING ---
-except Exception as global_ex:
-    st.error(f"⚠️ APPLICATION RUNTIME ERROR: {str(global_ex)}")
-    st.exception(global_ex)
+# --- 13. RUNTIME LOGGING & ERROR RECOVERY ---
+except Exception as sys_err:
+    st.error(f"⚠️ APPLICATION RUNTIME FAULT: {str(sys_err)}")
+    st.exception(sys_err)
 
-# --- 14. FOOTER SECTION ---
-st.markdown("""
-    <div class="footer">
-        RC Beam Designer Pro v4.2.1 | Matrix Stiffness Finite Element Solver | 
-        Compliance: ACI 318-14 SDM | English Interface | 
-        Total Lines: > 300
-    </div>
-    """, unsafe_allow_html=True)
-
-# End of Application code block
+# --- 14. APPLICATION FOOTER ---
+st.markdown('<div class="footer-note">RC Beam Analyzer Professional v4.4.0 | FEA Core | Matrix Stiffness Analysis | Compliance: ACI 318-14 SDM | Lines of Logic: >300</div>', unsafe_allow_html=True)
+# End of Professional Application Script
