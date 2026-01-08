@@ -58,16 +58,19 @@ if stable:
         tab_analysis.render(x_plot, M_plot, V_plot, D_plot, R_plot, spans, sup_df, display_loads, tag)
 
     with t2:
-        # ฟังก์ชันนี้จะ Return ค่ากลับมาเพื่อส่งให้ Tab 3
+        # ตอนเรียกใช้ tab_design.render
         design_results = tab_design.render(
-            n_spans, spans, params, 
-            x_ult, M_ult, V_ult,  # ส่งค่า Ultimate ไปออกแบบ
-            x_svc, M_svc, D_svc,  # ส่งค่า Service ไปดู Deflection
-            is_service
-        )
+        n_spans, spans, params, 
+        x_ult, M_ult, V_ult, 
+        x_svc, M_svc, D_svc, 
+        is_service,
+        sup_df  # <--- อย่าลืมส่งตัวนี้เพิ่มเข้าไปครับ
+    )
+      
 
     with t3:
         tab_report.render(design_results, project_name, engineer_name)
 
 else:
     st.error("Structure Unstable")
+
