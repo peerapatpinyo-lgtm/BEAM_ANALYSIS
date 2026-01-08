@@ -1,4 +1,4 @@
-# reporter.py - Full Detailed Version
+# reporter.py
 import streamlit as st
 import numpy as np
 
@@ -12,7 +12,7 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     4. Serviceability (Deflection & Cracking) with Transformed Section Analysis
     """
     
-    # --- 0. HEADER ---
+    # --- 0. HEADER & PREPARE DATA ---
     st.markdown(f"## 📄 Detailed Calculation: Span {span_idx + 1}")
     st.markdown("---")
     
@@ -22,6 +22,12 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     L_mm = span_len * 1000
     cover = res_data.get('cover', 25)
     Es = 200000 # Steel Modulus (MPa)
+    
+    # --- [FIX] EXTRACT REINFORCEMENT DATA EARLY ---
+    # ดึงค่าออกมาไว้ตรงนี้ เพื่อให้ทุก Section เรียกใช้ได้ ไม่ว่าจะเข้าเงื่อนไข if/else ไหน
+    stir_db = res_data['stir_db']
+    bot_db = res_data['bot_db']
+    top_db = res_data['top_db']
     
     # --- 1. DESIGN DATA & PROPERTIES ---
     st.markdown("### 1. Design Data & Material Properties")
@@ -59,9 +65,7 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     if mu <= 0.01:
         st.write("No significant positive moment in this span.")
     else:
-        bot_db = res_data['bot_db']
         bot_n = res_data['pos']['n']
-        stir_db = res_data['stir_db']
         
         # 2.1 Effective Depth
         d_bot = h_mm - cover - stir_db - (bot_db/2)
@@ -117,7 +121,6 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     if mu_neg_val <= 0.01:
         st.info("No significant negative moment.")
     else:
-        top_db = res_data['top_db']
         top_n = res_data['neg']['n']
         d_top = h_mm - cover - stir_db - (top_db/2)
         As_top = top_n * (np.pi * (top_db/2)**2)
@@ -141,7 +144,12 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     
     vu = res_data['Vu_max']
     stir_s = res_data['shear']['s']
-    stir_db = res_data['stir_db']
+    
+    # Use d_bot for shear calc (conservative/standard)
+    # If d_bot is not calculated (e.g. no pos moment), calculate it now
+    if 'd_bot' not in locals():
+        d_bot = h_mm - cover - stir_db - (bot_db/2)
+
     Av = 2 * (np.pi * (stir_db/2)**2)
     
     st.markdown("**4.1 Concrete Capacity ($\phi V_c$)**")
@@ -195,6 +203,12 @@ def render_calculation_report(span_idx, span_len, b, h, fc, fy, Mu_pos, Mu_neg, 
     st.markdown("**5.3 Effective Moment of Inertia ($I_e$)**")
     st.write(f"Service Moment ($M_a$): **{Ma_pos:.2f}** kNm")
     
+    # Calculate As_prov again if not in locals (case where Mu_pos was 0)
+    if 'As_prov' not in locals():
+         # Default to min steel or actual user input for calculation purposes
+         bot_n = res_data['pos']['n']
+         As_prov = bot_n * (np.pi * (bot_db/2)**2)
+
     if Ma_pos < Mcr:
         st.success(f"Condition: $M_a < M_{{cr}}$ $\\to$ Section is **Uncracked**")
         Ie = Ig
