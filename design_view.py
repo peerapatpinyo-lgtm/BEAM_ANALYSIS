@@ -6,7 +6,7 @@ import pandas as pd
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
     Creates a Textbook-style structural analysis plot.
-    Clean version: No summary header, focused on diagrams.
+    FIXED: Point Load annotation now uses 'd_start' for correct visual positioning.
     """
     
     # --- Create Subplots ---
@@ -50,7 +50,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         ), row=1, col=1)
 
     # Loads (FIXED ITERATION HERE)
-    # Check if loads is DataFrame, convert to list of dicts for safe iteration
     if isinstance(loads, pd.DataFrame):
         load_iter = loads.to_dict('records')
     else:
@@ -61,11 +60,11 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         start_x = cum_dist[span_idx]
         mag_kN = l['mag'] / 1000.0
         
-        # Check description (Self-weight vs User) to color differently if needed?
-        # Keeping it simple for now.
-        
         if l['type'] == 'P':
-            x_loc = start_x + l['dist']
+            # [FIXED POSITION] เปลี่ยนจาก l['dist'] เป็น l['d_start'] 
+            # เพื่อให้ลูกศรเลื่อนไปตามตำแหน่ง x ที่ระบุจริง
+            x_loc = start_x + float(l['d_start']) 
+            
             fig.add_annotation(
                 x=x_loc, y=0, ax=0, ay=-50,
                 xref="x1", yref="y1",
@@ -74,11 +73,9 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             )
 
         elif l['type'] == 'U':
-            x_s = start_x
-            # Support partial or full span UDL
-            # Logic: If dist matches span length, it's full. 
-            # Current Input Handler: dist is the length of load
-            x_e = x_s + l['dist']
+            # สำหรับ UDL ระยะเริ่มคือ start_span + d_start
+            x_s = start_x + float(l.get('d_start', 0))
+            x_e = x_s + float(l['dist'])
             h_vis = 0.25
             
             fig.add_trace(go.Scatter(
@@ -86,7 +83,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 mode='lines', line=dict(color='#2980b9', width=2), hoverinfo='skip'
             ), row=1, col=1)
             
-            n_arrows = max(3, int(l['dist'] * 3)) 
+            n_arrows = max(3, int(float(l['dist']) * 3)) 
             arrow_x = np.linspace(x_s, x_e, n_arrows)
             for ax_x in arrow_x:
                 fig.add_annotation(
