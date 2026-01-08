@@ -4,13 +4,14 @@ import numpy as np
 import io
 
 # --- 1. IMPORT CUSTOM MODULES ---
+# ตรวจสอบให้แน่ใจว่าไฟล์ modules เหล่านี้อยู่ใน folder เดียวกัน
 import input_handler
 import solver
-# import rc_design  <-- ไม่ต้องใช้แล้ว เพราะเราคำนวณสดในหน้าเว็บ
 import design_view
 import section_plotter
 
 # --- HELPER FUNCTIONS: REAL-TIME CALCULATION ---
+
 def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     """คำนวณ As required โดยประมาณ"""
     if Mu_kNm == 0: return 0.0
@@ -41,18 +42,24 @@ def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     
     return 0.0
 
-def get_phi_Mn(n, db, d_eff, b, fc, fy):
-    """คำนวณ Capacity รับโมเมนต์จริง (phi Mn)"""
+def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
+    """
+    คำนวณ Capacity และส่งค่าตัวแปรย่อยกลับมาเพื่อทำ Report
+    Returns: phi_Mn, Ast, a, Mn_raw
+    """
     Ast = n * (np.pi * (db/2)**2)
-    if Ast == 0: return 0.0, 0.0
+    if Ast == 0: return 0.0, 0.0, 0.0, 0.0
     
     a = (Ast * fy) / (0.85 * fc * b)
     Mn = Ast * fy * (d_eff - a/2)
     phi_Mn = 0.9 * Mn / 1e6 # kNm
-    return phi_Mn, Ast
+    return phi_Mn, Ast, a, Mn
 
-def check_shear(Vu_kN, b, d, fc, fy, stir_db, spacing):
-    """คำนวณ Capacity แรงเฉือน (phi Vn)"""
+def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
+    """
+    คำนวณ Capacity แรงเฉือน และส่งค่าตัวแปรย่อยกลับมาเพื่อทำ Report
+    Returns: status, phi_Vn, phi_Vc, phi_Vs, Vc_raw, Vs_raw
+    """
     Vu = abs(Vu_kN) * 1000 # N
     Vc = 0.17 * np.sqrt(fc) * b * d
     phi = 0.85
@@ -62,10 +69,11 @@ def check_shear(Vu_kN, b, d, fc, fy, stir_db, spacing):
     if spacing <= 0: spacing = 1000 # prevent div by zero
     
     Vs = (Av * fy * d) / spacing
-    phi_Vn = phi_Vc + (phi * Vs)
+    phi_Vs = phi * Vs
+    phi_Vn = phi_Vc + phi_Vs
     
     status = "OK" if phi_Vn >= Vu else "FAIL"
-    return status, phi_Vn/1000, phi_Vc/1000
+    return status, phi_Vn/1000, phi_Vc/1000, phi_Vs/1000, Vc, Vs
 
 # --- 2. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Beam Analysis & Design Pro", layout="wide", page_icon="🏗️")
@@ -182,7 +190,7 @@ else:
         })
         
         # --- 7. TABS FOR RESULTS & REPORTING ---
-        tab1, tab2 = st.tabs(["📊 1. Analysis Results & Checks", "📝 2. Interactive Design"])
+        tab1, tab2 = st.tabs(["📊 1. Analysis Results & Checks", "📝 2. Interactive Design & Report"])
         
         with tab1:
             # 7.1 Plot Analysis Diagrams (BMD, SFD, Deflection)
@@ -227,7 +235,7 @@ else:
                     else:
                         st.error(f"Balance Check: FAIL (Diff: {abs(sum_R_kN - total_applied_kN):.4f} kN)")
 
-        # ================= TAB 2: INTERACTIVE DESIGN =================
+        # ================= TAB 2: INTERACTIVE DESIGN & REPORT =================
         with tab2:
             st.header(f"⚙️ Interactive RC Design ({tag})")
             
@@ -243,6 +251,12 @@ else:
             final_design_res = []
             offsets = [0] + list(np.cumsum(spans))
             
+            # String Accumulator สำหรับ รายการคำนวณ
+            full_cal_report = f"# 🏗️ RC Beam Design Calculation Report\n"
+            full_cal_report += f"**Design Parameters:** fc' = {fc} MPa, fy = {fy} MPa, b = {b_mm} mm, h = {h_mm} mm\n"
+            full_cal_report += f"**Load Factors:** DL={f_dl}, LL={f_ll}\n"
+            full_cal_report += "---\n"
+
             # Loop ทีละ Span เพื่อให้ User กรอกข้อมูล
             for i in range(n_spans):
                 s_len = spans[i]
@@ -258,6 +272,10 @@ else:
                 else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
 
+                # Append Header to Report
+                full_cal_report += f"\n## Span {i+1}: Length {s_len} m\n"
+                full_cal_report += f"**Analysis Forces:** Mu(+) = {mu_pos:.2f} kNm, Mu(-) = {mu_neg:.2f} kNm, Vu = {vu_max:.2f} kN\n"
+
                 # --- UI for Span i ---
                 with st.expander(f"📌 **Span {i+1}: Length {s_len} m** (Design Input)", expanded=True):
                     
@@ -272,7 +290,6 @@ else:
 
                     # 2. Bottom Steel (Positive Moment)
                     st.markdown("##### 1. Bottom Bars (Mid-span)")
-                    # Approx d_eff for estimation
                     d_eff_bot_est = h_mm - cover_mm - 9 - 10 
                     as_req_bot = get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
                     
@@ -284,19 +301,27 @@ else:
                     with cb3:
                         bot_n = st.number_input(f"Qty", min_value=2, value=2, step=1, key=f"bn_{i}")
                     with cb4:
-                        # Update d_eff based on actual selection (assuming 9mm stirrup for cal)
                         d_eff_bot_real = h_mm - cover_mm - 9 - (bot_db / 2)
-                        phi_Mn_bot, as_prov_bot = get_phi_Mn(bot_n, bot_db, d_eff_bot_real, b_mm, fc, fy)
+                        phi_Mn_bot, as_prov_bot, a_bot, Mn_bot_val = get_phi_Mn_details(bot_n, bot_db, d_eff_bot_real, b_mm, fc, fy)
                         
                         status_b = "✅ OK" if phi_Mn_bot >= mu_pos else "❌ FAIL"
                         if status_b == "✅ OK":
-                            st.success(f"{status_b} (Cap={phi_Mn_bot:.1f} kNm)")
+                            st.success(f"{status_b} (Cap={phi_Mn_bot:.1f})")
                         else:
-                            st.error(f"{status_b} (Cap={phi_Mn_bot:.1f} kNm)")
+                            st.error(f"{status_b} (Cap={phi_Mn_bot:.1f})")
+                    
+                    # Add to Report
+                    full_cal_report += f"\n**1. Positive Moment Design (Mid-Span)**\n"
+                    full_cal_report += f"- Required As = {as_req_bot:.2f} mm² (approx)\n"
+                    full_cal_report += f"- Provide: {bot_n}-DB{bot_db} (As = {as_prov_bot:.2f} mm²)\n"
+                    full_cal_report += f"- d_eff = {h_mm} - {cover_mm} - 9 - {bot_db/2} = {d_eff_bot_real:.2f} mm\n"
+                    full_cal_report += f"- a = (As * fy) / (0.85 * fc * b) = ({as_prov_bot:.0f}*{fy}) / (0.85*{fc}*{b_mm}) = {a_bot:.2f} mm\n"
+                    full_cal_report += f"- Mn = As * fy * (d - a/2) = {Mn_bot_val/1e6:.2f} kNm\n"
+                    full_cal_report += f"- **phi Mn = 0.9 * {Mn_bot_val/1e6:.2f} = {phi_Mn_bot:.2f} kNm**\n"
+                    full_cal_report += f"- Check: {phi_Mn_bot:.2f} >= {mu_pos:.2f} -> **{status_b}**\n"
 
                     # 3. Top Steel (Negative Moment)
                     st.markdown("##### 2. Top Bars (Supports)")
-                    # Approx d_eff for estimation
                     d_eff_top_est = h_mm - cover_mm - 9 - 10 
                     as_req_top = get_as_req(mu_neg, d_eff_top_est, fc, fy, b_mm)
                     
@@ -308,15 +333,24 @@ else:
                     with ct3:
                         top_n = st.number_input(f"Qty", min_value=2, value=2, step=1, key=f"tn_{i}")
                     with ct4:
-                        # Update d_eff based on actual selection
                         d_eff_top_real = h_mm - cover_mm - 9 - (top_db / 2)
-                        phi_Mn_top, as_prov_top = get_phi_Mn(top_n, top_db, d_eff_top_real, b_mm, fc, fy)
+                        phi_Mn_top, as_prov_top, a_top, Mn_top_val = get_phi_Mn_details(top_n, top_db, d_eff_top_real, b_mm, fc, fy)
                         
                         status_t = "✅ OK" if phi_Mn_top >= mu_neg else "❌ FAIL"
                         if status_t == "✅ OK":
-                            st.success(f"{status_t} (Cap={phi_Mn_top:.1f} kNm)")
+                            st.success(f"{status_t} (Cap={phi_Mn_top:.1f})")
                         else:
-                            st.error(f"{status_t} (Cap={phi_Mn_top:.1f} kNm)")
+                            st.error(f"{status_t} (Cap={phi_Mn_top:.1f})")
+
+                    # Add to Report
+                    full_cal_report += f"\n**2. Negative Moment Design (Support)**\n"
+                    full_cal_report += f"- Required As = {as_req_top:.2f} mm² (approx)\n"
+                    full_cal_report += f"- Provide: {top_n}-DB{top_db} (As = {as_prov_top:.2f} mm²)\n"
+                    full_cal_report += f"- d_eff = {h_mm} - {cover_mm} - 9 - {top_db/2} = {d_eff_top_real:.2f} mm\n"
+                    full_cal_report += f"- a = (As * fy) / (0.85 * fc * b) = ({as_prov_top:.0f}*{fy}) / (0.85*{fc}*{b_mm}) = {a_top:.2f} mm\n"
+                    full_cal_report += f"- Mn = As * fy * (d - a/2) = {Mn_top_val/1e6:.2f} kNm\n"
+                    full_cal_report += f"- **phi Mn = 0.9 * {Mn_top_val/1e6:.2f} = {phi_Mn_top:.2f} kNm**\n"
+                    full_cal_report += f"- Check: {phi_Mn_top:.2f} >= {mu_neg:.2f} -> **{status_t}**\n"
 
                     # 4. Shear (Stirrups)
                     st.markdown("##### 3. Stirrups (Shear)")
@@ -328,12 +362,24 @@ else:
                     with cs3:
                         stir_s = st.number_input(f"Spacing (mm)", value=150, step=10, key=f"ss_{i}")
                     with cs4:
-                        d_shear = d_eff_bot_real # Use calculated effective depth
-                        status_v, phi_Vn, phi_Vc = check_shear(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s)
+                        d_shear = d_eff_bot_real 
+                        status_v, phi_Vn, phi_Vc, phi_Vs, Vc_raw, Vs_raw = check_shear_details(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s)
                         if status_v == "OK":
                             st.success(f"✅ OK (Cap={phi_Vn:.1f})")
                         else:
                             st.error(f"❌ FAIL (Cap={phi_Vn:.1f})")
+
+                    # Add to Report
+                    full_cal_report += f"\n**3. Shear Design**\n"
+                    full_cal_report += f"- Vu = {vu_max:.2f} kN\n"
+                    full_cal_report += f"- Vc = 0.17 * sqrt(fc) * b * d = {Vc_raw/1000:.2f} kN\n"
+                    full_cal_report += f"- phi Vc = 0.85 * {Vc_raw/1000:.2f} = {phi_Vc:.2f} kN\n"
+                    full_cal_report += f"- Stirrups: RB{stir_db} @ {stir_s} mm (2 legs)\n"
+                    full_cal_report += f"- Vs = (Av * fy * d) / s = {Vs_raw/1000:.2f} kN\n"
+                    full_cal_report += f"- phi Vs = 0.85 * {Vs_raw/1000:.2f} = {phi_Vs:.2f} kN\n"
+                    full_cal_report += f"- **phi Vn = {phi_Vc:.2f} + {phi_Vs:.2f} = {phi_Vn:.2f} kN**\n"
+                    full_cal_report += f"- Check: {phi_Vn:.2f} >= {vu_max:.2f} -> **{status_v}**\n"
+                    full_cal_report += "--------------------------------------------------\n"
 
                     # Collect Data for Plotting
                     final_design_res.append({
@@ -396,6 +442,14 @@ else:
                                 params['fc'], params['fy'], f"SECTION B-B (Span {i+1})"
                             )
                             st.pyplot(fig_b, use_container_width=True)
+
+            # --- DISPLAY CALCULATION REPORT ---
+            st.markdown("---")
+            st.header("📄 Detailed Calculation Report (รายการคำนวณ)")
+            with st.expander("คลิกเพื่อดูรายการคำนวณละเอียด (Click to expand)", expanded=False):
+                st.code(full_cal_report, language='markdown')
+            
+            st.info("Tip: You can copy the text above and save as .md or .txt file.")
 
     except Exception as e:
         st.error(f"❌ Analysis Error: {e}")
