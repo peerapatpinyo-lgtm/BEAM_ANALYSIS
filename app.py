@@ -1,10 +1,9 @@
-# app.py
 import streamlit as st
-import utils  
-import solver 
-import input_handler # ไฟล์เดิมของคุณ
+import utils
+import solver
+import input_handler 
 
-# --- IMPORT MODULES ใหม่ที่เพิ่งสร้าง ---
+# --- IMPORT MODULES ใหม่ ---
 import tab_analysis
 import tab_design
 import tab_report
@@ -12,7 +11,6 @@ import tab_report
 st.set_page_config(page_title="RC Beam Pro", layout="wide")
 
 # --- SIDEBAR & INPUTS ---
-# (ส่วนนี้เหมือนเดิม หรือจะแยกเป็นไฟล์ sidebar.py ก็ได้)
 with st.sidebar:
     st.header("Project Info")
     project_name = st.text_input("Project Name", "Project A")
@@ -33,17 +31,17 @@ with st.sidebar:
         tag = "Ultimate"
 
 if stable:
-    # --- SOLVER PROCESS (คำนวณทีเดียวที่นี่) ---
+    # --- SOLVER PROCESS ---
     with st.spinner('Calculating...'):
         # Run Ultimate
         loads_ult = utils.prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, loads_ult, params)
         
-        # Run Service (เพื่อเช็ค Deflection)
+        # Run Service
         loads_svc = utils.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, loads_svc, params)
 
-    # เลือกชุดข้อมูลที่จะนำไปพล็อต
+    # เลือกชุดข้อมูลที่จะนำไปพล็อต Analysis
     if is_service:
         x_plot, M_plot, V_plot, D_plot, R_plot = x_svc, M_svc, V_svc, D_svc, R_svc
         display_loads = loads_svc
@@ -58,19 +56,17 @@ if stable:
         tab_analysis.render(x_plot, M_plot, V_plot, D_plot, R_plot, spans, sup_df, display_loads, tag)
 
     with t2:
-        # ตอนเรียกใช้ tab_design.render
+        # ส่งค่า sup_df เพิ่มเข้าไปตามที่คุณต้องการ
         design_results = tab_design.render(
-        n_spans, spans, params, 
-        x_ult, M_ult, V_ult, 
-        x_svc, M_svc, D_svc, 
-        is_service,
-        sup_df  # <--- อย่าลืมส่งตัวนี้เพิ่มเข้าไปครับ
-    )
-      
-
+            n_spans, spans, params, 
+            x_ult, M_ult, V_ult, 
+            x_svc, M_svc, D_svc, 
+            is_service,
+            sup_df  # <--- ส่งตัวนี้เพิ่มเข้าไป
+        )
+       
     with t3:
         tab_report.render(design_results, project_name, engineer_name)
 
 else:
     st.error("Structure Unstable")
-
