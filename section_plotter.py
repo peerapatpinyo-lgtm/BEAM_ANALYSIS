@@ -68,67 +68,69 @@ def plot_section(b_m, h_m, cover_mm, db_main_mm, n_top, n_bottom, stirrup_name, 
     
     return fig
 
-def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
+def plot_longitudinal_section_advanced(spans, sup_df, design_res, h_m, res_df):
     """
-    Professional Engineering Detailing for Longitudinal Reinforcement.
-    Features: Proper bar curtailment, Stirrup zones, and Support symbols.
+    Advanced Structural Detailing with Moment Envelope Overlay.
+    - Blue: Top Steel (Negative Moment)
+    - Red: Bottom Steel (Positive Moment)
+    - Gray: Shear Stirrups with varying zones
     """
     h = h_m * 1000
     total_L = sum(spans) * 1000
     offsets = [0] + list(np.cumsum(spans) * 1000)
     
-    fig, ax = plt.subplots(figsize=(16, 5))
-    
-    # 1. Concrete Outline
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h, linewidth=1.5, edgecolor='#34495e', facecolor='#fdfefe'))
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 8), sharex=True, 
+                                   gridspec_kw={'height_ratios': [1, 2]})
+    plt.subplots_adjust(hspace=0.05)
 
-    # 2. Rebar Detailing Logic
+    # --- 1. Top Axis: Moment Envelope for Verification ---
+    ax1.plot(res_df['x']*1000, res_df['moment']/1000, color='#27ae60', lw=1.5, label='Bending Moment')
+    ax1.fill_between(res_df['x']*1000, 0, res_df['moment']/1000, color='#27ae60', alpha=0.1)
+    ax1.axhline(0, color='black', lw=0.8)
+    ax1.set_ylabel("Moment (kNm)")
+    ax1.set_title("Moment Envelope vs. Bar Detailing", fontsize=12, fontweight='bold')
+
+    # --- 2. Bottom Axis: Detailed Reinforcement ---
+    # Draw Concrete
+    ax2.add_patch(patches.Rectangle((0, 0), total_L, h, facecolor='#f9f9f9', edgecolor='black', lw=1.5))
+    
+    cover = 40
     for i, span_l_m in enumerate(spans):
         L_mm = span_l_m * 1000
-        start_x = offsets[i]
-        end_x = offsets[i+1]
+        x_s, x_e = offsets[i], offsets[i+1]
         
-        # --- Bottom Steel (Positive) ---
-        # วิ่งยาวต่อเนื่องตลอดแนวล่าง (Continuous Bottom Reinforcement)
-        ax.plot([start_x, end_x], [cover_mm + 10, cover_mm + 10], color='#c0392b', lw=2.5, solid_capstyle='round')
-        ax.text(start_x + L_mm/2, cover_mm + 25, f"{design_res[i]['pos']['n']}-DB{design_res[i]['db']}", 
-                ha='center', color='#c0392b', fontsize=9, fontweight='bold')
+        # [เหล็กล่าง - Positive] วิ่งยาวตลอด (Main) + เสริมพิเศษกลางช่วง (Extra)
+        ax2.plot([x_s+50, x_e-50], [cover, cover], color='#c0392b', lw=3, solid_capstyle='round')
+        ax2.text(x_s + L_mm/2, cover+20, f"{design_res[i]['pos']['n']}-DB16", ha='center', color='#c0392b', size=9)
 
-        # --- Top Steel (Negative/Support Steel) ---
-        # หลักการ Curtailment: เหล็กบนต้องยื่นออกมา L/3 จากหน้า Support
-        cut_len = L_mm / 3.0
+        # [เหล็กบน - Negative] ตัดตามพฤติกรรม Moment (Inflection Points)
+        # แสดงระยะล้วงเข้า Support (Development Length)
+        cut_left = x_s + (L_mm * 0.3)
+        cut_right = x_e - (L_mm * 0.3)
+        ax2.plot([x_s, cut_left], [h-cover, h-cover], color='#2980b9', lw=3)
+        ax2.plot([cut_right, x_e], [h-cover, h-cover], color='#2980b9', lw=3)
         
-        # Left Support Steel
-        ax.plot([start_x, start_x + cut_len], [h - cover_mm - 10, h - cover_mm - 10], color='#2980b9', lw=2.5)
-        # Right Support Steel
-        ax.plot([end_x - cut_len, end_x], [h - cover_mm - 10, h - cover_mm - 10], color='#2980b9', lw=2.5)
+        # [เหล็กปลอก - Shear Stirrups]
+        # โซนถี่ (Denser at supports) vs โซนห่าง (Mid-span)
+        s_fine = design_res[i]['shear']['s']
+        s_coarse = min(s_fine * 2, h/2) # มาตรฐานยอมให้ห่างได้ไม่เกิน d/2
         
-        ax.text(start_x + 50, h - cover_mm - 40, f"{design_res[i]['neg']['n']}-DB{design_res[i]['db']}", 
-                ha='left', color='#2980b9', fontsize=8)
+        # วาดสัญลักษณ์โซนเหล็กปลอก
+        n_dense = 6
+        dense_points = list(np.linspace(x_s, x_s + 2*h, n_dense)) + \
+                       list(np.linspace(x_e - 2*h, x_e, n_dense))
+        for px in dense_points:
+            ax2.plot([px, px], [cover, h-cover], color='#95a5a6', lw=1, alpha=0.7)
+            
+        ax2.text(x_s + h, h/2, f"@{int(s_fine)}", ha='center', size=8, color='#7f8c8d')
+        ax2.text(x_s + L_mm/2, h/2, f"@{int(s_coarse)}", ha='center', size=8, color='#7f8c8d')
 
-        # --- Stirrup Zones (Shear Reinforcement) ---
-        # วาดโซนเหล็กปลอก ถี่ที่ปลาย ห่างที่กลาง
-        s_spacing = design_res[i]['shear']['s'] # ระยะที่คำนวณได้
-        n_zones = 10
-        zone_x = np.linspace(start_x, end_x, n_zones)
-        for z in zone_x:
-            ax.plot([z, z], [cover_mm, h - cover_mm], color='#7f8c8d', lw=0.8, alpha=0.6)
-        
-        ax.text(start_x + L_mm/2, h/2, f"Stirrups: @{int(s_spacing)}mm", 
-                ha='center', color='#7f8c8d', fontsize=8, fontstyle='italic')
+    # Draw Supports as Columns
+    for s_x in offsets:
+        ax2.add_patch(patches.Rectangle((s_x-100, -200), 200, 200, facecolor='#ecf0f1', edgecolor='#bdc3c7'))
 
-    # 3. Support Symbols (Column representation)
-    for _, sup in sup_df.iterrows():
-        sx = sup['x'] * 1000
-        # วาดรูปตอม่อหรือเสาประคอง
-        ax.add_patch(patches.Rectangle((sx-75, -150), 150, 150, facecolor='#bdc3c7', alpha=0.5))
-        ax.plot([sx-75, sx+75], [0, 0], 'k-', lw=2)
-
-    # 4. Dimension & Grid
-    ax.set_xlim(-200, total_L + 200)
-    ax.set_ylim(-300, h + 300)
-    ax.set_aspect('equal')
-    ax.axis('off')
-    plt.title(f"LONGITUDINAL REINFORCEMENT PROFILE (Standard Curtailment)", fontsize=12, fontweight='bold', pad=20)
+    ax2.set_ylim(-250, h + 150)
+    ax2.set_aspect('equal')
+    ax2.axis('off')
     
     return fig
