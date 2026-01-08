@@ -6,9 +6,58 @@ import io
 # --- 1. IMPORT CUSTOM MODULES ---
 import input_handler
 import solver
-import rc_design  # ใช้ไฟล์ที่เพิ่งอัปเกรด
+# import rc_design  <-- ไม่ต้องใช้แล้ว เพราะเราคำนวณสดในหน้าเว็บ
 import design_view
 import section_plotter
+
+# --- HELPER FUNCTIONS: REAL-TIME CALCULATION ---
+def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
+    """คำนวณ As required โดยประมาณ"""
+    if Mu_kNm == 0: return 0.0
+    Mu = abs(Mu_kNm) * 1e6 # N-mm
+    phi = 0.9
+    
+    # คำนวณ Rho
+    m = fy / (0.85 * fc)
+    Rn = Mu / (phi * b_mm * d_eff_mm**2)
+    try:
+        rho = (1/m) * (1 - np.sqrt(1 - (2*m*Rn)/fy))
+    except:
+        rho = 0.0 # Error case (Over reinforced / Section too small)
+    
+    as_req = rho * b_mm * d_eff_mm
+    
+    # Min Reinforcement Check
+    as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
+    as_min2 = (1.4 / fy) * b_mm * d_eff_mm
+    as_min = max(as_min1, as_min2)
+    
+    return max(as_req, as_min)
+
+def get_phi_Mn(n, db, d_eff, b, fc, fy):
+    """คำนวณ Capacity รับโมเมนต์จริง (phi Mn)"""
+    Ast = n * (np.pi * (db/2)**2)
+    if Ast == 0: return 0.0, 0.0
+    
+    a = (Ast * fy) / (0.85 * fc * b)
+    Mn = Ast * fy * (d_eff - a/2)
+    phi_Mn = 0.9 * Mn / 1e6 # kNm
+    return phi_Mn, Ast
+
+def check_shear(Vu_kN, b, d, fc, fy, stir_db, spacing):
+    """คำนวณ Capacity แรงเฉือน (phi Vn)"""
+    Vu = abs(Vu_kN) * 1000 # N
+    Vc = 0.17 * np.sqrt(fc) * b * d
+    phi = 0.85
+    phi_Vc = phi * Vc
+    
+    Av = 2 * (np.pi * (stir_db/2)**2) # 2 legs
+    if spacing <= 0: spacing = 1000 # prevent div by zero
+    Vs = (Av * fy * d) / spacing
+    phi_Vn = phi_Vc + (phi * Vs)
+    
+    status = "OK" if phi_Vn >= Vu else "FAIL"
+    return status, phi_Vn/1000, phi_Vc/1000
 
 # --- 2. PAGE CONFIGURATION ---
 st.set_page_config(page_title="Beam Analysis & Design Pro", layout="wide", page_icon="🏗️")
@@ -125,7 +174,7 @@ else:
         })
         
         # --- 7. TABS FOR RESULTS & REPORTING ---
-        tab1, tab2 = st.tabs(["📊 1. Analysis Results & Checks", "📝 2. RC Design & Report"])
+        tab1, tab2 = st.tabs(["📊 1. Analysis Results & Checks", "📝 2. Interactive Design"])
         
         with tab1:
             # 7.1 Plot Analysis Diagrams (BMD, SFD, Deflection)
@@ -151,23 +200,7 @@ else:
                 df_reac = pd.DataFrame(reaction_data).sort_values(by="Node")
                 st.dataframe(df_reac.style.format({"Reaction (kN)": "{:.2f}"}), use_container_width=True, hide_index=True)
 
-            # 7.4 Detailed Load Reports
-            with st.expander("🧮 Detailed Load Calculation Report", expanded=True):
-                st.markdown("#### A. Self-Weight Calculation")
-                sw_report = []
-                for i in range(n_spans):
-                    sw_report.append({
-                        "Span": i+1,
-                        "Dimensions": f"{params['b']}m x {params['h']}m",
-                        "Formula": f"b*h * 24 kN/m³ * {f_dl}",
-                        "Factored Result": f"{w_sw_factored_kN:.2f} kN/m"
-                    })
-                st.table(pd.DataFrame(sw_report))
-
-                st.markdown("#### B. Load Combination Breakdown (Internal Solver Units)")
-                st.dataframe(calc_loads_df[['span_index', 'type', 'mag', 'd_start', 'dist', 'desc']], use_container_width=True)
-
-            # 7.5 Static Equilibrium & Serviceability Checks
+            # 7.5 Static Equilibrium
             with st.expander("✅ Equilibrium & Deflection Checks", expanded=True):
                 ec1, ec2 = st.columns(2)
                 with ec1:
@@ -185,163 +218,151 @@ else:
                         st.success("Balance Check: PASS")
                     else:
                         st.error(f"Balance Check: FAIL (Diff: {abs(sum_R_kN - total_applied_kN):.4f} kN)")
-                with ec2:
-                    st.markdown("**Deflection Limit Check**")
-                    limit_mm = (max(spans) * 1000) / 240.0
-                    st.write(f"Max Deflection: {d_abs_max_mm:.2f} mm")
-                    st.write(f"Allowable (L/240): {limit_mm:.2f} mm")
-                    if d_abs_max_mm <= limit_mm: st.success("Deflection: PASS")
-                    else: st.error("Deflection: FAIL")
-                # ================= TAB 2: RC DESIGN =================
+
+        # ================= TAB 2: INTERACTIVE DESIGN =================
         with tab2:
-            st.header(f"Reinforced Concrete Design ({tag})")
+            st.header(f"⚙️ Interactive RC Design ({tag})")
             
             if is_service:
-                st.warning("⚠️ Note: You are designing with Service Loads (Factor=1.0). Steel may be insufficient for Ultimate Limit State.")
+                st.warning("⚠️ Warning: Service Load Factors (1.0) are selected. Please switch to 'Ultimate' for proper strength design.")
             
-            st.markdown("### 🛠️ Reinforcement Selection (Per Span)")
-            st.info("Select reinforcement for each span independently. Calculations will update automatically.")
-
-            # --- 1. COLLECT USER INPUTS PER SPAN ---
-            span_inputs = []
+            # เตรียมตัวแปร
+            b_mm = params['b'] * 1000
+            h_mm = params['h'] * 1000
+            fc = params['fc']
+            fy = params['fy']
             
-            # Create columns for the inputs
-            # Header
-            h1, h2, h3, h4, h5 = st.columns([1, 2, 2, 2, 2])
-            h1.markdown("**Span**")
-            h2.markdown("**Top Bar (Supports)**")
-            h3.markdown("**Bottom Bar (Mid)**")
-            h4.markdown("**Stirrup**")
-            h5.markdown("**Cover (mm)**")
-            
-            for i in range(n_spans):
-                c1, c2, c3, c4, c5 = st.columns([1, 2, 2, 2, 2])
-                
-                c1.write(f"**{i+1}**")
-                
-                with c2:
-                    # Key must be unique for each widget
-                    top_db = st.selectbox(f"Top DB (Span {i+1})", [12, 16, 20, 25, 28, 32], index=1, key=f"top_{i}")
-                with c3:
-                    bot_db = st.selectbox(f"Bot DB (Span {i+1})", [12, 16, 20, 25, 28, 32], index=1, key=f"bot_{i}")
-                with c4:
-                    stir_db = st.selectbox(f"Stirrup (Span {i+1})", [6, 9, 10, 12], index=0, key=f"stir_{i}")
-                with c5:
-                    cover = st.number_input(f"Cv (Span {i+1})", 20, 75, 25, 5, key=f"cov_{i}", label_visibility="collapsed")
-                
-                span_inputs.append({
-                    'top_db': top_db,
-                    'bot_db': bot_db,
-                    'stir_db': stir_db,
-                    'cover': cover
-                })
-            
-            st.divider()
-
-            # --- 2. PERFORM CALCULATION LOOP ---
-            design_res = []
+            final_design_res = []
             offsets = [0] + list(np.cumsum(spans))
-
-            # Loop through spans for design
+            
+            # Loop ทีละ Span เพื่อให้ User กรอกข้อมูล
             for i in range(n_spans):
-                inputs = span_inputs[i] # Get inputs for this specific span
-                
+                s_len = spans[i]
                 s_start, s_end = offsets[i], offsets[i+1]
+                
+                # Filter forces
                 span_data = res_df[(res_df['x'] >= s_start - 1e-6) & (res_df['x'] <= s_end + 1e-6)]
                 
                 if not span_data.empty:
-                    # 1. Get Max Forces
                     mu_pos = span_data['moment'].max() / 1000.0
                     mu_neg = abs(span_data['moment'].min()) / 1000.0
                     vu_max = span_data['shear'].abs().max() / 1000.0
-                    
-                    # 2. Design Flexure 
-                    # Note: We pass the specific DB size so 'd' (effective depth) is calculated correctly for Top vs Bottom
-                    
-                    # Positive Moment (Bottom Steel) -> Use bot_db
-                    res_pos, steps_pos = rc_design.design_beam_flexure(
-                        mu_pos, params['b'], params['h'], inputs['cover'], 
-                        inputs['bot_db'], inputs['stir_db'], params['fc'], params['fy']
-                    )
-                    
-                    # Negative Moment (Top Steel) -> Use top_db
-                    res_neg, steps_neg = rc_design.design_beam_flexure(
-                        mu_neg, params['b'], params['h'], inputs['cover'], 
-                        inputs['top_db'], inputs['stir_db'], params['fc'], params['fy']
-                    )
-                    
-                    # 3. Design Shear
-                    d_shear = res_pos['d_used'] 
-                    s_req, status_shear, steps_shear = rc_design.check_shear(
-                        vu_max, params['b'], d_shear, params['fc'], params['fy'], inputs['stir_db']
-                    )
-                    
-                    # 4. Store Results
-                    design_res.append({
-                        'span': i+1, 
-                        'top_db': inputs['top_db'],
-                        'bot_db': inputs['bot_db'],
-                        'stir_db': inputs['stir_db'],
-                        'cover': inputs['cover'],
-                        'pos': {'n': res_pos['n_bars'], 'As': res_pos['As_prov']}, 
-                        'neg': {'n': res_neg['n_bars'], 'As': res_neg['As_prov']}, 
-                        'shear': {'s': s_req}
-                    })
-                    
-                    # 5. Display Per-Span Results
-                    with st.expander(f"📘 Span {i+1} Design Calculation", expanded=False):
-                        st.info(f"Design Loads: Mu(+)={mu_pos:.2f} kNm, Mu(-)={mu_neg:.2f} kNm, Vu={vu_max:.2f} kN")
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.markdown("##### Bottom Steel (Mid-span)")
-                            st.success(f"**Provide: {res_pos['n_bars']}-DB{inputs['bot_db']}**")
-                            for s in steps_pos: st.latex(s)
-                        with col2:
-                            st.markdown("##### Top Steel (Supports)")
-                            st.success(f"**Provide: {res_neg['n_bars']}-DB{inputs['top_db']}**")
-                            for s in steps_neg: st.latex(s)
-                        
-                        st.markdown("---")
-                        st.markdown("##### Shear Design (Stirrups)")
-                        st.warning(f"**Provide: RB/DB{inputs['stir_db']} @ {s_req} mm c/c** ({status_shear})")
-                        for s in steps_shear: st.latex(s)
+                else:
+                    mu_pos, mu_neg, vu_max = 0, 0, 0
 
-            # --- 3. DETAILING SECTION ---
+                # --- UI for Span i ---
+                with st.expander(f"📌 **Span {i+1}: Length {s_len} m** (Design Input)", expanded=True):
+                    
+                    # 1. Covering Input
+                    c_cov1, c_cov2, _ = st.columns([1, 1, 3])
+                    with c_cov1:
+                        st.markdown(f"**Forces:** Mu(+)={mu_pos:.1f}, Mu(-)={mu_neg:.1f}, Vu={vu_max:.1f}")
+                    with c_cov2:
+                        cover_mm = st.number_input(f"Covering (mm)", value=25.0, step=5.0, key=f"cov_{i}")
+                    
+                    st.markdown("---")
+
+                    # 2. Bottom Steel (Positive Moment)
+                    st.markdown("##### 1. Bottom Bars (Mid-span)")
+                    d_eff_bot = h_mm - cover_mm - 9 - 10 # approx stirrup+half_bar
+                    as_req_bot = get_as_req(mu_pos, d_eff_bot, fc, fy, b_mm)
+                    
+                    cb1, cb2, cb3, cb4 = st.columns([2, 1.5, 1.5, 2])
+                    with cb1:
+                        st.info(f"Req: **{as_req_bot:.0f}** mm²")
+                    with cb2:
+                        bot_db = st.selectbox(f"DB", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
+                    with cb3:
+                        bot_n = st.number_input(f"Qty", min_value=2, value=2, step=1, key=f"bn_{i}")
+                    with cb4:
+                        phi_Mn_bot, as_prov_bot = get_phi_Mn(bot_n, bot_db, d_eff_bot, b_mm, fc, fy)
+                        status_b = "✅ OK" if phi_Mn_bot >= mu_pos else "❌ FAIL"
+                        if status_b == "✅ OK":
+                            st.success(f"{status_b} (Cap={phi_Mn_bot:.1f} kNm)")
+                        else:
+                            st.error(f"{status_b} (Cap={phi_Mn_bot:.1f} kNm)")
+
+                    # 3. Top Steel (Negative Moment)
+                    st.markdown("##### 2. Top Bars (Supports)")
+                    d_eff_top = h_mm - cover_mm - 9 - 10 
+                    as_req_top = get_as_req(mu_neg, d_eff_top, fc, fy, b_mm)
+                    
+                    ct1, ct2, ct3, ct4 = st.columns([2, 1.5, 1.5, 2])
+                    with ct1:
+                        st.info(f"Req: **{as_req_top:.0f}** mm²")
+                    with ct2:
+                        top_db = st.selectbox(f"DB", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
+                    with ct3:
+                        top_n = st.number_input(f"Qty", min_value=2, value=2, step=1, key=f"tn_{i}")
+                    with ct4:
+                        phi_Mn_top, as_prov_top = get_phi_Mn(top_n, top_db, d_eff_top, b_mm, fc, fy)
+                        status_t = "✅ OK" if phi_Mn_top >= mu_neg else "❌ FAIL"
+                        if status_t == "✅ OK":
+                            st.success(f"{status_t} (Cap={phi_Mn_top:.1f} kNm)")
+                        else:
+                            st.error(f"{status_t} (Cap={phi_Mn_top:.1f} kNm)")
+
+                    # 4. Shear (Stirrups)
+                    st.markdown("##### 3. Stirrups (Shear)")
+                    cs1, cs2, cs3, cs4 = st.columns([2, 1.5, 1.5, 2])
+                    with cs1:
+                        st.warning(f"Vu: **{vu_max:.1f}** kN")
+                    with cs2:
+                        stir_db = st.selectbox(f"RB/DB", [6, 9, 12], index=0, key=f"sdb_{i}")
+                    with cs3:
+                        stir_s = st.number_input(f"Spacing (mm)", value=150, step=10, key=f"ss_{i}")
+                    with cs4:
+                        d_shear = d_eff_bot
+                        status_v, phi_Vn, phi_Vc = check_shear(vu_max, b_mm, d_shear, fc, fy, stir_db, stir_s) # use fy main for simplicity or input fys
+                        if status_v == "OK":
+                            st.success(f"✅ OK (Cap={phi_Vn:.1f})")
+                        else:
+                            st.error(f"❌ FAIL (Cap={phi_Vn:.1f})")
+
+                    # Collect Data for Plotting
+                    final_design_res.append({
+                        'span': i+1,
+                        'cover': cover_mm,
+                        'top_db': top_db,
+                        'bot_db': bot_db,
+                        'stir_db': stir_db,
+                        'pos': {'n': bot_n, 'area': as_prov_bot},
+                        'neg': {'n': top_n, 'area': as_prov_top},
+                        'shear': {'s': stir_s}
+                    })
+
+            # --- PLOTTING SECTION ---
             st.markdown("---")
-            st.subheader("🛠️ Structural Detailing")
+            st.header("📊 Final Drawings")
             
-            if design_res:
+            if st.button("Update / Refresh Drawings", type="primary"):
                 # 1. LONGITUDINAL SECTION
-                st.markdown("### 1. Longitudinal Section")
-                # Note: We assume constant beam height (h) for the longitudinal plot for now
-                fig_long = section_plotter.plot_longitudinal_section_detailed(
-                    spans, sup_df, design_res, params['h'], span_inputs[0]['cover']
-                )
-                st.pyplot(fig_long, use_container_width=True)
-                
-                st.markdown("---")
-                
-                # 2. CROSS SECTIONS (Dynamic Tabs)
-                st.markdown("### 2. Cross Section Details")
-                st.write("Select a span to view cross-section details:")
-                
+                st.subheader("1. Longitudinal Section")
+                try:
+                    fig_long = section_plotter.plot_longitudinal_section_detailed(
+                        spans, sup_df, final_design_res, params['h'], final_design_res[0]['cover']
+                    )
+                    st.pyplot(fig_long, use_container_width=True)
+                except Exception as e:
+                    st.error(f"Error plotting longitudinal: {e}")
+
+                # 2. CROSS SECTIONS
+                st.subheader("2. Cross Section Details")
                 span_tabs = st.tabs([f"Span {i+1}" for i in range(n_spans)])
                 
                 for i, tab in enumerate(span_tabs):
                     with tab:
-                        res = design_res[i]
+                        res = final_design_res[i]
                         c_det1, c_det2 = st.columns(2)
                         
                         # Section A-A: Mid Span (Show Bottom Bars dominant)
                         with c_det1:
                             st.markdown(f"**Section A-A (Mid-span {i+1})**")
-                            # Plot using specific top/bottom sizes
                             fig_a = section_plotter.plot_section(
                                 params['b'], params['h'], res['cover'], 
-                                res['top_db'], res['bot_db'], # Pass both sizes
-                                2, # Top bars (Min hanger - Visual only)
-                                res['pos']['n'], # Bottom bars (Calculated)
+                                res['top_db'], res['bot_db'], 
+                                2, # Top bars (Hanger)
+                                res['pos']['n'], # Bottom bars (Actual)
                                 f"RB{res['stir_db']}@{int(res['shear']['s'])}", 
                                 params['fc'], params['fy'], f"SECTION A-A (Span {i+1})"
                             )
@@ -352,19 +373,14 @@ else:
                             st.markdown(f"**Section B-B (Support {i+1})**")
                             fig_b = section_plotter.plot_section(
                                 params['b'], params['h'], res['cover'], 
-                                res['top_db'], res['bot_db'], # Pass both sizes
-                                res['neg']['n'], # Top bars (Calculated)
-                                2, # Bottom bars (Min hanger - Visual only)
+                                res['top_db'], res['bot_db'], 
+                                res['neg']['n'], # Top bars (Actual)
+                                2, # Bottom bars (Hanger)
                                 f"RB{res['stir_db']}@{int(res['shear']['s'])}", 
                                 params['fc'], params['fy'], f"SECTION B-B (Span {i+1})"
                             )
                             st.pyplot(fig_b, use_container_width=True)
 
-
-
     except Exception as e:
-        st.error(f"❌ Calculation Error: {e}")
+        st.error(f"❌ Analysis Error: {e}")
         st.exception(e)
-
-# --- END OF APP SCRIPT ---
-
