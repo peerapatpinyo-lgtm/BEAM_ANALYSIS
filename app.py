@@ -6,7 +6,7 @@ import io
 import time
 
 # --- 1. IMPORT CUSTOM MODULES ---
-# Ensure these files exist in your directory
+# ตรวจสอบให้แน่ใจว่าไฟล์เหล่านี้อยู่ในโฟลเดอร์เดียวกัน
 import input_handler
 import solver
 import design_view
@@ -34,64 +34,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- HELPER FUNCTIONS: RC DESIGN LOGIC (ACI 318 REVISED) ---
+# --- 3. HELPER FUNCTIONS: RC DESIGN LOGIC (ACI 318 REVISED) ---
 
-def get_beta1(fc):
-    """
-    Calculate Beta1 factor according to ACI 318 (Metric)
-    """
-    if fc <= 28: # ACI uses 28 MPa as the threshold (approx 4000 psi)
-        return 0.85
-    elif fc >= 55:
-        return 0.65
-    else:
-        return 0.85 - 0.05 * (fc - 28) / 7
-
-def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
-    """
-    Calculate Required Steel Area based on ACI 318
-    """
-    if Mu_kNm == 0: return 0.0, 0.0, False
-    Mu = abs(Mu_kNm) * 1e6 # N-mm
-    phi = 0.9 
-    
-    # 1. Check Max Capacity first
-    # Rho_bal (Balanced)
-    beta1 = get_beta1(fc)
-    rho_bal = (0.85 * beta1 * fc / fy) * (600 / (600 + fy))
-    rho_max = 0.75 * rho_bal # Common limit for ductility (approx strain 0.005) (Or use strain check directly)
-    
-    # 2. Calculate Rho required
-    # Rn = Mu / (phi * b * d^2)
-    Rn = Mu / (phi * b_mm * d_eff_mm**2)
-    
-    # Formula: rho = (0.85*fc/fy) * [1 - sqrt(1 - 2*Rn / (0.85*fc))]
-    term_inside = 1 - (2 * Rn) / (0.85 * fc)
-    
-    if term_inside < 0:
-        return 0.0, 0.0, True # Section too small (Fail)
-
-    rho = (0.85 * fc / fy) * (1 - np.sqrt(term_inside))
-    as_req = rho * b_mm * d_eff_mm
-    
-    # 3. Minimum Steel (ACI 9.6.1.2)
-    as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
-    as_min2 = (1.4 / fy) * b_mm * d_eff_mm
-    as_min = max(as_min1, as_min2)
-    
-    return max(as_req, as_min), rho, False
-
-# ในไฟล์ app.py แก้ไขฟังก์ชันนี้ครับ
-
-
-# --- app.py ---
-import numpy as np
-
-# 1. ฟังก์ชันจัดการหน่วยให้ถูกต้อง (Smart Unit Conversion)
 def normalize_section_units(b_input, h_input):
     """
-    Detects if input is in Meters or Millimeters and standardizes to Millimeters.
-    Assumption: If value < 10, it's likely in Meters (since beams are rarely < 10mm wide).
+    ตรวจสอบและแปลงหน่วยอัตโนมัติ (Meters -> Millimeters)
+    ถ้าค่าที่ใส่มาน้อยกว่า 10 สันนิษฐานว่าเป็นเมตร และคูณ 1000
     """
     # จัดการความกว้าง (b)
     if b_input < 10:
@@ -107,113 +55,114 @@ def normalize_section_units(b_input, h_input):
         
     return b_mm, h_mm
 
-# 2. ฟังก์ชันคำนวณหลัก (Update แล้ว)
-def perform_design(L, b_in, h_in, cover, fc, fy, ...): # (รับ arguments ตามเดิม)
-    
-    # --- STEP 1: Normalize Units (แปลงหน่วยก่อนทำอะไรทั้งสิ้น) ---
-    b_mm, h_mm = normalize_section_units(b_in, h_in)
-    
-    # ตอนนี้ b_mm และ h_mm เป็นหน่วย มิลลิเมตร แน่นอน 100%
-    # คำนวณ d (Effective Depth)
-    # สมมติใช้เหล็ก main_db, stir_db ในการหา d เบื้องต้น
-    # (ใน function จริงของคุณอาจจะมีการ loop หาเหล็ก แต่หลักการคือใช้ h_mm)
-    
-    # ... (Logic การคำนวณเดิม) ...
-    
-    pass 
-    # (เนื่องจากผมไม่เห็น code ทั้งหมดของ function perform_design 
-    # ผมจะแก้ function ย่อยที่ใช้คำนวณ Capacity ให้รองรับการแปลงหน่วยครับ)
-
-# ==========================================
-# ส่วนที่คุณต้องก๊อปไปวางทับ Helper Functions เดิม
-# ==========================================
-
-def get_phi_Mn_details(n, db, d_eff_input, b_input, fc, fy):
+def get_beta1(fc):
     """
-    Calculate Capacity.
-    Ensures standard units inside calculation.
+    Calculate Beta1 factor according to ACI 318 (Metric)
     """
-    # ค่า b และ d ที่รับเข้ามา ควรถูกจัดการมาแล้วจาก function เรียกหลัก
-    # แต่เพื่อความชัวร์ เราแปลงหน่วย Load ตรงนี้ให้เป็น N-mm
+    if fc <= 28: # ACI uses 28 MPa as the threshold
+        return 0.85
+    elif fc >= 55:
+        return 0.65
+    else:
+        return 0.85 - 0.05 * (fc - 28) / 7
+
+def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
+    """
+    Calculate Required Steel Area based on ACI 318
+    """
+    if Mu_kNm == 0: return 0.0, 0.0, False
+    Mu = abs(Mu_kNm) * 1e6 # N-mm
+    phi = 0.9 
     
+    # Check Min/Max is usually done after, but here we calculate pure required As
+    Rn = Mu / (phi * b_mm * d_eff_mm**2)
+    
+    # Formula: rho = (0.85*fc/fy) * [1 - sqrt(1 - 2*Rn / (0.85*fc))]
+    term_inside = 1 - (2 * Rn) / (0.85 * fc)
+    
+    if term_inside < 0:
+        return 0.0, 0.0, True # Section too small (Fail)
+
+    rho = (0.85 * fc / fy) * (1 - np.sqrt(term_inside))
+    as_req = rho * b_mm * d_eff_mm
+    
+    # Minimum Steel (ACI 9.6.1.2)
+    as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
+    as_min2 = (1.4 / fy) * b_mm * d_eff_mm
+    as_min = max(as_min1, as_min2)
+    
+    return max(as_req, as_min), rho, False
+
+def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
+    """
+    Calculate Moment Capacity (Phi Mn) with Full Safety Checks
+    """
     Ast = n * (np.pi * (db/2)**2)
     if Ast == 0: return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
     # 1. Whitney Stress Block
-    # b_input ในที่นี้ต้องเป็น mm (จากการจัดการที่ต้นทาง)
-    a = (Ast * fy) / (0.85 * fc * b_input) 
-    
-    beta1 = 0.85
-    if fc > 28: beta1 = max(0.65, 0.85 - 0.05*(fc-28)/7)
-    
+    a = (Ast * fy) / (0.85 * fc * b)
+    beta1 = get_beta1(fc)
     c = a / beta1
     
-    # Safety Check: Over-reinforced
-    if a >= d_eff_input:
-        return 0.0, Ast, a, 0.0, c, -1.0 # Fail
+    # --- CRITICAL SAFETY CHECK: a >= d ---
+    # ถ้า Stress block ลึกกว่า Effective depth แสดงว่าหน้าตัดระเบิด
+    if a >= d_eff: 
+        # Return 0 capacity to indicate failure, set strain to -1
+        return 0.0, Ast, a, 0.0, c, -1.0 
 
-    # 2. Strain & Phi
-    strain_t = 0.003 * (d_eff_input - c) / c
-    
-    if strain_t >= 0.005: phi = 0.9
-    elif strain_t <= 0.002: phi = 0.65
-    else: phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
+    # 2. Strain Calculation
+    if c > 0:
+        strain_t = 0.003 * (d_eff - c) / c
+    else:
+        strain_t = 999.0 # Infinite strain (theoretical)
 
-    # 3. Moment Capacity (N-mm -> kNm)
-    Mn_Nmm = Ast * fy * (d_eff_input - a/2)
-    phi_Mn_kNm = (phi * Mn_Nmm) / 1e6 
-    
-    return phi_Mn_kNm, Ast, a, Mn_Nmm, c, strain_t
+    # 3. Phi Factor Calculation (ACI 318)
+    if strain_t >= 0.005:
+        phi = 0.90
+    elif strain_t <= 0.002:
+        phi = 0.65
+    else:
+        # Transition zone
+        phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
-# ==========================================
-# ฟังก์ชันคำนวณ d ที่ปลอดภัยและจัดการหน่วยในตัว
-# ==========================================
-def calculate_effective_depth(h_input, cover, stir_db, main_db):
-    """
-    Calculates d with auto-unit conversion for h.
-    """
-    # 1. แปลง h เป็น mm
-    if h_input < 10: 
-        h_mm = h_input * 1000
-    else: 
-        h_mm = h_input
-        
-    # 2. คำนวณ d
-    d = h_mm - cover - stir_db - (main_db/2)
+    # 4. Nominal Moment (Mn)
+    Mn = Ast * fy * (d_eff - a/2)
+    phi_Mn = phi * Mn / 1e6 # Convert to kNm
     
-    return d, h_mm # ส่งค่า h ที่เป็น mm กลับไปใช้ต่อด้วย
+    return phi_Mn, Ast, a, Mn, c, strain_t
+
 def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
     """
-    Check Shear Capacity AND Maximum Spacing (ACI 318)
+    Check Shear Capacity and ACI Max Spacing Requirements
     """
-    Vu = abs(Vu_kN) * 1000 # N
+    if d <= 0: return "FAIL (Invalid d)", 0,0,0,0,0
     
-    # 1. Vc: Concrete Capacity (Simplified Eq 22.5.5.1)
-    # Vc = 0.17 * lambda * sqrt(fc) * b * d (lambda=1 normal weight)
+    Vu = abs(Vu_kN) * 1000 # Convert kN to N
+    
+    # 1. Concrete Capacity (Vc)
     Vc = 0.17 * np.sqrt(fc) * b * d
     phi = 0.85
     phi_Vc = phi * Vc
     
-    # 2. Vs: Steel Capacity
+    # 2. Steel Capacity (Vs)
     Av = 2 * (np.pi * (stir_db/2)**2) # 2 legs
-    if spacing <= 0: spacing = 1000
+    if spacing <= 0: spacing = 1000 # Prevent div by zero
     
     Vs = (Av * fy * d) / spacing
     phi_Vs = phi * Vs
     
     phi_Vn = phi_Vc + phi_Vs
     
-    # 3. Maximum Spacing Check (ACI 9.7.6.2.2)
-    # Case 1: Vs <= 0.33 * sqrt(fc) * b * d  --> Max spacing = min(d/2, 600)
-    # Case 2: Vs > 0.33 * sqrt(fc) * b * d   --> Max spacing = min(d/4, 300)
-    
+    # 3. Maximum Spacing Check (ACI 318)
     threshold = 0.33 * np.sqrt(fc) * b * d
+    
     if Vs <= threshold:
         s_max_limit = min(d/2, 600)
     else:
         s_max_limit = min(d/4, 300)
         
-    # Validation
+    # Evaluation
     is_strength_ok = phi_Vn >= Vu
     is_spacing_ok = spacing <= s_max_limit
     
@@ -230,10 +179,16 @@ def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
     """
     Helper function to prepare load dataframe for solver.
     Scales loads by Load Factors (f_dl, f_ll).
+    Also handles Unit Normalization for Self-Weight calculation.
     """
-    # 1. Self-weight (Calculated from dimensions)
+    # Normalize inputs for self-weight calculation
+    b_mm, h_mm = normalize_section_units(params['b'], params['h'])
+    b_m = b_mm / 1000.0
+    h_m = h_mm / 1000.0
+    
+    # 1. Self-weight (Calculated from dimensions in Meters)
     # Density approx 24 kN/m3
-    w_sw_base_kN = params['b'] * params['h'] * 24.0      
+    w_sw_base_kN = b_m * h_m * 24.0      
     w_sw_factored_kN = w_sw_base_kN * f_dl
     
     # Initialize dictionary for Total UDL per span
@@ -333,19 +288,16 @@ else:
             # =================================================================
             # RUN 1: ULTIMATE LOAD ANALYSIS (For Strength Design)
             # =================================================================
-            # Factors: e.g., 1.4DL + 1.7LL
             calc_loads_ult = prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
             x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
             
             # =================================================================
             # RUN 2: SERVICE LOAD ANALYSIS (For Deflection Check)
             # =================================================================
-            # Factors: 1.0DL + 1.0LL
             calc_loads_svc = prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
             x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
         # --- PREPARE DATA FOR PLOTTING (Based on User Selection) ---
-        # The user sees the graphs corresponding to the selected mode
         if is_service:
             x_plot, M_plot, V_plot, D_plot, R_plot = x_svc, M_svc, V_svc, D_svc, R_svc
             display_loads = calc_loads_svc
@@ -401,7 +353,8 @@ else:
             if is_service:
                 st.warning("⚠️ You are viewing Service Load graphs, but Design below uses Ultimate Loads (factored).")
             
-            b_mm, h_mm = params['b'] * 1000, params['h'] * 1000
+            # NORMALIZE UNITS HERE (For Design Calculation)
+            b_mm, h_mm = normalize_section_units(params['b'], params['h'])
             fc, fy = params['fc'], params['fy']
             
             # Calculate start/end x-coordinates for each span
@@ -446,7 +399,8 @@ else:
 
                     # 1. Bottom Steel (+Moment)
                     st.markdown("##### 1. Bottom Reinforcement (Mid-Span)")
-                    d_eff_bot_est = h_mm - cover_mm - 20 # Initial estimate
+                    # Approx d for estimation
+                    d_eff_bot_est = h_mm - cover_mm - 20 
                     as_req_bot, _, _ = get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
                     
                     c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
@@ -457,11 +411,12 @@ else:
                     # Exact d check
                     d_eff_bot_real = h_mm - cover_mm - 9 - (bot_db / 2) # Assume stirrup 9mm
                     phi_Mn_bot, as_prov_bot, _, _, _, _ = get_phi_Mn_details(bot_n, bot_db, d_eff_bot_real, b_mm, fc, fy)
-                    pass_b = phi_Mn_bot >= mu_pos
+                    pass_b = (phi_Mn_bot >= mu_pos) and (phi_Mn_bot > 0)
                     
                     with c4: 
                         clr_b = "green" if pass_b else "red"
-                        st.markdown(f"$\phi M_n$: :{clr_b}[**{phi_Mn_bot:.2f}**] kNm vs $M_u$: **{mu_pos:.2f}**")
+                        msg_b = f"**{phi_Mn_bot:.2f}**" if phi_Mn_bot > 0 else "**FAIL**"
+                        st.markdown(f"$\phi M_n$: :{clr_b}[{msg_b}] kNm vs $M_u$: **{mu_pos:.2f}**")
                     
                     # 2. Top Steel (-Moment)
                     st.markdown("##### 2. Top Reinforcement (Supports)")
@@ -475,11 +430,12 @@ else:
                     
                     d_eff_top_real = h_mm - cover_mm - 9 - (top_db / 2)
                     phi_Mn_top, as_prov_top, _, _, _, _ = get_phi_Mn_details(top_n, top_db, d_eff_top_real, b_mm, fc, fy)
-                    pass_t = phi_Mn_top >= mu_neg
+                    pass_t = (phi_Mn_top >= mu_neg) and (phi_Mn_top > 0)
                     
                     with c4:
                         clr_t = "green" if pass_t else "red"
-                        st.markdown(f"$\phi M_n$: :{clr_t}[**{phi_Mn_top:.2f}**] kNm vs $M_u$: **{mu_neg:.2f}**")
+                        msg_t = f"**{phi_Mn_top:.2f}**" if phi_Mn_top > 0 else "**FAIL**"
+                        st.markdown(f"$\phi M_n$: :{clr_t}[{msg_t}] kNm vs $M_u$: **{mu_neg:.2f}**")
 
                     # 3. Shear
                     st.markdown("##### 3. Shear Reinforcement")
@@ -493,13 +449,13 @@ else:
                     
                     with c4:
                         clr_v = "green" if status_v == "OK" else "red"
-                        st.markdown(f"$\phi V_n$: :{clr_v}[**{phi_Vn:.1f}**] kN")
+                        st.markdown(f"$\phi V_n$: :{clr_v}[**{phi_Vn:.1f}**] kN ({status_v})")
                     
                     # --- STORE DATA FOR REPORT ---
                     final_design_res.append({
                         'span_id': i,
                         'L': s_len,
-                        'b': params['b'], 'h': params['h'],
+                        'b': b_mm, 'h': h_mm, # Use Normalized Units
                         'fc': fc, 'fy': fy,
                         # Ultimate Loads
                         'Mu_pos': mu_pos,
@@ -510,16 +466,13 @@ else:
                         'top_db': top_db, 'bot_db': bot_db, 'stir_db': stir_db,
                         'pos': {'n': bot_n, 'area': as_prov_bot, 'status': pass_b},
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': pass_t},
-                        'shear': {'s': stir_s, 'db': stir_db, 'status': status_v}, # Fixed: Added db here
+                        'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
                         # Service Loads (For Report Deflection Check)
                         'Ma_pos_svc': ma_pos_svc,
                         'delta_svc_mm': delta_svc_mm,
-                        # Detailed Objects
+                        # Detailed Objects for reporter access
                         'bot': {'n': bot_n, 'db': bot_db},
                         'top': {'n': top_n, 'db': top_db},
-                        'Vu': vu_max, # Alias for reporter convenience
-                        'Ma_pos': ma_pos_svc, # Alias
-                        'delta_svc': delta_svc_mm # Alias
                     })
 
             # --- SUMMARY & REPORT BUTTONS ---
@@ -541,7 +494,7 @@ else:
             if st.button("🔄 Generate Drawings", type="primary"):
                 try:
                     st.write("**Longitudinal Section:**")
-                    fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, params['h'], final_design_res[0]['cover'])
+                    fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, final_design_res[0]['cover'])
                     st.pyplot(fig_long, use_container_width=True)
                 except Exception as e:
                     st.error(f"Drawing Error: {e}")
@@ -563,6 +516,3 @@ else:
         st.error(f"❌ Application Error: {e}")
         import traceback
         st.code(traceback.format_exc())
-
-
-
