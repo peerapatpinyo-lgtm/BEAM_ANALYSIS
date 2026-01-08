@@ -6,7 +6,10 @@ import pandas as pd
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
     Creates a Textbook-style structural analysis plot.
-    FIXED: Point Load annotation now uses 'd_start' for correct visual positioning.
+    NOTE: Input 'res_df' must already be in Engineering Units:
+          - Shear: kN
+          - Moment: kNm
+          - Deflection: mm
     """
     
     # --- Create Subplots ---
@@ -49,7 +52,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             hoverinfo='name', name=f"Support"
         ), row=1, col=1)
 
-    # Loads (FIXED ITERATION HERE)
+    # Loads
     if isinstance(loads, pd.DataFrame):
         load_iter = loads.to_dict('records')
     else:
@@ -58,11 +61,12 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     for l in load_iter:
         span_idx = int(l['span_index'])
         start_x = cum_dist[span_idx]
+        
+        # Load Model Visualization: Convert N to kN for display
         mag_kN = l['mag'] / 1000.0
         
         if l['type'] == 'P':
-            # [FIXED POSITION] เปลี่ยนจาก l['dist'] เป็น l['d_start'] 
-            # เพื่อให้ลูกศรเลื่อนไปตามตำแหน่ง x ที่ระบุจริง
+            # Use 'd_start' for correct absolute positioning
             x_loc = start_x + float(l['d_start']) 
             
             fig.add_annotation(
@@ -73,7 +77,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             )
 
         elif l['type'] == 'U':
-            # สำหรับ UDL ระยะเริ่มคือ start_span + d_start
+            # UDL Visualization
             x_s = start_x + float(l.get('d_start', 0))
             x_e = x_s + float(l['dist'])
             h_vis = 0.25
@@ -103,19 +107,21 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     # ==========================================
     # ROW 2: SHEAR FORCE
     # ==========================================
+    # FIXED: Removed /1000 because input is already in kN
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
     fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['shear']/1000, 
+        x=res_df['x'], y=res_df['shear'],  
         mode='lines', name='Shear', line=dict(color='#e74c3c', width=2),
         fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
     ), row=2, col=1)
     
-    # Max/Min Shear Labels
-    v_max = res_df['shear'].max() / 1000
-    v_min = res_df['shear'].min() / 1000
+    # Max/Min Shear Labels (Use raw values as they are in kN)
+    v_max = res_df['shear'].max()
+    v_min = res_df['shear'].min()
     for val in [v_max, v_min]:
         if abs(val) > 0.01:
-            idx = (res_df['shear']/1000 - val).abs().idxmin()
+            # Find index closest to this value
+            idx = (res_df['shear'] - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
                 text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10,
@@ -125,19 +131,20 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     # ==========================================
     # ROW 3: BENDING MOMENT
     # ==========================================
+    # FIXED: Removed /1000 because input is already in kNm
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
     fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['moment']/1000, 
+        x=res_df['x'], y=res_df['moment'], 
         mode='lines', name='Moment', line=dict(color='#27ae60', width=2),
         fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
     ), row=3, col=1)
 
-    # Max/Min Moment Labels
-    m_max = res_df['moment'].max() / 1000
-    m_min = res_df['moment'].min() / 1000
+    # Max/Min Moment Labels (Use raw values as they are in kNm)
+    m_max = res_df['moment'].max()
+    m_min = res_df['moment'].min()
     for val in [m_max, m_min]:
         if abs(val) > 0.01:
-            idx = (res_df['moment']/1000 - val).abs().idxmin()
+            idx = (res_df['moment'] - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
                 text=f"<b>{val:.2f}</b>", 
@@ -154,16 +161,18 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         mode='lines', name='Deflection', line=dict(color='#8e44ad', width=2)
     ), row=4, col=1)
     
-    idx_max_def = res_df['deflection'].abs().idxmax()
-    max_def_val = res_df['deflection'].iloc[idx_max_def]
-    
-    fig.add_annotation(
-        x=res_df['x'].iloc[idx_max_def], y=max_def_val,
-        text=f"<b>Max: {max_def_val:.3f} mm</b>",
-        showarrow=True, arrowhead=1, 
-        ay=30 if max_def_val < 0 else -30,
-        font=dict(color='#8e44ad'), row=4, col=1
-    )
+    # Max Deflection Label
+    if not res_df['deflection'].empty:
+        idx_max_def = res_df['deflection'].abs().idxmax()
+        max_def_val = res_df['deflection'].iloc[idx_max_def]
+        
+        fig.add_annotation(
+            x=res_df['x'].iloc[idx_max_def], y=max_def_val,
+            text=f"<b>Max: {max_def_val:.3f} mm</b>",
+            showarrow=True, arrowhead=1, 
+            ay=30 if max_def_val < 0 else -30,
+            font=dict(color='#8e44ad'), row=4, col=1
+        )
 
     # ==========================================
     # LAYOUT
