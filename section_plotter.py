@@ -78,57 +78,82 @@ def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_te
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
     Plots the longitudinal profile of the beam showing spans, supports, and simplified rebar.
+    Units converted to mm for consistent scaling.
     """
-    n_spans = len(spans)
-    total_length = sum(spans)
+    # 1. Convert everything to Millimeters (mm)
+    spans_mm = [s * 1000 for s in spans]
+    total_length_mm = sum(spans_mm)
     h_mm = h_m * 1000
     
     fig, ax = plt.subplots(figsize=(12, 4))
     
-    current_x = 0
-    
-    # 1. Beam Body
-    beam_rect = patches.Rectangle((0, 0), total_length, h_mm, linewidth=2, edgecolor='black', facecolor='#f9f9f9')
+    # 2. Beam Body
+    # Draw concrete beam
+    beam_rect = patches.Rectangle((0, 0), total_length_mm, h_mm, linewidth=2, edgecolor='black', facecolor='#f9f9f9')
     ax.add_patch(beam_rect)
     
-    # 2. Supports
+    # 3. Supports (Scale size to match mm units)
+    sup_width = 300 # mm (visual width of support)
+    sup_height = 300 # mm
+    
     for _, row in sup_df.iterrows():
-        # --- 🔴 แก้ไขจุดที่ Error ตรงนี้ครับ (เปลี่ยนจาก row['position'] เป็น row['x']) ---
-        sx = row['x'] 
+        sx_m = row['x'] # Position in meters
+        sx_mm = sx_m * 1000 # Convert to mm
         
-        # Draw triangle support
-        triangle = patches.Polygon([[sx-0.2, -100], [sx+0.2, -100], [sx, 0]], closed=True, edgecolor='black', facecolor='grey')
+        # Draw triangle support (scaled for mm)
+        triangle = patches.Polygon(
+            [[sx_mm - sup_width/2, -sup_height], 
+             [sx_mm + sup_width/2, -sup_height], 
+             [sx_mm, 0]], 
+            closed=True, edgecolor='black', facecolor='grey'
+        )
         ax.add_patch(triangle)
         
-        # Check if 'support_id' exists, if not use index or generic name
+        # Support Label
         s_id = row.get('support_id', 'Sup')
-        ax.text(sx, -150, str(s_id), ha='center', fontsize=10, fontweight='bold')
+        ax.text(sx_mm, -sup_height - 150, str(s_id), ha='center', fontsize=10, fontweight='bold')
 
-    # 3. Reinforcement Visualization (Simplified)
-    offsets = [0] + list(np.cumsum(spans))
+    # 4. Reinforcement Visualization
+    # Calculate offsets in mm
+    offsets_mm = [0] + list(np.cumsum(spans_mm))
     
-    for i in range(n_spans):
-        start = offsets[i]
-        end = offsets[i+1]
+    for i in range(len(spans)):
+        start = offsets_mm[i]
+        end = offsets_mm[i+1]
         length = end - start
         
         res = design_res[i]
         
-        # Bottom Bar (Blue) - Span center
-        ax.plot([start + 0.2, end - 0.2], [50, 50], color='#1f77b4', linewidth=3)
-        ax.text(start + length/2, 80, f"{res['pos']['n']}-DB{res['bot_db']}", ha='center', color='#1f77b4', fontsize=9)
+        # --- Drawing Rebar (Visual Representation) ---
         
-        # Top Bar (Red) - Supports
-        ax.plot([start, end], [h_mm-50, h_mm-50], color='#d62728', linewidth=3)
-        ax.text(start + length/2, h_mm-90, f"{res['neg']['n']}-DB{res['top_db']}", ha='center', color='#d62728', fontsize=9)
+        # Bottom Bar (Blue) - Starts/Ends with Cover
+        bot_y = cover_mm + 20 # Offset from bottom
+        ax.plot([start + cover_mm, end - cover_mm], [bot_y, bot_y], color='#1f77b4', linewidth=3)
         
-        # Stirrups info
-        ax.text(start + length/2, h_mm/2, f"Stir: RB{res['stir_db']}@{int(res['shear']['s'])}", ha='center', color='blue', fontsize=8, alpha=0.7)
+        # Text for Bottom Bar
+        ax.text(start + length/2, bot_y + 40, f"{res['pos']['n']}-DB{res['bot_db']}", 
+                ha='center', color='#1f77b4', fontsize=9, fontweight='bold')
+        
+        # Top Bar (Red) - Runs full span (Conceptually)
+        top_y = h_mm - cover_mm - 20
+        ax.plot([start, end], [top_y, top_y], color='#d62728', linewidth=3)
+        
+        # Text for Top Bar
+        ax.text(start + length/2, top_y - 60, f"{res['neg']['n']}-DB{res['top_db']}", 
+                ha='center', color='#d62728', fontsize=9, fontweight='bold')
+        
+        # Stirrups info (Center of span)
+        ax.text(start + length/2, h_mm/2, f"Stir: RB{res['stir_db']}@{int(res['shear']['s'])}", 
+                ha='center', color='blue', fontsize=8, alpha=0.7, 
+                bbox=dict(facecolor='white', edgecolor='none', alpha=0.7))
 
-    # Decoration
-    ax.set_xlim(-1, total_length + 1)
-    ax.set_ylim(-200, h_mm + 100)
-    ax.set_aspect('equal', adjustable='box') 
+    # 5. Decoration & Scaling
+    # Add padding to view limits
+    ax.set_xlim(-500, total_length_mm + 500)
+    ax.set_ylim(-500, h_mm + 200)
+    
+    # Force equal aspect ratio (1 mm x = 1 mm y)
+    ax.set_aspect('equal', adjustable='datalim') 
     ax.axis('off')
     ax.set_title("Longitudinal Section (Reinforcement Layout)", fontsize=12, fontweight='bold')
     
