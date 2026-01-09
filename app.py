@@ -22,7 +22,7 @@ with st.sidebar:
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
 else:
-    # --- [FULL FEATURE] ANALYSIS SETTINGS: SERVICE & ULTIMATE ---
+    # --- ANALYSIS SETTINGS ---
     col_set1, col_set2 = st.columns([1, 2])
     with col_set1:
         st.markdown("### ⚙️ Load Factors")
@@ -34,7 +34,6 @@ else:
         if "Service" in mode_select:
             f_dl, f_ll = 1.0, 1.0
             tag, is_service = "Service", True
-            st.info("ℹ️ Mode: Load Factors = 1.0")
         else:
             f_dl = c1.number_input("Dead Load (DL)", 1.4, 1.6, 1.4, 0.1)
             f_ll = c2.number_input("Live Load (LL)", 1.7, 2.0, 1.7, 0.1)
@@ -42,15 +41,12 @@ else:
 
     try:
         # --- ANALYSIS ENGINE ---
-        # 1. Ultimate Loads (for Design)
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
-        # 2. Service Loads (for Report/Deflection)
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
-        # Select data for Tab 1 based on mode
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
@@ -62,11 +58,6 @@ else:
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
             fig = design_view.plot_analysis_results(df_for_plot, spans, sup_df, calc_loads_ult if not is_service else calc_loads_svc, R_plot)
             st.plotly_chart(fig, use_container_width=True)
-            
-            c1, c2, c3 = st.columns(3)
-            c1.metric(f"Max Shear ({tag})", f"{max(abs(V_plot))/1000:.2f} kN")
-            c2.metric(f"Max Moment ({tag})", f"{max(M_plot)/1000:.2f} kNm")
-            c3.metric(f"Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
 
         # ================= TAB 2: INTERACTIVE DESIGN =================
         with tab2:
@@ -81,7 +72,6 @@ else:
                 mu_pos, mu_neg = max(0.0, (M_ult[mask_u]/1000.0).max()), abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
-                # Get Service Values for Report
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
                 ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
                 delta_svc_mm = abs(D_svc[mask_s] * 1000.0).max()
@@ -92,7 +82,7 @@ else:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, key=f"cov_{i}")
                         stir_db = st.selectbox("Stirrup Size", [6, 9, 12], index=1, key=f"sdb_ref_{i}")
 
-                        # --- 1. TOP STEEL (SUPPORT) --- [ORDERED FIRST]
+                        # --- 1. TOP STEEL (SUPPORT) ---
                         st.markdown("#### 🔼 Top Steel (Support)")
                         ct1, ct2, ct3 = st.columns([2, 2, 1])
                         with ct1: t_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
@@ -104,10 +94,13 @@ else:
                         as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
                         phi_Mn_t, as_prov_t, _, _, _, _ = rc_design_engine.get_phi_Mn_details(t_qty, t_db, d_t, b_mm, fc, fy)
 
-                        st.markdown(f"| Parameter | Calc As ($M_u$) | Min $A_{{s,min}}$ | Provided As | Status |")
-                        st.markdown(f"| :--- | :--- | :--- | :--- | :--- |")
-                        st.markdown(f"| **Steel Area** | {as_req_t:.0f} | {as_min_t:.0f} | **{as_prov_t:.0f}** | {'✅' if as_prov_t >= max(as_req_t, as_min_t) else '❌'} |")
-                        st.markdown(f"| **Capacity** | $M_u$: {mu_neg:.1f} | - | **$\phi M_n$: {phi_Mn_t:.1f}** | {'✅' if phi_Mn_t >= mu_neg else '❌'} |")
+                        # ตาราง Top Steel
+                        st.markdown(f"""
+| Parameter | Calc As ($M_u$) | Min $A_{{s,min}}$ | Provided As | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Steel Area** | {as_req_t:.0f} mm² | {as_min_t:.0f} mm² | **{as_prov_t:.0f} mm²** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
+| **Capacity** | $M_u$: {mu_neg:.1f} | - | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
+""")
 
                         # --- 2. BOTTOM STEEL (MID-SPAN) ---
                         st.markdown("#### 🔽 Bottom Steel (Mid-Span)")
@@ -120,10 +113,13 @@ else:
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
                         phi_Mn_b, as_prov_b, _, _, _, _ = rc_design_engine.get_phi_Mn_details(b_qty, b_db, d_b, b_mm, fc, fy)
 
-                        st.markdown(f"| Parameter | Calc As ($M_u$) | Min $A_{{s,min}}$ | Provided As | Status |")
-                        st.markdown(f"| :--- | :--- | :--- | :--- | :--- |")
-                        st.markdown(f"| **Steel Area** | {as_req_b:.0f} | {as_min_t:.0f} | **{as_prov_b:.0f}** | {'✅' if as_prov_b >= max(as_req_b, as_min_t) else '❌'} |")
-                        st.markdown(f"| **Capacity** | $M_u$: {mu_pos:.1f} | - | **$\phi M_n$: {phi_Mn_b:.1f}** | {'✅' if phi_Mn_b >= mu_pos else '❌'} |")
+                        # ตาราง Bottom Steel
+                        st.markdown(f"""
+| Parameter | Calc As ($M_u$) | Min $A_{{s,min}}$ | Provided As | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Steel Area** | {as_req_b:.0f} mm² | {as_min_t:.0f} mm² | **{as_prov_b:.0f} mm²** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
+| **Capacity** | $M_u$: {mu_pos:.1f} | - | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
+""")
 
                         # --- 3. SHEAR ---
                         st.markdown("#### 🌀 Shear Stirrups")
@@ -136,7 +132,6 @@ else:
                         cs_data = {'b': b_mm, 'h': h_mm, 'cover': cover_mm, 'top': {'n': t_qty, 'layers': t_lay}, 'top_db': t_db, 'bot': {'n': b_qty, 'layers': b_lay}, 'bot_db': b_db, 'stir_db': stir_db, 'shear': {'s': stir_s}}
                         st.components.v1.html(f'<div style="background:white; padding:10px;">{section_plotter.plot_cross_section(cs_data)}</div>', height=400)
 
-                    # --- APPEND RESULTS WITH ALL KEYS ---
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
