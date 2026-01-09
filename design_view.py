@@ -30,7 +30,11 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     # ==========================================
     # ROW 1: LOAD MODEL (FBD)
     # ==========================================
-    total_L = sum(spans)
+    # ป้องกัน Error: ตรวจสอบว่า spans เป็น List หรือไม่
+    if not isinstance(spans, (list, tuple, np.ndarray)):
+        spans = [spans] if spans is not None else []
+        
+    total_L = sum(spans) if len(spans) > 0 else 0
     cum_dist = [0] + list(np.cumsum(spans))
     
     # Beam Line
@@ -39,49 +43,59 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         mode='lines', line=dict(color='black', width=4), hoverinfo='skip'
     ), row=1, col=1)
     
-    # Supports
-    for idx, row in supports.iterrows():
-        sym = "triangle-up"
-        if row['type'] == 'Fixed': sym = "square"
-        elif row['type'] == 'Roller': sym = "circle"
-        
-        fig.add_trace(go.Scatter(
-            x=[row['x']], y=[-0.08], 
-            mode='markers+text',
-            marker=dict(symbol=sym, size=14, color='white', line=dict(width=2, color='black')),
-            text=[row['type'][0]], textposition="bottom center",
-            hoverinfo='name', name=f"Support"
-        ), row=1, col=1)
+    # Supports (Defensive Check)
+    if isinstance(supports, pd.DataFrame):
+        for idx, row in supports.iterrows():
+            sym = "triangle-up"
+            if row['type'] == 'Fixed': sym = "square"
+            elif row['type'] == 'Roller': sym = "circle"
+            
+            fig.add_trace(go.Scatter(
+                x=[row['x']], y=[-0.08], 
+                mode='markers+text',
+                marker=dict(symbol=sym, size=14, color='white', line=dict(width=2, color='black')),
+                text=[row['type'][0]], textposition="bottom center",
+                hoverinfo='name', name=f"Support"
+            ), row=1, col=1)
 
-    # Loads
+    # Loads (FIXED: Strict Type Checking to prevent 'int is not iterable')
+    load_iter = []
     if isinstance(loads, pd.DataFrame):
         load_iter = loads.to_dict('records')
-    else:
+    elif isinstance(loads, (list, tuple)):
         load_iter = loads
+    # ถ้า loads เป็น int หรือ None, load_iter จะเป็น [] ทำให้ไม่เกิด Error ตอนวนลูป
 
     for l in load_iter:
-        span_idx = int(l['span_index'])
-        start_x = cum_dist[span_idx]
-        mag_kN = l['mag'] / 1000.0 # แปลงหน่วย N เป็น kN
+        # ป้องกัน Data ไม่ครบ
+        if not isinstance(l, dict): continue
+
+        span_idx = int(l.get('span_index', 0))
+        if span_idx >= len(cum_dist): continue # ป้องกัน Index Out of Range
         
-        if l['type'] == 'P':
-            x_loc = start_x + float(l['d_start']) 
+        start_x = cum_dist[span_idx]
+        mag_kN = float(l.get('mag', 0)) / 1000.0
+        
+        if l.get('type') == 'P':
+            x_loc = start_x + float(l.get('d_start', 0)) 
             fig.add_annotation(
                 x=x_loc, y=0, ax=0, ay=-50,
                 xref="x1", yref="y1",
                 showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2, arrowcolor="#c0392b",
                 text=f"<b>P={mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
             )
-        elif l['type'] == 'U':
+        elif l.get('type') == 'U':
             x_s = start_x + float(l.get('d_start', 0))
-            x_e = x_s + float(l['dist'])
+            x_e = x_s + float(l.get('dist', 0))
             h_vis = 0.25
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e], y=[h_vis, h_vis],
                 mode='lines', line=dict(color='#2980b9', width=2), hoverinfo='skip'
             ), row=1, col=1)
             
-            n_arrows = max(3, int(float(l['dist']) * 3)) 
+            # ป้องกัน Error ตอนคำนวณลูกศร
+            dist_val = float(l.get('dist', 1))
+            n_arrows = max(3, int(dist_val * 3)) 
             arrow_x = np.linspace(x_s, x_e, n_arrows)
             for ax_x in arrow_x:
                 fig.add_annotation(
@@ -100,64 +114,71 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     # ROW 2: SHEAR FORCE (SFD)
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['shear']/1000, 
-        mode='lines', name='Shear (kN)', line=dict(color='#e74c3c', width=2),
-        fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
-    ), row=2, col=1)
-    
-    v_max = res_df['shear'].max() / 1000
-    v_min = res_df['shear'].min() / 1000
-    for val in [v_max, v_min]:
-        if abs(val) > 0.01:
-            idx = (res_df['shear']/1000 - val).abs().idxmin()
-            fig.add_annotation(
-                x=res_df['x'].iloc[idx], y=val,
-                text=f"<b>{val:.2f} kN</b>", showarrow=False, yshift=15 if val>0 else -15,
-                font=dict(color='#e74c3c', size=11), row=2, col=1
-            )
+    if 'shear' in res_df.columns:
+        fig.add_trace(go.Scatter(
+            x=res_df['x'], y=res_df['shear']/1000, 
+            mode='lines', name='Shear (kN)', line=dict(color='#e74c3c', width=2),
+            fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
+        ), row=2, col=1)
+        
+        # Annotations (Check empty)
+        if not res_df.empty:
+            v_max = res_df['shear'].max() / 1000
+            v_min = res_df['shear'].min() / 1000
+            for val in [v_max, v_min]:
+                if abs(val) > 0.01:
+                    idx = (res_df['shear']/1000 - val).abs().idxmin()
+                    fig.add_annotation(
+                        x=res_df['x'].iloc[idx], y=val,
+                        text=f"<b>{val:.2f} kN</b>", showarrow=False, yshift=15 if val>0 else -15,
+                        font=dict(color='#e74c3c', size=11), row=2, col=1
+                    )
 
     # ==========================================
     # ROW 3: BENDING MOMENT (BMD)
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['moment']/1000, 
-        mode='lines', name='Moment (kN-m)', line=dict(color='#27ae60', width=2),
-        fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
-    ), row=3, col=1)
+    if 'moment' in res_df.columns:
+        fig.add_trace(go.Scatter(
+            x=res_df['x'], y=res_df['moment']/1000, 
+            mode='lines', name='Moment (kN-m)', line=dict(color='#27ae60', width=2),
+            fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
+        ), row=3, col=1)
 
-    m_max = res_df['moment'].max() / 1000
-    m_min = res_df['moment'].min() / 1000
-    for val in [m_max, m_min]:
-        if abs(val) > 0.01:
-            idx = (res_df['moment']/1000 - val).abs().idxmin()
-            fig.add_annotation(
-                x=res_df['x'].iloc[idx], y=val,
-                text=f"<b>{val:.2f} kN-m</b>", 
-                showarrow=True, arrowhead=1, ay=30 if val>0 else -30,
-                font=dict(color='#27ae60', size=11), row=3, col=1
-            )
+        if not res_df.empty:
+            m_max = res_df['moment'].max() / 1000
+            m_min = res_df['moment'].min() / 1000
+            for val in [m_max, m_min]:
+                if abs(val) > 0.01:
+                    idx = (res_df['moment']/1000 - val).abs().idxmin()
+                    fig.add_annotation(
+                        x=res_df['x'].iloc[idx], y=val,
+                        text=f"<b>{val:.2f} kN-m</b>", 
+                        showarrow=True, arrowhead=1, ay=30 if val>0 else -30,
+                        font=dict(color='#27ae60', size=11), row=3, col=1
+                    )
 
     # ==========================================
     # ROW 4: DEFLECTION (Elastic Curve)
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=4, col=1)
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['deflection'], 
-        mode='lines', name='Deflection (mm)', line=dict(color='#8e44ad', width=2)
-    ), row=4, col=1)
-    
-    idx_max_def = res_df['deflection'].abs().idxmax()
-    max_def_val = res_df['deflection'].iloc[idx_max_def]
-    
-    fig.add_annotation(
-        x=res_df['x'].iloc[idx_max_def], y=max_def_val,
-        text=f"<b>Max δ: {max_def_val:.3f} mm</b>",
-        showarrow=True, arrowhead=1, 
-        ay=40 if max_def_val < 0 else -40,
-        font=dict(color='#8e44ad', size=11), row=4, col=1
-    )
+    if 'deflection' in res_df.columns:
+        fig.add_trace(go.Scatter(
+            x=res_df['x'], y=res_df['deflection'], 
+            mode='lines', name='Deflection (mm)', line=dict(color='#8e44ad', width=2)
+        ), row=4, col=1)
+        
+        if not res_df.empty:
+            idx_max_def = res_df['deflection'].abs().idxmax()
+            max_def_val = res_df['deflection'].iloc[idx_max_def]
+            
+            fig.add_annotation(
+                x=res_df['x'].iloc[idx_max_def], y=max_def_val,
+                text=f"<b>Max δ: {max_def_val:.3f} mm</b>",
+                showarrow=True, arrowhead=1, 
+                ay=40 if max_def_val < 0 else -40,
+                font=dict(color='#8e44ad', size=11), row=4, col=1
+            )
 
     # ==========================================
     # LAYOUT & STYLING
@@ -224,8 +245,14 @@ def render_design_view(solver_results, params, spans, sup_df, loads_df):
     """
     Main Logic for Tab 2
     """
+    # ป้องกัน Crash หาก solver_results เป็น None หรือ unpack ไม่ได้
+    if not solver_results or len(solver_results) != 5:
+        st.error("Solver did not return valid results.")
+        return
+
     x_vals, m_vals, v_vals, d_vals, reactions = solver_results
     
+    # Defensive DataFrame Creation
     res_df = pd.DataFrame({
         'x': x_vals,
         'moment': m_vals,
@@ -235,6 +262,7 @@ def render_design_view(solver_results, params, spans, sup_df, loads_df):
     
     st.markdown("### 📊 Structural Analysis & Design")
     with st.expander("📈 View Analysis Diagrams", expanded=True):
+        # เรียก function วาดกราฟ (ที่แก้บั๊กแล้ว)
         fig = plot_analysis_results(res_df, spans, sup_df, loads_df, reactions)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -244,33 +272,47 @@ def render_design_view(solver_results, params, spans, sup_df, loads_df):
     # 1. Select Span
     col_sel, col_param = st.columns([1, 2])
     with col_sel:
+        # ป้องกัน n_spans เป็น 0 หรือ error
+        if not isinstance(spans, list): spans = []
         n_spans = len(spans)
-        span_options = [f"Span {i+1} (L={spans[i]:.2f}m)" for i in range(n_spans)]
-        selected_span_label = st.radio("Select Span:", span_options)
-        selected_span_idx = span_options.index(selected_span_label)
         
-        # Get Span Forces
-        L_span = spans[selected_span_idx]
-        x_start = sum(spans[:selected_span_idx])
-        x_end = x_start + L_span
-        mask = (x_vals >= x_start) & (x_vals <= x_end)
-        
-        mu_pos = np.max(m_vals[mask])/1000 if any(mask) else 0
-        mu_pos = max(0, mu_pos)
-        
-        vu_max = np.max(np.abs(v_vals[mask]))/1000 if any(mask) else 0
-        
-        # Simple neg moment approx
-        m_start = abs(m_vals[(np.abs(x_vals - x_start)).argmin()]/1000)
-        m_end = abs(m_vals[(np.abs(x_vals - x_end)).argmin()]/1000)
-        mu_neg = max(m_start, m_end)
+        if n_spans > 0:
+            span_options = [f"Span {i+1} (L={spans[i]:.2f}m)" for i in range(n_spans)]
+            selected_span_label = st.radio("Select Span:", span_options)
+            try:
+                selected_span_idx = span_options.index(selected_span_label)
+            except:
+                selected_span_idx = 0
+            
+            # Get Span Forces
+            L_span = spans[selected_span_idx]
+            x_start = sum(spans[:selected_span_idx])
+            x_end = x_start + L_span
+            mask = (x_vals >= x_start) & (x_vals <= x_end)
+            
+            if any(mask):
+                mu_pos = np.max(m_vals[mask])/1000
+                mu_pos = max(0, mu_pos)
+                vu_max = np.max(np.abs(v_vals[mask]))/1000
+                
+                # Simple neg moment approx
+                idx_s = (np.abs(x_vals - x_start)).argmin()
+                idx_e = (np.abs(x_vals - x_end)).argmin()
+                m_start = abs(m_vals[idx_s]/1000)
+                m_end = abs(m_vals[idx_e]/1000)
+                mu_neg = max(m_start, m_end)
+            else:
+                mu_pos, mu_neg, vu_max = 0, 0, 0
+        else:
+            st.warning("No spans defined.")
+            return
 
     with col_param:
         c1, c2, c3, c4 = st.columns(4)
         fc = c1.number_input("f'c (MPa)", value=28.0, step=1.0)
         fy = c2.number_input("fy (MPa)", value=420.0, step=10.0)
-        b = c3.number_input("b (mm)", value=float(params['b']*1000), step=50.0)
-        h = c4.number_input("h (mm)", value=float(params['h']*1000), step=50.0)
+        b = c3.number_input("b (mm)", value=float(params.get('b', 0.2)*1000), step=50.0)
+        h = c4.number_input("h (mm)", value=float(params.get('h', 0.4)*1000), step=50.0)
         cover = st.number_input("Cover (mm)", value=25.0)
 
     # 2. Reinforcement Inputs
@@ -308,6 +350,10 @@ def render_design_view(solver_results, params, spans, sup_df, loads_df):
 
     # 3. Calculation (Passed stir_db correctly)
     # ---------------------------------------------------
+    # ตรวจสอบว่ามีข้อมูล layers ส่งไปจริง ไม่ใช่ int หรือ None
+    if not isinstance(bot_layers, list): bot_layers = []
+    if not isinstance(top_layers, list): top_layers = []
+
     phi_Mn_pos, Ast_pos, a_pos, Mn_pos, c_pos, st_pos = get_phi_Mn_details(
         bot_layers, b, h, fc, fy, cover, stir_db
     )
@@ -318,7 +364,7 @@ def render_design_view(solver_results, params, spans, sup_df, loads_df):
     
     # Calculate d for shear
     _, d_shear, _ = calculate_layer_properties(bot_layers, b, h, cover, stir_db)
-    if d_shear == 0: d_shear = h - cover - 20 # Fallback
+    if d_shear <= 0: d_shear = h - cover - 20 # Fallback
     
     shear_status, phi_Vn, phi_Vc, phi_Vs, Vc, Vs = check_shear_details(
         vu_max, b, d_shear, fc, fy, stir_db, stir_s
@@ -335,8 +381,12 @@ def render_design_view(solver_results, params, spans, sup_df, loads_df):
 
     with c_view:
         st.markdown("##### Section Preview")
-        svg_xml = plot_cross_section(design_res)
-        st.image(svg_xml, width=350)
+        # ป้องกัน Error ใน section plotter
+        try:
+            svg_xml = plot_cross_section(design_res)
+            st.image(svg_xml, width=350)
+        except Exception as e:
+            st.error(f"Cannot plot section: {e}")
 
     display_design_comparison(mu_pos, mu_neg, vu_max, design_res)
     
@@ -344,5 +394,9 @@ def render_design_view(solver_results, params, spans, sup_df, loads_df):
     st.markdown("---")
     st.markdown("##### Longitudinal View")
     all_spans_res = [design_res] * len(spans)
-    _, png_long = plot_longitudinal_section_detailed(spans, sup_df, all_spans_res, h/1000, cover)
-    st.image(png_long, use_container_width=True)
+    
+    try:
+        _, png_long = plot_longitudinal_section_detailed(spans, sup_df, all_spans_res, h/1000, cover)
+        st.image(png_long, use_container_width=True)
+    except Exception as e:
+        st.info(f"Longitudinal view not available: {e}")
