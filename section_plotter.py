@@ -7,7 +7,7 @@ import textwrap
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm):
     """
-    วาดรูปตัดยาวคาน พร้อม Support Shapes และการหยุดเหล็ก
+    วาดรูปตัดยาวคาน พร้อม Support และรายละเอียดการหยุดเหล็ก
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
@@ -32,7 +32,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
             ax.text(x_curr + s_mm/2, v_h + 300, f"{s_mm/1000:.2f} m", ha='center', fontweight='bold')
             x_curr += s_mm
 
-    # 3. วาด Support (ดึงกลับมาให้แล้วครับ)
+    # 3. วาด Support (ดึงกลับมาให้ครบ)
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
             sx = row['x'] * 1000
@@ -52,8 +52,6 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
         stir_db = res.get('stir_db', 9)
-        
-        # TOP
         top_layers = res.get('top', {}).get('all_layers', [])
         curr_y_top = v_h - (cover_mm + stir_db)
         t_labels = []
@@ -69,7 +67,6 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
                 if x_s is not None: ax.plot([x_s, x_e], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                 curr_y_top -= v_spacing
         
-        # BOT
         bot_layers = res.get('bot', {}).get('all_layers', [])
         curr_y_bot = cover_mm + stir_db
         b_labels = [] 
@@ -100,11 +97,13 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน: Warning ชิดคานมากขึ้น และลดพื้นที่สีขาวรอบข้าง
+    วาดรูปตัดขวางคาน: ตรวจเช็ค Spacing เหล็กหลัก และ Smax ของเหล็กปลอก
     """
     b, h = float(res.get('b', 200)), float(res.get('h', 400))
     cover = float(res.get('cover', 25))
     stir_db = float(res.get('stir_db', 9))
+    # ดึงค่าระยะห่างเหล็กปลอก (ถ้าไม่มีให้ default ที่ 150)
+    s_spacing = float(res.get('shear', {}).get('s', 150)) 
     
     top_layers = res.get('top_layers') or [{'n': res.get('top', {}).get('n', 0), 'db': res.get('top_db', 16)}]
     bot_layers = res.get('bot_layers') or [{'n': res.get('bot', {}).get('n', 0), 'db': res.get('bot_db', 16)}]
@@ -112,49 +111,53 @@ def plot_cross_section(res):
     fig, ax = plt.subplots(figsize=(6, 5)) 
     x0, y0 = -b/2, -h/2
     
+    # วาดหน้าตัดคอนกรีต
     ax.add_patch(patches.Rectangle((x0, y0), b, h, fc='white', ec='black', lw=2.5, zorder=1))
     s_x, s_y, s_w, s_h = x0+cover, y0+cover, b-2*cover, h-2*cover
     ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, ec='#34495e', lw=1.5, zorder=2))
     
     warnings = []
     
-    # 1. เหล็กบน
+    # --- 1. ตรวจเช็ค S_max ของเหล็กปลอก (Stirrups) ---
+    d_eff = h - cover - stir_db - 12 # คำนวณ d โดยประมาณ
+    s_max_limit = min(600, d_eff / 2) # Smax ไม่เกิน d/2 หรือ 600mm
+    if s_spacing > s_max_limit:
+        warnings.append(f"Stirrup S={int(s_spacing)} > Smax={int(s_max_limit)}mm")
+
+    # 2. วาดเหล็กบน + เช็ค Spacing
     curr_y_top = (h/2) - cover - stir_db
     for idx, l in enumerate(top_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n > 0:
             if n > 1:
                 h_space = (s_w - 2*stir_db - n*db) / (n - 1)
-                if h_space < max(25, db): warnings.append(f"Top L{idx+1}: {h_space:.1f}mm")
+                if h_space < max(25, db): warnings.append(f"Top L{idx+1} space {h_space:.1f}mm")
             y_p = curr_y_top - (db/2)
             x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n) if n > 1 else [0]
             for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
             curr_y_top -= (db + 25.0)
 
-    # 2. เหล็กล่าง
+    # 3. วาดเหล็กล่าง + เช็ค Spacing
     curr_y_bot = (-h/2) + cover + stir_db
     for idx, l in enumerate(bot_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n > 0:
             if n > 1:
                 h_space = (s_w - 2*stir_db - n*db) / (n - 1)
-                if h_space < max(25, db): warnings.append(f"Bot L{idx+1}: {h_space:.1f}mm")
+                if h_space < max(25, db): warnings.append(f"Bot L{idx+1} space {h_space:.1f}mm")
             y_p = curr_y_bot + (db/2)
             x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n) if n > 1 else [0]
             for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
             curr_y_bot += (db + 25.0)
 
-    # 3. จัดการ Warning: ขยับเข้ามาชิดขอบล่างของคาน (y0 - h*0.1)
+    # 4. แสดง Warning (ชิดคาน และประหยัดพื้นที่)
     if warnings:
-        warn_msg = "⚠️ SPACING WARNING: " + " | ".join(warnings)
-        wrapped_warn = "\n".join(textwrap.wrap(warn_msg, width=40))
-        # ใช้พิกัดจริง (Data Coordinates) เพื่อให้ห่างจากตัวคานนิดเดียวเสมอ
-        ax.text(0, y0 - (h*0.15), wrapped_warn, 
-                color='white', fontweight='bold', fontsize=9,
-                ha='center', va='top', 
-                bbox=dict(boxstyle="round,pad=0.4", fc='#d30000', ec='none'))
+        warn_msg = "⚠️ WARNING: " + " | ".join(warnings)
+        wrapped_warn = "\n".join(textwrap.wrap(warn_msg, width=45))
+        ax.text(0, y0 - (h*0.15), wrapped_warn, color='white', fontweight='bold', fontsize=9,
+                ha='center', va='top', bbox=dict(boxstyle="round,pad=0.4", fc='#d30000', ec='none'))
 
-    # 4. Label และ Section Name
+    # 5. Label ข้อมูลเหล็ก
     text_x = b/2 + 20
     top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
     bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
@@ -166,11 +169,9 @@ def plot_cross_section(res):
     ax.set_aspect('equal')
     ax.axis('off')
 
-    # 5. Tighten Limits: ตัดพื้นที่ขาวทิ้งให้มากที่สุด
-    # เผื่อล่างแค่ให้พอดีกับ Warning (ถ้าไม่มี Warning เผื่อนิดเดียว)
+    # 6. ตัดขอบขาว (Tight Limits)
     lower_lim = y0 - (h * 0.5 if warnings else h * 0.2)
     upper_lim = h/2 + (h * 0.25)
-    
     ax.set_xlim(-b*0.8, b*1.8)
     ax.set_ylim(lower_lim, upper_lim) 
     
