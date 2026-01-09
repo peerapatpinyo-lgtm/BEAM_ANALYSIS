@@ -189,3 +189,57 @@ def check_serviceability(Ma_kNm, delta_elastic_mm, b, h, d_eff, Ast_bot, Ast_top
     delta_longterm = delta_immediate + (lambda_delta * delta_immediate)
     
     return float(delta_immediate), float(delta_longterm), float(Ie), float(Icr), float(lambda_delta)
+
+
+# rc_design_engine.py (ส่วนเพิ่มเติม)
+
+def check_crack_width(Ma_svc, b, h, d, As, n_bars, fc, Es=200000):
+    """
+    Calculate Crack Width using Gergely-Lutz Equation.
+    w = 0.076 * beta * fs * cbrt(dc * A) (Imperial base converted to SI)
+    """
+    if Ma_svc <= 0 or As <= 0 or n_bars == 0:
+        return 0.0, 0.0
+
+    # 1. Calculate Modular Ratio (n) & Neutral Axis (k)
+    Ec = 4700 * np.sqrt(fc)
+    n = Es / Ec
+    rho = As / (b * d)
+    k = np.sqrt((rho * n)**2 + 2 * rho * n) - (rho * n)
+    j = 1 - k/3
+    
+    # 2. Calculate Steel Stress (fs) at Service Load
+    # fs = M / (As * j * d)
+    fs = (Ma_svc * 1e6) / (As * j * d) # MPa
+    
+    # 3. Geometric Parameters for Gergely-Lutz
+    # x = Neutral axis depth
+    x = k * d
+    
+    # dc = Distance from tension face to center of closest bar
+    # Approximation: h - d is the distance from centroid of steel to bottom
+    dc = h - d 
+    if dc < 0: dc = 40 # Fallback
+    
+    # beta = Ratio of distance (Neutral axis to Tension Face) / (Neutral axis to Steel Centroid)
+    beta = (h - x) / (d - x)
+    
+    # A = Effective tension area of concrete surrounding the flexural tension reinforcement
+    # divided by the number of bars.
+    # Effective tension area = 2 * dc * b
+    A_eff = (2 * dc * b) / n_bars
+    
+    # 4. Calculation (Convert to Imperial for Formula, then back to mm)
+    # Why? Gergely-Lutz coefficients are empirically derived in Imperial units.
+    
+    fs_ksi = fs / 6.895        # MPa -> ksi
+    dc_in = dc / 25.4          # mm -> inch
+    A_in = A_eff / 645.16      # mm2 -> inch2
+    
+    # Formula: w (0.001 in) = 0.076 * beta * fs * (dc * A)^(1/3)
+    w_thou = 0.076 * beta * fs_ksi * (dc_in * A_in)**(1/3)
+    
+    # Convert back to mm
+    w_mm = (w_thou / 1000) * 25.4
+    
+    return w_mm, fs
