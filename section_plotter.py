@@ -46,7 +46,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
                 ax.add_patch(patches.Polygon([[sx, 0], [sx-100, -200], [sx+100, -200]], fc='#2c3e50', ec='black', lw=1.5, zorder=4))
             ax.text(sx, -450, f"S{row['id']}\n({stype})", ha='center', fontweight='bold', fontsize=9)
 
-    # 4. วาดเหล็กเสริม (Main Bars & Stirrups)
+    # 4. วาดเหล็กเสริม
     x_curr = 0
     v_spacing = 35.0 
     for i, span_L in enumerate(spans_mm):
@@ -88,7 +88,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         ax.text(mid, v_h + 80, "\n".join(t_labels), color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
         ax.text(mid, -120, "\n".join(reversed(b_labels)), color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
         
-        # --- เพิ่มรายละเอียดเหล็กปลอก (Long Section) ---
+        # Stirrup Tag ในรูปตัดยาว
         ax.text(mid, v_h/2, f"STIRRUPS:\nRB{int(stir_db)} @ {stir_s/1000:.2f} m", 
                 color='#34495e', ha='center', va='center', fontsize=9, fontweight='bold', 
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#34495e', lw=1, alpha=0.9))
@@ -107,7 +107,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน: เพิ่มรายละเอียด Stirrups เทียบกับ Smax ให้ชัดเจน
+    วาดรูปตัดขวางคาน: แสดงรายละเอียด Stirrups เทียบกับ Smax
     """
     b, h = float(res.get('b', 200)), float(res.get('h', 400))
     cover = float(res.get('cover', 25))
@@ -127,11 +127,10 @@ def plot_cross_section(res):
     
     warnings = []
     
-    # --- ใหม่: คำนวณและแสดงผล Smax เทียบกับ Stirrup ที่เลือก ---
+    # คำนวณ Smax
     s_max_limit = 0
     if stir_s:
         s_val = float(stir_s)
-        # d ≈ h - cover - stir_db - (main_db/2) -> ใช้ค่าประมาณการ
         d_eff = h - cover - stir_db - 12 
         s_max_limit = min(600, d_eff / 2)
         if s_val > s_max_limit:
@@ -142,9 +141,6 @@ def plot_cross_section(res):
     for idx, l in enumerate(top_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n > 0:
-            if n > 1:
-                h_space = (s_w - 2*stir_db - n*db) / (n - 1)
-                if h_space < max(25, db): warnings.append(f"Top L{idx+1}: {h_space:.1f}mm")
             y_p = curr_y_top - (db/2)
             x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n) if n > 1 else [0]
             for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
@@ -155,24 +151,12 @@ def plot_cross_section(res):
     for idx, l in enumerate(bot_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n > 0:
-            if n > 1:
-                h_space = (s_w - 2*stir_db - n*db) / (n - 1)
-                if h_space < max(25, db): warnings.append(f"Bot L{idx+1}: {h_space:.1f}mm")
             y_p = curr_y_bot + (db/2)
             x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n) if n > 1 else [0]
             for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
             curr_y_bot += (db + 25.0)
 
-    # 3. Warning Section
-    if warnings:
-        warn_msg = "⚠️ WARNING: " + " | ".join(warnings)
-        wrapped_warn = "\n".join(textwrap.wrap(warn_msg, width=45))
-        ax.text(0, y0 - (h*0.15), wrapped_warn, 
-                color='white', fontweight='bold', fontsize=9,
-                ha='center', va='top', 
-                bbox=dict(boxstyle="round,pad=0.4", fc='#d30000', ec='none'))
-
-    # 4. Label เหล็กหลักและเหล็กปลอก (Cross Section)
+    # Label ข้อมูล
     text_x = b/2 + 25
     top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
     bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
@@ -180,7 +164,6 @@ def plot_cross_section(res):
     ax.text(text_x, h/2 - 10, f"Top:\n{textwrap.fill(top_t, 18)}", color='#d30000', va='top', fontweight='bold', fontsize=9)
     ax.text(text_x, -h/2 + 10, f"Bot:\n{textwrap.fill(bot_t, 18)}", color='#008c00', va='bottom', fontweight='bold', fontsize=9)
     
-    # --- ส่วนแสดงรายละเอียด Stirrup & Smax แบบเทียบชัดเจน ---
     if stir_s:
         stir_color = '#d30000' if float(stir_s) > s_max_limit else '#34495e'
         stir_label = (
@@ -196,11 +179,8 @@ def plot_cross_section(res):
 
     ax.set_aspect('equal')
     ax.axis('off')
-
-    lower_lim = y0 - (h * 0.5 if warnings else h * 0.2)
-    upper_lim = h/2 + (h * 0.25)
-    ax.set_xlim(-b*0.8, b*2.4) # ขยายขอบเขตขวาเพื่อแสดง Label เปรียบเทียบ
-    ax.set_ylim(lower_lim, upper_lim) 
+    ax.set_xlim(-b*0.8, b*2.4)
+    ax.set_ylim(y0 - (h*0.2), h/2 + (h*0.25)) 
     
     f = io.StringIO()
     fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.1, transparent=True)
