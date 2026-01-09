@@ -2,6 +2,9 @@
 import numpy as np
 from rc_utils import get_beta1
 
+# -----------------------------------------------------------
+# 1. Function คำนวณเหล็กเสริมที่ต้องการ (Required Steel)
+# -----------------------------------------------------------
 def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     """
     Calculate Required Steel Area based on ACI 318
@@ -10,23 +13,31 @@ def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     if Mu_kNm == 0: 
         return 0.0, 0.0, False
         
-    Mu = abs(Mu_kNm) * 1e6 # N-mm
+    Mu = abs(Mu_kNm) * 1e6 # แปลงหน่วยเป็น N-mm
     phi = 0.9 
     
+    # คำนวณ Rn
     Rn = Mu / (phi * b_mm * d_eff_mm**2)
     term_inside = 1 - (2 * Rn) / (0.85 * fc)
     
+    # ตรวจสอบว่าหน้าตัดรับไหวไหม (ถ้า term_inside < 0 แปลว่าต้องขยายหน้าตัด หรือใส่เหล็กอัด)
     if term_inside < 0:
         return 0.0, 0.0, True 
 
+    # คำนวณ Rho ที่ต้องการ
     rho = (0.85 * fc / fy) * (1 - np.sqrt(term_inside))
     as_req_calc = rho * b_mm * d_eff_mm
     
+    # คำนวณ As_min ตาม ACI
     as_min = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm, (1.4 / fy) * b_mm * d_eff_mm)
+    
     as_final = max(as_req_calc, as_min)
     
     return float(as_final), float(rho), False
 
+# -----------------------------------------------------------
+# 2. Function ช่วยคำนวณตำแหน่งจุดศูนย์ถ่วงกลุ่มเหล็ก (Layer Properties)
+# -----------------------------------------------------------
 def calculate_layer_properties(layers, b, h, cover, stir_db=10, is_top=False):
     """
     Helper to calculate centroid (d) and extreme tension depth (dt) for multi-layer steel.
@@ -89,10 +100,13 @@ def calculate_layer_properties(layers, b, h, cover, stir_db=10, is_top=False):
         
     return float(Ast_total), float(d), float(dt)
 
+# -----------------------------------------------------------
+# 3. Function หลักคำนวณกำลังรับโมเมนต์ (Phi Mn)
+# -----------------------------------------------------------
 def get_phi_Mn_details(layers, b, h, fc, fy, cover, stir_db=10):
     """
     Calculate Moment Capacity (Phi Mn) for Multi-Layer Steel
-    Added default stir_db=10 to fix 'missing argument' error if caller is old version.
+    **FIXED**: Added default stir_db=10 to prevent 'missing argument' error.
     """
     # 1. Calculate Group Properties
     Ast, d, dt = calculate_layer_properties(layers, b, h, cover, stir_db)
@@ -101,11 +115,12 @@ def get_phi_Mn_details(layers, b, h, fc, fy, cover, stir_db=10):
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
     # 2. Calculate Block Depth (a)
+    # T = C => Ast * fy = 0.85 * fc * b * a
     a = (Ast * fy) / (0.85 * fc * b)
     beta1 = get_beta1(fc)
     c = a / beta1
     
-    # 3. Check Section Fail
+    # 3. Check Section Fail (Block exceeds effective depth significantly)
     if a >= d: 
         return 0.0, float(Ast), float(a), 0.0, float(c), -1.0 
 
@@ -121,12 +136,15 @@ def get_phi_Mn_details(layers, b, h, fc, fy, cover, stir_db=10):
     else:
         phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
-    # 6. Calculate Mn
+    # 6. Calculate Mn (Moment about centroid of steel group)
     Mn = Ast * fy * (d - a/2)
-    phi_Mn = phi * Mn / 1e6 # kN-m
+    phi_Mn = phi * Mn / 1e6 # แปลงเป็น kN-m
     
     return float(phi_Mn), float(Ast), float(a), float(Mn), float(c), float(strain_t)
 
+# -----------------------------------------------------------
+# 4. Function ตรวจสอบแรงเฉือน (Shear Check)
+# -----------------------------------------------------------
 def check_shear_details(Vu_kN, b, d, fc, fy, stir_db=10, spacing=150):
     """
     Check Shear Capacity
