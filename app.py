@@ -47,21 +47,8 @@ else:
 
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
-        # --- TABS DEFINITION ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
         final_design_res = []
-
-        # ================= TAB 1: ANALYSIS RESULTS =================
-        with tab1:
-            st.subheader(f"📈 Diagrams ({tag} Load)")
-            df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
-            fig = design_view.plot_analysis_results(df_for_plot, spans, sup_df, calc_loads_ult if not is_service else calc_loads_svc, R_plot)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            c_m1, c_m2, c_m3 = st.columns(3)
-            c_m1.metric(f"Max Shear ({tag})", f"{max(abs(V_plot))/1000:.2f} kN")
-            c_m2.metric(f"Max Moment ({tag})", f"{max(M_plot)/1000:.2f} kNm")
-            c_m3.metric(f"Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
 
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
@@ -82,7 +69,7 @@ else:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, key=f"cov_{i}")
                         stir_db = st.selectbox("Stirrup Size (mm)", [6, 9, 12], index=1, key=f"sdb_final_{i}")
 
-                        # --- 1. TOP STEEL (Negative Moment) ---
+                        # --- 1. TOP STEEL ---
                         st.markdown("#### 🔼 Top Reinforcement (Support)")
                         ct1, ct2, ct3 = st.columns([2, 2, 1])
                         with ct1: t_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
@@ -90,7 +77,6 @@ else:
                         with ct3: t_lay = st.selectbox("Layers", [1, 2, 3], index=0, key=f"tl_{i}")
                         
                         # คำนวณ d_t ตามชั้น (d ลดลงเมื่อชั้นเพิ่ม)
-                        # Center of bars = cover + stir_db + db/2 + (layers-1)*(25 + db)/2
                         d_t = h_mm - (cover_mm + stir_db + t_db/2 + (t_lay-1)*(25 + t_db)/2)
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
                         as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
@@ -99,18 +85,17 @@ else:
                         st.markdown(f"""
 | **Top Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
 | :--- | :---: | :---: | :---: | :---: |
-| **Steel Area ($A_s$, mm²)** | {as_req_t:.0f} | {as_min_t:.0f} | **{as_prov_t:.0f}** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
+| **Area ($A_s$, mm²)** | {as_req_t:.0f} | {as_min_t:.0f} | **{as_prov_t:.0f}** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
 | **Capacity (kNm)** | $M_u$: {mu_neg:.1f} | --- | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
 """)
 
-                        # --- 2. BOTTOM STEEL (Positive Moment) ---
+                        # --- 2. BOTTOM STEEL ---
                         st.markdown("#### 🔽 Bottom Reinforcement (Mid-Span)")
                         cb1, cb2, cb3 = st.columns([2, 2, 1])
                         with cb1: b_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
                         with cb2: b_qty = st.number_input("Qty", 2, 20, 3, key=f"bn_{i}")
                         with cb3: b_lay = st.selectbox("Layers", [1, 2, 3], index=0, key=f"bl_{i}")
                         
-                        # คำนวณ d_b ตามชั้น
                         d_b = h_mm - (cover_mm + stir_db + b_db/2 + (b_lay-1)*(25 + b_db)/2)
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
                         phi_Mn_b, as_prov_b, _, _, _, _ = rc_design_engine.get_phi_Mn_details(b_qty, b_db, d_b, b_mm, fc, fy)
@@ -118,32 +103,38 @@ else:
                         st.markdown(f"""
 | **Bottom Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
 | :--- | :---: | :---: | :---: | :---: |
-| **Steel Area ($A_s$, mm²)** | {as_req_b:.0f} | {as_min_t:.0f} | **{as_prov_b:.0f}** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
+| **Area ($A_s$, mm²)** | {as_req_b:.0f} | {as_min_t:.0f} | **{as_prov_b:.0f}** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
 | **Capacity (kNm)** | $M_u$: {mu_pos:.1f} | --- | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
 """)
 
                         # --- 3. SHEAR ---
-                        st.markdown("#### 🌀 Shear Reinforcement")
                         stir_s = st.number_input("Spacing (mm)", 50, 300, 150, key=f"ss_{i}")
                         status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_b, fc, fy, stir_db, stir_s)
                         if phi_Vn < vu_max: st.error(f"❌ **Shear Fail:** $\phi V_n$ {phi_Vn:.1f} < $V_u$ {vu_max:.1f} kN")
                         else: st.success(f"✅ **Shear Pass:** $\phi V_n$ {phi_Vn:.1f} ≥ $V_u$ {vu_max:.1f} kN")
 
                     with col_draw:
-                        # ส่งข้อมูล Layer และ DB ให้ครบถ้วนเพื่อความสอดคล้องของรูปวาด
+                        # แก้ไข Error 'top_db' โดยส่ง key ให้ตรงกับที่ section_plotter เรียกใช้
                         cs_data = {
                             'b': b_mm, 'h': h_mm, 'cover': cover_mm, 
                             'top': {'n': t_qty, 'layers': t_lay, 'db': t_db}, 
                             'bot': {'n': b_qty, 'layers': b_lay, 'db': b_db}, 
-                            'stir_db': stir_db, 'shear': {'s': stir_s}
+                            'top_db': t_db,  # ใส่สำรองไว้กัน Error ในบาง version
+                            'bot_db': b_db,  # ใส่สำรองไว้กัน Error ในบาง version
+                            'stir_db': stir_db, 
+                            'shear': {'s': stir_s}
                         }
                         st.components.v1.html(f'<div style="background:white; padding:10px; border-radius:10px; border:1px solid #ddd;">{section_plotter.plot_cross_section(cs_data)}</div>', height=420)
 
+                    # เก็บข้อมูลลง List เพื่อใช้ใน Report และ Drawing
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
-                        'top_db': t_db, 'bot_db': b_db, 'stir_db': stir_db, 'pos': {'n': b_qty, 'area': as_prov_b, 'layers': b_lay, 'status': (phi_Mn_b >= mu_pos)},
-                        'neg': {'n': t_qty, 'area': as_prov_t, 'layers': t_lay, 'status': (phi_Mn_t >= mu_neg)},
-                        'shear': {'s': stir_s, 'db': stir_db, 'status': status_v}
+                        'top_db': t_db, 'bot_db': b_db, 'stir_db': stir_db, 
+                        'pos': {'n': b_qty, 'area': as_prov_b, 'layers': b_lay, 'db': b_db, 'status': (phi_Mn_b >= mu_pos)},
+                        'neg': {'n': t_qty, 'area': as_prov_t, 'layers': t_lay, 'db': t_db, 'status': (phi_Mn_t >= mu_neg)},
+                        'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
+                        'top': {'n': t_qty, 'db': t_db, 'layers': t_lay},
+                        'bot': {'n': b_qty, 'db': b_db, 'layers': b_lay}
                     })
 
             st.markdown("---")
@@ -155,10 +146,10 @@ else:
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
-                st.warning("⚠️ กรุณาทำการออกแบบใน Tab 2 ก่อนแสดงรายงาน")
+                st.warning("⚠️ กรุณาทำการออกแบบใน Tab 2 ก่อน")
             else:
-                for i, res in enumerate(final_design_res):
-                    with st.expander(f"📘 Span {i+1} Design Details", expanded=(i==0)):
+                for res in final_design_res:
+                    with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
 
     except Exception as e:
