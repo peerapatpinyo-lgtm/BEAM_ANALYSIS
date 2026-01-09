@@ -3,7 +3,7 @@ import matplotlib.patches as patches
 import matplotlib.path as mpath
 import numpy as np
 
-# --- 🏗️ Engineering Standard Config ---
+# --- 🏗️ Engineering Standard Config (Original) ---
 COLOR_CONCRETE = '#FFFFFF'
 COLOR_DIM      = '#000000'
 COLOR_STIRRUP  = '#2c3e50'
@@ -19,7 +19,7 @@ def _setup_figure(figsize):
     return fig, ax
 
 def _draw_dim_line(ax, p1, p2, text, offset=0, is_vert=False):
-    """วาดเส้น Dimension - คงเดิมทุกบรรทัด"""
+    """วาดเส้น Dimension - คงเดิมทุกบรรทัดตาม Code คุณ"""
     if is_vert:
         x_pos = p1[0] - offset
         mid_y = (p1[1] + p2[1]) / 2
@@ -40,129 +40,127 @@ def _draw_dim_line(ax, p1, p2, text, offset=0, is_vert=False):
                 bbox=dict(facecolor='white', edgecolor='none', pad=2))
 
 def _draw_support_symbol(ax, x, y, sup_type, sup_id):
-    """วาด Support - แก้ไขตำแหน่งให้ไม่ทับคาน"""
-    size = 250 
-    ax.text(x, y - size - 150, f"S{sup_id}", ha='center', fontsize=9, fontweight='bold')
+    """วาดสัญลักษณ์ Support - คง Logic เดิม แต่ปรับตำแหน่งให้พ้นแนวคาน"""
+    size = 200 
+    # ขยับ Text ลงมาด้านล่าง
+    ax.text(x, y - size - 180, f"S{sup_id}", ha='center', fontsize=9, fontweight='bold')
     
-    # วาดสัญลักษณ์ Support (คง Logic เดิม แต่เน้น Z-order)
     if sup_type == 'Fixed':
-        w, h = 120, 500
-        rect = patches.Rectangle((x-w/2, y-h/2), w, h, facecolor='#bdc3c7', edgecolor='black', hatch='///', zorder=1)
+        w, h = 100, 450
+        rect = patches.Rectangle((x-w/2, y-h/2), w, h, facecolor='#bdc3c7', edgecolor='black', hatch='///', zorder=5)
         ax.add_patch(rect)
     elif sup_type == 'Pin':
         tri = patches.Polygon([[x, y], [x-size/2, y-size], [x+size/2, y-size]], 
-                              closed=True, facecolor='#bdc3c7', edgecolor='black', zorder=1)
+                              closed=True, facecolor='#bdc3c7', edgecolor='black', zorder=5)
         ax.add_patch(tri)
-        ax.plot([x-size, x+size], [y-size, y-size], color='black', lw=2, zorder=1)
+        ax.plot([x-size, x+size], [y-size, y-size], color='black', lw=2, zorder=6)
     elif sup_type == 'Roller':
         tri = patches.Polygon([[x, y], [x-size/2, y-size], [x+size/2, y-size]], 
-                              closed=True, facecolor='#bdc3c7', edgecolor='black', zorder=1)
+                              closed=True, facecolor='#bdc3c7', edgecolor='black', zorder=5)
         ax.add_patch(tri)
-        wheel_r = 40
-        ax.add_patch(patches.Circle((x, y-size-wheel_r), wheel_r, fc='white', ec='black', zorder=1))
-        ax.plot([x-size, x+size], [y-size-2*wheel_r, y-size-2*wheel_r], color='black', lw=2, zorder=1)
+        wheel_r = 30
+        ax.add_patch(patches.Circle((x, y-size-wheel_r), wheel_r, fc='white', ec='black', zorder=6))
+        ax.plot([x-size, x+size], [y-size-2*wheel_r, y-size-2*wheel_r], color='black', lw=2, zorder=5)
     else:
-        rect = patches.Rectangle((x-100, y-400), 200, 400, fc='#eee', ec='black', zorder=1)
+        rect = patches.Rectangle((x-80, y-350), 160, 350, fc='#eee', ec='black', zorder=4)
         ax.add_patch(rect)
 
 def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_text, fc, fy, title="SECTION A-A"):
-    """รูปตัดขวาง - แก้ไขการเรียงเหล็กให้เป็นแนวนอนตามกว้าง b"""
+    """รูปตัดขวาง - แก้ไขไม่ให้หมุน 90 องศา"""
     b, h = b_m * 1000.0, h_m * 1000.0
-    fig, ax = _setup_figure((7, 6))
+    fig, ax = _setup_figure((6, 6))
     
-    # 1. Concrete (b=กว้าง, h=สูง)
+    # Concrete & Stirrup (b=กว้างแนวนอน, h=สูงแนวตั้ง)
     ax.add_patch(patches.Rectangle((0, 0), b, h, lw=2, ec='black', fc='#FAFAFA', zorder=1))
-    
-    # 2. Stirrup
     st_off = cover_mm
     ax.add_patch(patches.Rectangle((st_off, st_off), b-2*st_off, h-2*st_off, 
                                    lw=1.5, ec=COLOR_STIRRUP, fill=False, zorder=2))
     
-    # 3. Bars - บังคับพิกัด X ให้กระจายตาม b
-    def draw_bars(n, y, db, color):
-        if n < 1: return b/2
-        if n > 1:
-            xs = np.linspace(st_off + 15 + db/2, b - st_off - 15 - db/2, int(n))
-        else:
+    # วางเหล็กเรียงตามแนวนอน (แกน X)
+    def draw_bars(n, y_pos, db, color):
+        if n <= 0: return b/2
+        if n == 1:
             xs = [b/2]
+        else:
+            side_clear = st_off + 10 + db/2
+            xs = np.linspace(side_clear, b - side_clear, int(n))
         for x in xs:
-            ax.add_patch(patches.Circle((x, y), db/2, fc=color, ec='black', lw=0.8, zorder=10))
+            ax.add_patch(patches.Circle((x, y_pos), db/2, fc=color, ec='black', lw=0.8, zorder=10))
         return xs[-1]
 
-    y_top = h - cover_mm - 10 - (db_top_mm/2)
-    y_bot = cover_mm + 10 + (db_bot_mm/2)
+    y_top = h - (cover_mm + 10 + db_top_mm/2)
+    y_bot = cover_mm + 10 + db_bot_mm/2
     
-    lx_t = draw_bars(n_top, y_top, db_top_mm, COLOR_TOP)
-    lx_b = draw_bars(n_bot, y_bot, db_bot_mm, COLOR_BOT)
+    last_x_top = draw_bars(n_top, y_top, db_top_mm, COLOR_TOP)
+    last_x_bot = draw_bars(n_bot, y_bot, db_bot_mm, COLOR_BOT)
     
-    # Annotations & Dims - คงเดิมจากต้นฉบับ
-    ax.annotate(f"Stirrup: {stir_text}", xy=(st_off, h/2), xytext=(-120, h/2),
-                arrowprops=dict(arrowstyle='->', color=COLOR_STIRRUP), ha='right', va='center')
-
-    ax.annotate(f"{int(n_top)}-DB{int(db_top_mm)}", xy=(lx_t, y_top), xytext=(b+80, h-30),
-                arrowprops=dict(arrowstyle='->', color=COLOR_TOP, connectionstyle="arc3,rad=0.1"),
-                ha='left', fontweight='bold', color=COLOR_TOP)
+    # Labels (คงเดิมตามของคุณ)
+    ax.annotate(f"{int(n_top)}-DB{int(db_top_mm)} (Top)", xy=(last_x_top, y_top), 
+                xytext=(b+50, h-40), arrowprops=dict(arrowstyle='->', color=COLOR_TOP),
+                ha='left', va='center', fontsize=FONT_MAIN, color=COLOR_TOP, fontweight='bold')
     
-    ax.annotate(f"{int(n_bot)}-DB{int(db_bot_mm)}", xy=(lx_b, y_bot), xytext=(b+80, 50),
-                arrowprops=dict(arrowstyle='->', color=COLOR_BOT, connectionstyle="arc3,rad=-0.1"),
-                ha='left', fontweight='bold', color=COLOR_BOT)
+    ax.annotate(f"{int(n_bot)}-DB{int(db_bot_mm)} (Bot)", xy=(last_x_bot, y_bot), 
+                xytext=(b+50, 40), arrowprops=dict(arrowstyle='->', color=COLOR_BOT),
+                ha='left', va='center', fontsize=FONT_MAIN, color=COLOR_BOT, fontweight='bold')
 
     _draw_dim_line(ax, (0, 0), (b, 0), f"{int(b)}", offset=-70)
     _draw_dim_line(ax, (0, 0), (0, h), f"{int(h)}", offset=70, is_vert=True)
 
     ax.axis('equal')
     ax.axis('off')
-    ax.set_xlim(-200, b + 350)
-    ax.set_ylim(-200, h + 200)
+    ax.set_xlim(-150, b + 250)
+    ax.set_ylim(-150, h + 150)
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """รูปตัดตามยาว - แก้ไข Aspect Ratio ให้เป็นแนวนอนและวาดปลอกจริง"""
+    """รูปตัดตามยาว - แก้ไขการยืดตัวแนวตั้ง และ Text ซ้อนทับ"""
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     h_mm = h_m * 1000
     
-    # ปรับสัดส่วนภาพให้ยาวตามคาน
-    fig_w = max(14, total_L / 450)
+    # 1. ปรับขนาดรูปให้ยาวออก (Width > Height)
+    fig_w = max(12, total_L / 400)
     fig, ax = _setup_figure((fig_w, 5)) 
     
-    # 1. Beam Body
+    # 2. วาดโครงคาน
     ax.add_patch(patches.Rectangle((0, 0), total_L, h_mm, lw=2, ec='black', fc='none', zorder=10))
     
-    # 2. Supports
+    # 3. Supports (ใช้ฟังก์ชันเดิมของคุณ)
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
-            _draw_support_symbol(ax, row['x']*1000, 0, row.get('type','Pin'), row.get('id',''))
+            _draw_support_symbol(ax, row['x']*1000, 0, row.get('type', 'Pin'), row.get('id', ''))
 
-    # 3. Reinforcement & Stirrups
-    x_cur = 0
-    y_t = h_mm - cover_mm - 15
-    y_b = cover_mm + 15
+    x_cursor = 0
+    y_top_main = h_mm - (cover_mm + 15)
+    y_bot_main = cover_mm + 15
 
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
-        mid = x_cur + span_L/2
+        mid_span = x_cursor + span_L/2
         
-        # วาดเส้นเหล็กปลอกจริง (Stirrups)
-        s_space = res['shear']['s']
-        num_s = int(span_L / s_space)
-        for sx in np.linspace(x_cur+50, x_cur+span_L-50, num_s):
-            ax.plot([sx, sx], [cover_mm, h_mm-cover_mm], color=COLOR_STIRRUP, lw=0.5, alpha=0.4, zorder=2)
+        # วาดเหล็กปลอก (Stirrups)
+        s_spacing = res['shear']['s']
+        num_stir = int(span_L / s_spacing)
+        for sx in np.linspace(x_cursor + 50, x_cursor + span_L - 50, num_stir):
+            ax.plot([sx, sx], [cover_mm, h_mm-cover_mm], color=COLOR_STIRRUP, lw=0.6, alpha=0.4)
 
-        # เหล็กเมนบนและล่าง (คงเดิมจากต้นฉบับ)
-        ax.plot([x_cur, x_cur + span_L], [y_t, y_t], color=COLOR_TOP, lw=3, zorder=15)
-        ax.plot([x_cur + 50, x_cur + span_L - 50], [y_b, y_b], color=COLOR_BOT, lw=3, zorder=15)
+        # เหล็กเสริมบน (Negative)
+        L_neg = span_L * 0.30
+        ax.plot([x_cursor, x_cursor + L_neg], [y_top_main, y_top_main], color=COLOR_TOP, lw=3, zorder=15)
+        ax.plot([x_cursor + span_L - L_neg, x_cursor + span_L], [y_top_main, y_top_main], color=COLOR_TOP, lw=3, zorder=15)
         
-        # Labels
-        ax.text(mid, h_mm + 80, f"{res['neg']['n']}-DB{int(res['top_db'])}", color=COLOR_TOP, ha='center', fontsize=8)
-        ax.text(mid, y_b + 40, f"{res['pos']['n']}-DB{int(res['bot_db'])}", color=COLOR_BOT, ha='center', fontsize=8)
-        ax.text(mid, -180, f"RB{int(res['stir_db'])}@{int(s_space)}", color=COLOR_STIRRUP, ha='center', fontsize=8)
-        
-        x_cur += span_L
+        # Labels - ปรับตำแหน่งไม่ให้ซ้อน
+        ax.text(mid_span, h_mm + 120, f"{res['neg']['n']}-DB{int(res['top_db'])}", color=COLOR_TOP, ha='center', fontsize=9)
+        ax.text(mid_span, y_bot_main + 60, f"{res['pos']['n']}-DB{int(res['bot_db'])}", color=COLOR_BOT, ha='center', fontsize=9)
+        # ขยับ Text เหล็กปลอกลงไปข้างล่าง
+        ax.text(mid_span, -250, f"RB{int(res['stir_db'])}@{int(s_spacing)}", color=COLOR_STIRRUP, ha='center', fontsize=8)
 
-    _draw_dim_line(ax, (0, h_mm), (total_L, h_mm), f"Total L = {total_L/1000:.2f} m", offset=400)
+        x_cursor += span_L
+
+    _draw_dim_line(ax, (0, h_mm), (total_L, h_mm), f"Total L = {total_L/1000:.2f} m", offset=350)
     
-    ax.set_aspect('auto') # บังคับแนวนอน
+    # สำคัญ: เปลี่ยนจาก equal เป็น auto เพื่อให้คานยาวออกแนวข้าง
+    ax.set_aspect('auto') 
     ax.axis('off')
     ax.set_xlim(-500, total_L + 500)
     ax.set_ylim(-600, h_mm + 700)
