@@ -36,8 +36,11 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     # --- Top Rebar ---
     # Simplified: Visualize based on total count, using dia of first layer
     n_top = sum(l['n'] for l in top_layers)
-    dia_top = top_layers[0]['db']
-    
+    if top_layers:
+        dia_top = top_layers[0]['db']
+    else:
+        dia_top = 12 # Default fallback
+
     start_x = cover + dia_top/2
     end_x = b - cover - dia_top/2
     
@@ -47,12 +50,15 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
             cx = start_x + i*gap
             cy = h - cover - dia_top/2
             ax.add_patch(patches.Circle((cx, cy), radius=dia_top/2, color='#c0392b'))
-    else:
+    elif n_top == 1:
         ax.add_patch(patches.Circle((b/2, h - cover - dia_top/2), radius=dia_top/2, color='#c0392b'))
 
     # --- Bot Rebar ---
     n_bot = sum(l['n'] for l in bot_layers)
-    dia_bot = bot_layers[0]['db']
+    if bot_layers:
+        dia_bot = bot_layers[0]['db']
+    else:
+        dia_bot = 12 # Default fallback
     
     start_x = cover + dia_bot/2
     end_x = b - cover - dia_bot/2
@@ -63,7 +69,7 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
             cx = start_x + i*gap
             cy = cover + dia_bot/2
             ax.add_patch(patches.Circle((cx, cy), radius=dia_bot/2, color='#27ae60'))
-    else:
+    elif n_bot == 1:
         ax.add_patch(patches.Circle((b/2, cover + dia_bot/2), radius=dia_bot/2, color='#27ae60'))
 
     # 5. Add Labels (Fixed Position)
@@ -136,7 +142,7 @@ else:
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
-        # 2. Service Run (For Deflection Check) - Fix factors to 1.0
+        # 2. Service Run (For Deflection & Crack Check) - Fix factors to 1.0
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
@@ -246,6 +252,33 @@ else:
                         """)
                         st.caption(f"*Calculated using ACI 318-19, $I_e$={Ie/1e4:.0f}cm⁴, $\lambda_\Delta$={lambda_d:.2f}")
 
+                        # --- 5. CRACK WIDTH CONTROL (NEW FEATURE) ---
+                        st.markdown("#### ⚡ Crack Width Control")
+                        
+                        # รวมจำนวนเหล็กล่างทั้งหมด
+                        total_n_bars_bot = sum(l['n'] for l in bot_layers)
+                        
+                        w_crack, fs_actual = rc_design_engine.check_crack_width(
+                            Ma_svc=ma_pos_svc, # โมเมนต์ใช้งานจริง (Service)
+                            b=b_mm, 
+                            h=h_mm, 
+                            d=d_b, 
+                            As=as_prov_b, 
+                            n_bars=total_n_bars_bot, 
+                            fc=fc
+                        )
+                        
+                        limit_crack = 0.30 # mm (Standard for internal use)
+                        status_crack = "✅ Pass" if w_crack <= limit_crack else "⚠️ Warning"
+                        
+                        c_cr1, c_cr2, c_cr3 = st.columns(3)
+                        c_cr1.metric("Service Stress ($f_s$)", f"{fs_actual:.1f} MPa", help="เหล็กรับแรงดึงทำงานจริงที่ Service Load")
+                        c_cr2.metric("Crack Width ($w$)", f"{w_crack:.3f} mm", help="คำนวณด้วยสูตร Gergely-Lutz")
+                        c_cr3.metric("Limit (General)", f"{limit_crack} mm", status_crack)
+                        
+                        if w_crack > limit_crack:
+                            st.warning(f"⚠️ รอยร้าวคำนวณได้ {w_crack:.3f} mm เกินมาตรฐาน {limit_crack} mm -> แนะนำให้เพิ่มจำนวนเหล็กแต่ลดขนาดหน้าตัดลง (ใช้เหล็กเล็กแต่เยอะขึ้น)")
+
                     with col_draw:
                         # --- UPDATED: Use Matplotlib Fix ---
                         fig_cs = plot_cross_section_fixed(
@@ -261,13 +294,16 @@ else:
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
                         'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': d_long, 
-                        'top_db': top_layers[0]['db'], 'bot_db': bot_layers[0]['db'], 'stir_db': stir_db, 
+                        'top_db': top_layers[0]['db'] if top_layers else 12, 
+                        'bot_db': bot_layers[0]['db'] if bot_layers else 12,
+                        'stir_db': stir_db, 
                         'pos': {'n': sum(l['n'] for l in bot_layers), 'area': as_prov_b, 'layers': bot_layers, 'status': (phi_Mn_b >= mu_pos)},
                         'neg': {'n': sum(l['n'] for l in top_layers), 'area': as_prov_t, 'layers': top_layers, 'status': (phi_Mn_t >= mu_neg)},
                         'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
                         'service': {'delta_long': d_long, 'limit_240': limit_240, 'ok': d_long <= limit_240},
-                        'top': {'n': top_layers[0]['n'], 'db': top_layers[0]['db'], 'layers': num_t_layers, 'all_layers': top_layers},
-                        'bot': {'n': bot_layers[0]['n'], 'db': bot_layers[0]['db'], 'layers': num_b_layers, 'all_layers': bot_layers}
+                        'crack': {'w': w_crack, 'limit': limit_crack, 'status': status_crack},
+                        'top': {'n': top_layers[0]['n'] if top_layers else 0, 'db': top_layers[0]['db'] if top_layers else 12, 'layers': num_t_layers, 'all_layers': top_layers},
+                        'bot': {'n': bot_layers[0]['n'] if bot_layers else 0, 'db': bot_layers[0]['db'] if bot_layers else 12, 'layers': num_b_layers, 'all_layers': bot_layers}
                     })
 
             st.markdown("---")
