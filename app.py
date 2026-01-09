@@ -23,12 +23,10 @@ if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
 else:
     try:
-        # --- 4.1 ANALYSIS ENGINE ---
-        # คำนวณด้วย Ultimate Load (1.4DL + 1.7LL) สำหรับ Design
+        # --- 4.1 ANALYSIS ENGINE (Ultimate & Service) ---
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.4, 1.7)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
-        # คำนวณด้วย Service Load (1.0DL + 1.0LL) สำหรับ Check Deflection
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
@@ -38,20 +36,10 @@ else:
         # ================= TAB 1: ANALYSIS RESULTS =================
         with tab1:
             st.subheader("📈 Structural Analysis Diagrams (Ultimate Load)")
-            
-            # เตรียมข้อมูลสำหรับ Plot กราฟ
-            df_for_plot = pd.DataFrame({
-                'x': x_ult, 
-                'moment': M_ult, 
-                'shear': V_ult, 
-                'deflection': D_ult * 1000  # แปลงเป็น mm
-            })
-            
-            # เรียกใช้ plotter จาก design_view
+            df_for_plot = pd.DataFrame({'x': x_ult, 'moment': M_ult, 'shear': V_ult, 'deflection': D_ult * 1000})
             fig = design_view.plot_analysis_results(df_for_plot, spans, sup_df, calc_loads_ult, R_ult)
             st.plotly_chart(fig, use_container_width=True)
             
-            # สรุปค่า Maximum Forces
             c1, c2, c3 = st.columns(3)
             c1.metric("Max Shear ($V_u$)", f"{max(abs(V_ult))/1000:.2f} kN")
             c2.metric("Max Moment ($M_u^+$)", f"{max(M_ult)/1000:.2f} kNm")
@@ -65,9 +53,7 @@ else:
             offsets = [0] + list(np.cumsum(spans))
             
             for i in range(n_spans):
-                s_len, s_start, s_end = spans[i], offsets[i], offsets[offsets.index(offsets[i])+1]
-                
-                # กรองข้อมูลแรงใน Span นั้นๆ
+                s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 mask = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 mu_pos = max(0.0, (M_ult[mask] / 1000.0).max()) if any(mask) else 0
                 mu_neg = abs(min(0.0, (M_ult[mask] / 1000.0).min())) if any(mask) else 0
@@ -81,25 +67,7 @@ else:
                         d_est = h_mm - cover_mm - 20
                         as_min = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_est, (1.4 / fy) * b_mm * d_est)
 
-                        # --- BOTTOM STEEL ---
-                        st.markdown("#### 🔽 Bottom Steel (Mid-Span)")
-                        c1, c2 = st.columns(2)
-                        with c1: bot_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
-                        with c2: bot_n = st.number_input("Qty", 2, 12, 3, key=f"bn_{i}")
-                        
-                        as_req_calc_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_est, fc, fy, b_mm)
-                        as_req_bot = max(as_req_calc_bot, as_min)
-                        d_real_b = h_mm - cover_mm - 9 - (bot_db / 2)
-                        phi_Mn_bot, as_prov_bot, _, _, _, _ = rc_design_engine.get_phi_Mn_details(bot_n, bot_db, d_real_b, b_mm, fc, fy)
-
-                        st.markdown(f"""
-                        | Parameter | Calc. As ($M_u$) | Min As ($A_{{s,min}}$) | Provided As | Status |
-                        | :--- | :--- | :--- | :--- | :--- |
-                        | **Steel Area** | {as_req_calc_bot:.0f} mm² | {as_min:.0f} mm² | **{as_prov_bot:.0f} mm²** | {"✅" if as_prov_bot >= as_req_bot else "❌"} |
-                        | **Moment** | $M_u$: {mu_pos:.1f} | - | **$\phi M_n$: {phi_Mn_bot:.1f}** | {"✅" if phi_Mn_bot >= mu_pos else "❌"} |
-                        """)
-
-                        # --- TOP STEEL ---
+                        # --- [SWAPPED] 1. TOP STEEL (SUPPORT) IS NOW FIRST ---
                         st.markdown("#### 🔼 Top Steel (Support)")
                         c3, c4 = st.columns(2)
                         with c3: top_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
@@ -117,7 +85,29 @@ else:
                         | **Moment** | $M_u$: {mu_neg:.1f} | - | **$\phi M_n$: {phi_Mn_top:.1f}** | {"✅" if phi_Mn_top >= mu_neg else "❌"} |
                         """)
 
-                        # --- SHEAR ---
+                        st.markdown("---")
+
+                        # --- [SWAPPED] 2. BOTTOM STEEL (MID-SPAN) IS NOW SECOND ---
+                        st.markdown("#### 🔽 Bottom Steel (Mid-Span)")
+                        c1, c2 = st.columns(2)
+                        with c1: bot_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
+                        with c2: bot_n = st.number_input("Qty", 2, 12, 3, key=f"bn_{i}")
+                        
+                        as_req_calc_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_est, fc, fy, b_mm)
+                        as_req_bot = max(as_req_calc_bot, as_min)
+                        d_real_b = h_mm - cover_mm - 9 - (bot_db / 2)
+                        phi_Mn_bot, as_prov_bot, _, _, _, _ = rc_design_engine.get_phi_Mn_details(bot_n, bot_db, d_real_b, b_mm, fc, fy)
+
+                        st.markdown(f"""
+                        | Parameter | Calc. As ($M_u$) | Min As ($A_{{s,min}}$) | Provided As | Status |
+                        | :--- | :--- | :--- | :--- | :--- |
+                        | **Steel Area** | {as_req_calc_bot:.0f} mm² | {as_min:.0f} mm² | **{as_prov_bot:.0f} mm²** | {"✅" if as_prov_bot >= as_req_bot else "❌"} |
+                        | **Moment** | $M_u$: {mu_pos:.1f} | - | **$\phi M_n$: {phi_Mn_bot:.1f}** | {"✅" if phi_Mn_bot >= mu_pos else "❌"} |
+                        """)
+
+                        st.markdown("---")
+
+                        # --- 3. SHEAR ---
                         st.markdown("#### 🌀 Shear Stirrups")
                         c5, c6 = st.columns(2)
                         with c5: stir_db = st.selectbox("Size", [6, 9, 12], index=1, key=f"sdb_{i}")
@@ -158,4 +148,3 @@ else:
 
     except Exception as e:
         st.error(f"❌ Error: {e}")
-        st.code(time.strftime("%H:%M:%S"))
