@@ -176,65 +176,61 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
     return fig
 
-
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
-    """
-    Dashboard แสดงการเปรียบเทียบค่าออกแบบ (Demand vs Capacity)
-    พร้อมการตรวจสอบพื้นที่เหล็กเสริม (As Required vs As Provided)
-    ป้องกัน Error กรณี As Required เป็น 0
-    """
     st.markdown("---")
     st.subheader("🛠 RC Design Verification")
     
-    # --- ส่วนที่ 1: ตรวจสอบพื้นที่เหล็กเสริม (Steel Area Check) ---
-    st.markdown("#### 📏 Reinforcement Area ($A_s$)")
+    # ดึงค่าพารามิเตอร์พื้นฐาน (ถ้าไม่มีให้ default ไว้ก่อนเพื่อป้องกัน error)
+    fc = design_res.get('fc', 24) # MPa
+    fy = design_res.get('fy', 400) # MPa
+    b = design_res.get('b', 200)   # mm
+    h = design_res.get('h', 400)   # mm
+    d = h - 50 # ค่าโดยประมาณสำหรับเช็ค As_min
+    
+    # คำนวณ As_min ตามมาตรฐาน
+    as_min = max((0.25 * np.sqrt(fc) / fy) * b * d, (1.4 / fy) * b * d)
+
+    st.markdown("#### 📏 Reinforcement Area Check ($A_s$)")
     as_col1, as_col2 = st.columns(2)
     
     with as_col1:
-        as_req_bot = design_res.get('as_req_bot', 0.0)
-        as_prov_bot = design_res.get('as_prov_bot', 0.0)
-        st.write("**Bottom Steel (Mid-span)**")
-        st.write(f"Required: `{as_req_bot:.0f}` $mm^2$ | Provided: `{as_prov_bot:.0f}` $mm^2$")
+        # ใช้ค่าที่มากระหว่าง As_req (จากแรง) กับ As_min (ตามมาตรฐาน)
+        as_req_calc = design_res.get('as_req_bot', 0.0)
+        as_req_final = max(as_req_calc, as_min)
+        as_prov = design_res.get('as_prov_bot', 0.0)
         
-        # ป้องกันการหารด้วยศูนย์ (Division by Zero Handle)
-        if as_req_bot > 0:
-            ratio_bot = min(as_prov_bot / as_req_bot, 2.0)
-            percent_bot = (as_prov_bot / as_req_bot * 100)
-            st.progress(min(ratio_bot, 1.0))
-            if as_prov_bot >= as_req_bot:
-                st.success(f"✅ Area OK ({percent_bot:.1f}%)")
+        st.write("**Bottom Steel (Mid-span)**")
+        st.write(f"Required (min): `{as_req_final:.0f}` $mm^2$ | Provided: `{as_prov:.0f}` $mm^2$")
+        
+        if as_req_final > 0:
+            ratio = min(as_prov / as_req_final, 1.0)
+            st.progress(ratio)
+            if as_prov >= as_req_final:
+                st.success(f"✅ Area OK ({(as_prov/as_req_final*100):.1f}%)")
             else:
-                st.error(f"❌ Insufficient Area ({percent_bot:.1f}%)")
-        else:
-            # กรณีไม่ต้องใช้เหล็กเสริมตามคำนวณ (Mu = 0)
-            st.progress(1.0)
-            st.success("✅ Area OK (No calculation required)")
+                st.error(f"❌ Insufficient ({(as_prov/as_req_final*100):.1f}%)")
 
     with as_col2:
-        as_req_top = design_res.get('as_req_top', 0.0)
-        as_prov_top = design_res.get('as_prov_top', 0.0)
-        st.write("**Top Steel (Support)**")
-        st.write(f"Required: `{as_req_top:.0f}` $mm^2$ | Provided: `{as_prov_top:.0f}` $mm^2$")
+        as_req_calc_t = design_res.get('as_req_top', 0.0)
+        as_req_final_t = max(as_req_calc_t, as_min)
+        as_prov_t = design_res.get('as_prov_top', 0.0)
         
-        # ป้องกันการหารด้วยศูนย์ (Division by Zero Handle)
-        if as_req_top > 0:
-            ratio_top = min(as_prov_top / as_req_top, 2.0)
-            percent_top = (as_prov_top / as_req_top * 100)
-            st.progress(min(ratio_top, 1.0))
-            if as_prov_top >= as_req_top:
-                st.success(f"✅ Area OK ({percent_top:.1f}%)")
+        st.write("**Top Steel (Support)**")
+        st.write(f"Required (min): `{as_req_final_t:.0f}` $mm^2$ | Provided: `{as_prov_t:.0f}` $mm^2$")
+        
+        if as_req_final_t > 0:
+            ratio_t = min(as_prov_t / as_req_final_t, 1.0)
+            st.progress(ratio_t)
+            if as_prov_t >= as_req_final_t:
+                st.success(f"✅ Area OK ({(as_prov_t/as_req_final_t*100):.1f}%)")
             else:
-                st.error(f"❌ Insufficient Area ({percent_top:.1f}%)")
-        else:
-            # กรณีไม่ต้องใช้เหล็กเสริมตามคำนวณ (Mu = 0)
-            st.progress(1.0)
-            st.success("✅ Area OK (No calculation required)")
+                st.error(f"❌ Insufficient ({(as_prov_t/as_req_final_t*100):.1f}%)")
 
+    # --- ส่วนที่ 2: Strength Check (Mu, Vu) ---
     st.markdown("---")
-    
-    # --- ส่วนที่ 2: ตรวจสอบกำลังรับน้ำหนัก (Strength Check) ---
-    # ส่วนนี้ใช้การเปรียบเทียบ >= ได้เลย ไม่เกิด Error Division
     st.markdown("#### ⚡ Section Strength ($\phi M_n, \phi V_n$)")
+ 
+
     col1, col2, col3 = st.columns(3)
     
     with col1:
