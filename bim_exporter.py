@@ -10,7 +10,7 @@ import ifcopenshell.api.material
 import ifcopenshell.api.geometry
 import ifcopenshell.api.aggregate
 import uuid
-import numpy as np  # Import numpy เพื่อความชัวร์ (ถ้าจำเป็นต้องใช้ manual matrix)
+import numpy as np  # ใช้ numpy สร้าง matrix เอง ชัวร์กว่า
 
 def create_guid():
     return ifcopenshell.guid.compress(uuid.uuid1().hex)
@@ -18,7 +18,7 @@ def create_guid():
 def generate_ifc_model(project_name, spans, params, design_results):
     """
     Generate IFC4 file for the continuous beam with design data properties.
-    Fixed for Matrix 4x4 compatibility.
+    Fixed: Manual Matrix Construction using Numpy.
     """
     # 1. Initialize IFC File
     model = ifcopenshell.file(schema="IFC4")
@@ -62,21 +62,22 @@ def generate_ifc_model(project_name, spans, params, design_results):
                                       ProfileType="AREA", 
                                       XDim=b_mm, YDim=h_mm)
         
-        # สร้างรูปทรง (Representation)
         representation = ifcopenshell.api.run("geometry.add_profile_representation", model, 
                                               context=body, profile=profile, depth=length_mm)
         
         ifcopenshell.api.run("geometry.assign_representation", model, product=beam, representation=representation)
         
-        # --- 5.2 Placement (Matrix Fix) ---
-        # 1. กำหนดจุดตำแหน่ง (Point) เป็น Tuple (x, y, z) หน่วย mm
-        point = (current_x * 1000.0, 0.0, 0.0)
+        # --- 5.2 Placement (Manual Matrix Fix) ---
+        # สร้าง Transformation Matrix 4x4 (Identity Matrix)
+        matrix = np.eye(4)
         
-        # 2. สั่งให้ ifcopenshell คำนวณ 4x4 Matrix ให้เอง (ปลอดภัยที่สุด)
-        matrix_4x4 = ifcopenshell.api.run("geometry.calculate_matrix", model, p1=point)
+        # กำหนดค่า Translation แกน X (Column สุดท้าย, แถวแรก)
+        matrix[0][3] = current_x * 1000.0
+        matrix[1][3] = 0.0
+        matrix[2][3] = 0.0
         
-        # 3. ส่ง Matrix 4x4 เข้าไป
-        ifcopenshell.api.run("geometry.edit_object_placement", model, product=beam, matrix=matrix_4x4)
+        # ส่ง numpy array เข้าไปตรงๆ ได้เลย
+        ifcopenshell.api.run("geometry.edit_object_placement", model, product=beam, matrix=matrix)
         
         # --- 5.3 Material ---
         ifcopenshell.api.run("material.assign_material", model, product=beam, material=concrete)
