@@ -208,30 +208,29 @@ else:
             summary_data = [{"Span": item['span_id'] + 1, "Bottom": f"{item['pos']['n']}-DB{item['bot_db']}", "Top": f"{item['neg']['n']}-DB{item['top_db']}", "Stirrup": f"RB{item['stir_db']}@{item['shear']['s']}", "Status": "✅ Pass" if (item['pos']['status'] and item['neg']['status'] and item['shear']['status'] == "OK") else "❌ Fail"} for item in final_design_res]
             st.table(pd.DataFrame(summary_data))
             
-            # แก้ไขเฉพาะส่วนนี้ใน app.py
-if st.button("🔄 Generate Drawings", type="primary"):
-    try:
-        # รับ 2 ค่า: svg และ png
-        svg_content, png_data = section_plotter.plot_longitudinal_section_detailed(
-            spans, sup_df, final_design_res, h_mm, final_design_res[0]['cover']
-        )
-        
-        st.write("**Longitudinal Section (Vector View):**")
-        # แสดงรูปภาพ (SVG ขึ้นแน่นอน)
-        st.components.v1.html(
-            f'<div style="background:white; padding:10px; border-radius:10px; overflow-x:auto;">{svg_content}</div>',
-            height=450, scrolling=True
-        )
-        
-        # ปุ่มโหลดรูป
-        st.download_button(
-            label="📥 Download Drawing (PNG)",
-            data=png_data,
-            file_name="beam_detail.png",
-            mime="image/png"
-        )
-    except Exception as e: 
-        st.error(f"Drawing Error: {e}")
+            if st.button("🔄 Generate Drawings", type="primary"):
+                try:
+                    st.write("**Longitudinal Section (Vector Graphics):**")
+                    # 💎 แก้ไขจุดนี้: รับค่า 2 ตัวแปร (SVG และ PNG) เพื่อให้แสดงผลได้และโหลดรูปได้
+                    svg_content, png_data = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, final_design_res[0]['cover'])
+                    
+                    # แสดงรูปภาพ SVG บนเว็บ
+                    st.components.v1.html(
+                        f'<div style="background-color: white; padding: 10px; border-radius: 5px; overflow-x: auto;">{svg_content}</div>',
+                        height=450,
+                        scrolling=True
+                    )
+                    
+                    # เพิ่มปุ่มดาวน์โหลดไฟล์ภาพ
+                    st.download_button(
+                        label="📥 Download Drawing (PNG)",
+                        data=png_data,
+                        file_name=f"Beam_Detail_{int(time.time())}.png",
+                        mime="image/png"
+                    )
+                    
+                except Exception as e: 
+                    st.error(f"Drawing Error: {e}")
 
         # ================= TAB 3: DETAILED REPORT =================
         with tab3:
@@ -247,4 +246,3 @@ if st.button("🔄 Generate Drawings", type="primary"):
         st.error(f"❌ Application Error: {e}")
         import traceback
         st.code(traceback.format_exc())
-
