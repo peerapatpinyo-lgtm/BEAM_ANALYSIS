@@ -73,15 +73,13 @@ else:
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
-                ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
-                delta_svc_mm = abs(D_svc[mask_s] * 1000.0).max()
+                ma_pos_svc, delta_svc_mm = max(0.0, (M_svc[mask_s]/1000.0).max()), abs(D_svc[mask_s] * 1000.0).max()
 
                 with st.expander(f"📍 SPAN {i+1} (L={s_len} m)", expanded=True):
                     col_input, col_draw = st.columns([2, 1])
                     with col_input:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, key=f"cov_{i}")
-                        stir_db = st.selectbox("Stirrup Size", [6, 9, 12], index=1, key=f"sdb_ref_{i}")
-
+                        
                         # --- 1. TOP STEEL (SUPPORT) ---
                         st.markdown("#### 🔼 Top Steel (Support)")
                         ct1, ct2, ct3 = st.columns([2, 2, 1])
@@ -89,16 +87,27 @@ else:
                         with ct2: t_qty = st.number_input("Qty", 2, 20, 2, key=f"tn_{i}")
                         with ct3: t_lay = st.selectbox("Layers", [1, 2, 3], index=0, key=f"tl_{i}")
                         
+                        # Note: d_t depends on stirrup size from below (using stir_db)
+                        # --- We need to define stir_db first or use a default for calculation ---
+                        
+                        # --- 3. [PEEK AHEAD] SHEAR STIRRUPS FOR D CALC ---
+                        st.markdown("---")
+                        st.markdown("#### 🌀 Shear Stirrups")
+                        cs1, cs2 = st.columns(2)
+                        with cs1: stir_db = st.selectbox("Stirrup Size", [6, 9, 12], index=1, key=f"sdb_final_{i}")
+                        with cs2: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, key=f"ss_{i}")
+                        
+                        # Recalculate d with chosen stir_db
                         d_t = h_mm - (cover_mm + stir_db + t_db/2 + (t_lay-1)*25)
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
                         as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
                         phi_Mn_t, as_prov_t, _, _, _, _ = rc_design_engine.get_phi_Mn_details(t_qty, t_db, d_t, b_mm, fc, fy)
 
-                        # ตาราง Top Steel
+                        # Display Top Steel Table
                         st.markdown(f"""
 | Parameter | Calc As ($M_u$) | Min $A_{{s,min}}$ | Provided As | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Steel Area** | {as_req_t:.0f} mm² | {as_min_t:.0f} mm² | **{as_prov_t:.0f} mm²** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
+| **Top Area** | {as_req_t:.0f} mm² | {as_min_t:.0f} mm² | **{as_prov_t:.0f} mm²** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
 | **Capacity** | $M_u$: {mu_neg:.1f} | - | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
 """)
 
@@ -113,17 +122,14 @@ else:
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
                         phi_Mn_b, as_prov_b, _, _, _, _ = rc_design_engine.get_phi_Mn_details(b_qty, b_db, d_b, b_mm, fc, fy)
 
-                        # ตาราง Bottom Steel
                         st.markdown(f"""
 | Parameter | Calc As ($M_u$) | Min $A_{{s,min}}$ | Provided As | Status |
 | :--- | :--- | :--- | :--- | :--- |
-| **Steel Area** | {as_req_b:.0f} mm² | {as_min_t:.0f} mm² | **{as_prov_b:.0f} mm²** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
+| **Bot Area** | {as_req_b:.0f} mm² | {as_min_t:.0f} mm² | **{as_prov_b:.0f} mm²** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
 | **Capacity** | $M_u$: {mu_pos:.1f} | - | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
 """)
 
-                        # --- 3. SHEAR ---
-                        st.markdown("#### 🌀 Shear Stirrups")
-                        stir_s = st.number_input("Spacing (mm)", 50, 300, 150, key=f"ss_{i}")
+                        # Check Shear Status
                         status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_b, fc, fy, stir_db, stir_s)
                         if phi_Vn < vu_max: st.error(f"❌ **FAIL:** $\phi V_n$ {phi_Vn:.1f} < $V_u$ {vu_max:.1f} kN")
                         else: st.success(f"✅ **PASS:** $\phi V_n$ {phi_Vn:.1f} ≥ $V_u$ {vu_max:.1f} kN")
