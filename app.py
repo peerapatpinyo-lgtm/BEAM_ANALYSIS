@@ -1,3 +1,4 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -40,8 +41,11 @@ else:
 
     try:
         # --- ANALYSIS ENGINE ---
+        # 1. Ultimate Run (For Reinforcement Design)
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
+        
+        # 2. Service Run (For Deflection Check) - Fix factors to 1.0
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
@@ -61,12 +65,17 @@ else:
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
                 # --- Analysis Data Extraction ---
+                # Ultimate Forces
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
-                mu_pos, mu_neg = max(0.0, (M_ult[mask_u]/1000.0).max()), abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
+                mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
+                mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
+                # Service Forces (For Deflection)
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
-                ma_pos_svc, delta_svc_mm = max(0.0, (M_svc[mask_s]/1000.0).max()), abs(D_svc[mask_s] * 1000.0).max()
+                ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
+                # Note: solver returns deflection in meters, convert to mm
+                delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0
 
                 with st.expander(f"📍 SPAN {i+1} (L={s_len} m)", expanded=True):
                     col_input, col_draw = st.columns([2, 1])
@@ -83,10 +92,7 @@ else:
                             with ct2: t_qty = st.number_input(f"L{l_idx+1} Qty", 0, 20, 2 if l_idx==0 else 0, key=f"tn_{i}_{l_idx}")
                             top_layers.append({'n': t_qty, 'db': t_db})
                         
-                        # Calculate effective d_t based on centroid of top layers
-                        # For top steel, d is from Bottom face to Centroid of top steel
                         d_t_val, as_prov_t, y_centroid_t = rc_design_engine.get_centroid_and_d(top_layers, h_mm, cover_mm, 9)
-                        # Correction for Top Steel: d = Centroid from top edge
                         d_t = h_mm - y_centroid_t if y_centroid_t > 0 else h_mm - (cover_mm + 9 + 16/2)
                         
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
@@ -94,11 +100,11 @@ else:
                         phi_Mn_t, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(top_layers, d_t, b_mm, h_mm, fc, fy)
 
                         st.markdown(f"""
-| **Top Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
-| :--- | :---: | :---: | :---: | :---: |
-| **Area ($A_s$, mm²)** | {as_req_t:.0f} | {as_min_t:.0f} | **{as_prov_t:.0f}** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
-| **Capacity (kNm)** | $M_u$: {mu_neg:.1f} | --- | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
-""")
+                        | **Top Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
+                        | :--- | :---: | :---: | :---: | :---: |
+                        | **Area ($A_s$, mm²)** | {as_req_t:.0f} | {as_min_t:.0f} | **{as_prov_t:.0f}** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
+                        | **Capacity (kNm)** | $M_u$: {mu_neg:.1f} | --- | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
+                        """)
 
                         # --- 2. BOTTOM STEEL (Mid-Span) ---
                         st.markdown("#### 🔽 Bottom Reinforcement (Positive Moment)")
@@ -110,20 +116,18 @@ else:
                             with cb2: b_qty = st.number_input(f"L{l_idx+1} Qty", 0, 20, 3 if l_idx==0 else 0, key=f"bn_{i}_{l_idx}")
                             bot_layers.append({'n': b_qty, 'db': b_db})
                         
-                        # Calculate effective d_b based on centroid of bottom layers
                         d_b, as_prov_b, _ = rc_design_engine.get_centroid_and_d(bot_layers, h_mm, cover_mm, 9)
-                        # Fallback if no steel
                         if d_b <= 0: d_b = h_mm - (cover_mm + 9 + 16/2)
                         
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
                         phi_Mn_b, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(bot_layers, d_b, b_mm, h_mm, fc, fy)
 
                         st.markdown(f"""
-| **Bottom Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
-| :--- | :---: | :---: | :---: | :---: |
-| **Area ($A_s$, mm²)** | {as_req_b:.0f} | {as_min_t:.0f} | **{as_prov_b:.0f}** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
-| **Capacity (kNm)** | $M_u$: {mu_pos:.1f} | --- | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
-""")
+                        | **Bottom Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
+                        | :--- | :---: | :---: | :---: | :---: |
+                        | **Area ($A_s$, mm²)** | {as_req_b:.0f} | {as_min_t:.0f} | **{as_prov_b:.0f}** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
+                        | **Capacity (kNm)** | $M_u$: {mu_pos:.1f} | --- | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
+                        """)
 
                         # --- 3. SHEAR STIRRUPS ---
                         st.markdown("#### 🌀 Shear Reinforcement (Stirrups)")
@@ -135,6 +139,32 @@ else:
                         if phi_Vn < vu_max: st.error(f"❌ **Shear Failure:** $\phi V_n$ {phi_Vn:.1f} < $V_u$ {vu_max:.1f} kN")
                         else: st.success(f"✅ **Shear Capacity Passed:** $\phi V_n$ {phi_Vn:.1f} ≥ $V_u$ {vu_max:.1f} kN")
 
+                        # --- 4. DEFLECTION CHECK (NEW SERVICEABILITY LOGIC) ---
+                        st.markdown("---")
+                        st.markdown("#### 📉 Deflection Control (Serviceability)")
+                        
+                        # Call the new function
+                        d_inst, d_long, Ie, Icr, lambda_d = rc_design_engine.check_serviceability(
+                            ma_pos_svc, delta_elastic_mm, b_mm, h_mm, d_b, as_prov_b, as_prov_t, fc
+                        )
+                        
+                        limit_240 = (s_len * 1000) / 240
+                        limit_480 = (s_len * 1000) / 480
+                        
+                        status_def = "✅ OK" if d_long <= limit_240 else "❌ Fail"
+                        
+                        # Display Results Table
+                        st.markdown(f"""
+                        | Check Item | Value | Limit (L/240) | Limit (L/480) | Status |
+                        | :--- | :---: | :---: | :---: | :---: |
+                        | Immediate $\Delta$ | {d_inst:.2f} mm | - | - | - |
+                        | **Long-term $\Delta$** | **{d_long:.2f} mm** | **{limit_240:.2f} mm** | {limit_480:.2f} mm | **{status_def}** |
+                        """)
+                        
+                        st.caption(f"*Calculated using ACI 318-19 (Bischoff's Formula), $I_e$={Ie/1e4:.0f}cm⁴, $\lambda_\Delta$={lambda_d:.2f}")
+                        if d_long > limit_240:
+                            st.warning("⚠️ การแอ่นตัวระยะยาวเกินค่ามาตรฐาน! แนะนำให้: 1) เพิ่มความลึกคาน 2) เพิ่มเหล็กรับแรงอัด (เหล็กบน) เพื่อลด Creep")
+
                     with col_draw:
                         cs_data = {
                             'b': b_mm, 'h': h_mm, 'cover': cover_mm, 
@@ -145,17 +175,17 @@ else:
                             'stir_db': stir_db, 
                             'shear': {'s': stir_s}
                         }
-                        # Note: section_plotter needs to be updated to handle 'top_layers' and 'bot_layers'
                         st.components.v1.html(f'<div style="background:white; padding:10px; border-radius:10px; border:1px solid #ddd;">{section_plotter.plot_cross_section(cs_data)}</div>', height=420)
 
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
-                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': delta_svc_mm, 
+                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': d_long, # Store Long-term for report
                         'top_db': top_layers[0]['db'], 'bot_db': bot_layers[0]['db'], 'stir_db': stir_db, 
                         'pos': {'n': sum(l['n'] for l in bot_layers), 'area': as_prov_b, 'layers': bot_layers, 'status': (phi_Mn_b >= mu_pos)},
                         'neg': {'n': sum(l['n'] for l in top_layers), 'area': as_prov_t, 'layers': top_layers, 'status': (phi_Mn_t >= mu_neg)},
                         'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
+                        'service': {'delta_long': d_long, 'limit_240': limit_240, 'ok': d_long <= limit_240},
                         'top': {'n': top_layers[0]['n'], 'db': top_layers[0]['db'], 'layers': num_t_layers, 'all_layers': top_layers},
                         'bot': {'n': bot_layers[0]['n'], 'db': bot_layers[0]['db'], 'layers': num_b_layers, 'all_layers': bot_layers}
                     })
@@ -175,7 +205,7 @@ else:
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric(f"Max Shear ({tag})", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric(f"Max Moment ({tag})", f"{max(M_plot)/1000:.2f} kNm")
-            c_m3.metric(f"Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
+            c_m3.metric(f"Max Deflection (Elastic)", f"{max(abs(D_plot))*1000:.2f} mm")
 
         # ================= TAB 3: REPORT =================
         with tab3:
@@ -191,5 +221,3 @@ else:
         st.error(f"❌ **System Error:** {e}")
         st.info("รายละเอียด Error สำหรับการ Debug:")
         st.exception(e)
-
-#app.py
