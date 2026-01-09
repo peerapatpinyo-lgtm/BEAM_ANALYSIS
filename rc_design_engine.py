@@ -34,27 +34,118 @@ def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     # ส่งคืน 3 ค่าตามที่ app.py ต้องการเป๊ะๆ
     return float(as_final), float(rho), False
 
-def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
+def calculate_layer_properties(layers, b, h, cover, stir_db, is_top=False):
     """
-    Calculate Moment Capacity (Phi Mn)
+    Helper to calculate centroid (d) and extreme tension depth (dt) for multi-layer steel.
+    Assume 25mm clear spacing between layers.
+    layers = [{'n': 2, 'db': 16}, {'n': 2, 'db': 20}] (Ordered from Outer to Inner)
+    """
+    if not layers:
+        return 0.0, h, h # No steel
+
+    Ast_total = 0.0
+    moment_area_sum = 0.0
+    
+    # ระยะจากผิวคอนกรีตถึงจุดศูนย์กลางเหล็กแต่ละชั้น
+    # Layer 0 คือชั้นนอกสุด (ติดผิว), Layer 1 คือชั้นถัดเข้าไป
+    current_y = cover + stir_db # Start at inside of stirrup
+    
+    extreme_center = 0.0 # Keep track of outer-most layer center for dt
+    
+    for i, lay in enumerate(layers):
+        n = lay['n']
+        db = lay['db']
+        
+        if n <= 0: continue
+        
+        area = n * (np.pi * (db/2)**2)
+        
+        # Calculate center of this layer
+        if i == 0:
+            center_dist = current_y + db/2
+            extreme_center = center_dist
+        else:
+            # Previous layer center + prev_db/2 + spacing + current_db/2
+            prev_db = layers[i-1]['db']
+            spacing = 25.0 # Standard min clear spacing
+            # Distance from previous center to this center
+            step = (prev_db / 2) + spacing + (db / 2)
+            center_dist = extreme_center + step # This logic assumes stacking linear relative to 1st layer, simplistic but robust
+            # Update explicit calculation for stacking:
+            # Better: Calculate Y from surface cumulatively
+            # But simpler: Just add spacing to previous Y
+             
+        # Re-calc strictly:
+        # Layer 0 center: cover + stir + db/2
+        # Layer 1 center: Layer 0 center + db0/2 + 25 + db1/2
+        
+        if i == 0:
+            y_loc = cover + stir_db + db/2
+            extreme_y = y_loc
+        else:
+            prev_db = layers[i-1]['db']
+            y_loc = extreme_y + (prev_db/2) + 25.0 + (db/2) # Add spacing
+            extreme_y = y_loc # Update for next loop (Wait, this is moving inwards)
+            
+            # Correct Logic: 
+            # We need absolute distance from the compression face? 
+            # No, let's calculate distance from Tension Face first (y_bottom), then convert to d.
+        
+        Ast_total += area
+        moment_area_sum += area * y_loc
+        
+        # Store for next iteration reference if needed
+        # (In this simple loop, re-calculating y_loc based on previous is fine)
+
+    if Ast_total == 0:
+        return 0.0, 0.0, 0.0
+
+    # Centroid from Tension Face
+    y_bar = moment_area_sum / Ast_total
+    
+    # Effective Depth (d) = h - y_bar
+    d = h - y_bar
+    
+    # Extreme Tension Depth (dt) = h - (Distance to center of outer-most layer)
+    # Layer 0 is outer-most
+    first_layer_db = layers[0]['db']
+    dist_to_first_center = cover + stir_db + first_layer_db/2
+    dt = h - dist_to_first_center
+    
+    if is_top:
+        # Check logic for Top bars? Same math, just flipped reference.
+        # d is distance from Bottom face (Compression) to Centroid of Top Steel
+        pass 
+        
+    return Ast_total, d, dt
+
+def get_phi_Mn_details(layers, b, h, fc, fy, cover, stir_db):
+    """
+    Calculate Moment Capacity (Phi Mn) for Multi-Layer Steel
+    layers: list of dict [{'n':.., 'db':..}, ...]
     MUST RETURN EXACTLY 6 VALUES: (phi_Mn, Ast, a, Mn, c, strain_t)
     """
-    Ast = n * (np.pi * (db/2)**2)
+    # 1. Calculate Group Properties
+    Ast, d, dt = calculate_layer_properties(layers, b, h, cover, stir_db)
+    
     if Ast == 0: 
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
+    # 2. Calculate Block Depth (a)
+    # T = C => Ast * fy = 0.85 * fc * b * a
     a = (Ast * fy) / (0.85 * fc * b)
     beta1 = get_beta1(fc)
     c = a / beta1
     
-    # ตรวจสอบความลึก block
-    if a >= d_eff: 
+    # 3. Check Section Fail (Block exceeds effective depth significantly)
+    if a >= d: 
         return 0.0, float(Ast), float(a), 0.0, float(c), -1.0 
 
-    # คำนวณ Strain
-    strain_t = 0.003 * (d_eff - c) / c if c > 0 else 999.0 
+    # 4. Calculate Strain at Extreme Tension Steel (dt)
+    # ACI 318: epsilon_t is based on dt, not d
+    strain_t = 0.003 * (dt - c) / c if c > 0 else 999.0 
 
-    # หาค่า Phi
+    # 5. Calculate Phi
     if strain_t >= 0.005:
         phi = 0.90
     elif strain_t <= 0.002:
@@ -62,7 +153,9 @@ def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
     else:
         phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
-    Mn = Ast * fy * (d_eff - a/2)
+    # 6. Calculate Mn (Moment about centroid of steel group)
+    # Note: Using d (centroid) for moment arm is correct for group resultant
+    Mn = Ast * fy * (d - a/2)
     phi_Mn = phi * Mn / 1e6 # kN-m
     
     # ส่งคืน 6 ค่า
