@@ -176,10 +176,12 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
     return fig
 
+
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     """
     Dashboard แสดงการเปรียบเทียบค่าออกแบบ (Demand vs Capacity)
     พร้อมการตรวจสอบพื้นที่เหล็กเสริม (As Required vs As Provided)
+    ป้องกัน Error กรณี As Required เป็น 0
     """
     st.markdown("---")
     st.subheader("🛠 RC Design Verification")
@@ -194,12 +196,19 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.write("**Bottom Steel (Mid-span)**")
         st.write(f"Required: `{as_req_bot:.0f}` $mm^2$ | Provided: `{as_prov_bot:.0f}` $mm^2$")
         
-        ratio_bot = min(as_prov_bot / as_req_bot, 2.0) if as_req_bot > 0 else 1.0
-        st.progress(ratio_bot if ratio_bot <= 1.0 else 1.0)
-        if as_prov_bot >= as_req_bot:
-            st.success(f"✅ Area OK ({(as_prov_bot/as_req_bot*100):.1f}%)")
+        # ป้องกันการหารด้วยศูนย์ (Division by Zero Handle)
+        if as_req_bot > 0:
+            ratio_bot = min(as_prov_bot / as_req_bot, 2.0)
+            percent_bot = (as_prov_bot / as_req_bot * 100)
+            st.progress(min(ratio_bot, 1.0))
+            if as_prov_bot >= as_req_bot:
+                st.success(f"✅ Area OK ({percent_bot:.1f}%)")
+            else:
+                st.error(f"❌ Insufficient Area ({percent_bot:.1f}%)")
         else:
-            st.error(f"❌ Insufficient Area ({(as_prov_bot/as_req_bot*100):.1f}%)")
+            # กรณีไม่ต้องใช้เหล็กเสริมตามคำนวณ (Mu = 0)
+            st.progress(1.0)
+            st.success("✅ Area OK (No calculation required)")
 
     with as_col2:
         as_req_top = design_res.get('as_req_top', 0.0)
@@ -207,16 +216,24 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.write("**Top Steel (Support)**")
         st.write(f"Required: `{as_req_top:.0f}` $mm^2$ | Provided: `{as_prov_top:.0f}` $mm^2$")
         
-        ratio_top = min(as_prov_top / as_req_top, 2.0) if as_req_top > 0 else 1.0
-        st.progress(ratio_top if ratio_top <= 1.0 else 1.0)
-        if as_prov_top >= as_req_top:
-            st.success(f"✅ Area OK ({(as_prov_top/as_req_top*100):.1f}%)")
+        # ป้องกันการหารด้วยศูนย์ (Division by Zero Handle)
+        if as_req_top > 0:
+            ratio_top = min(as_prov_top / as_req_top, 2.0)
+            percent_top = (as_prov_top / as_req_top * 100)
+            st.progress(min(ratio_top, 1.0))
+            if as_prov_top >= as_req_top:
+                st.success(f"✅ Area OK ({percent_top:.1f}%)")
+            else:
+                st.error(f"❌ Insufficient Area ({percent_top:.1f}%)")
         else:
-            st.error(f"❌ Insufficient Area ({(as_prov_top/as_req_top*100):.1f}%)")
+            # กรณีไม่ต้องใช้เหล็กเสริมตามคำนวณ (Mu = 0)
+            st.progress(1.0)
+            st.success("✅ Area OK (No calculation required)")
 
     st.markdown("---")
     
     # --- ส่วนที่ 2: ตรวจสอบกำลังรับน้ำหนัก (Strength Check) ---
+    # ส่วนนี้ใช้การเปรียบเทียบ >= ได้เลย ไม่เกิด Error Division
     st.markdown("#### ⚡ Section Strength ($\phi M_n, \phi V_n$)")
     col1, col2, col3 = st.columns(3)
     
@@ -226,10 +243,7 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Demand $M_u^+$", f"{mu_pos:.2f} kN-m")
         st.metric("Capacity $\phi M_n^+$", f"{phi_mn_pos:.2f} kN-m", 
                   delta=f"{(phi_mn_pos - mu_pos):.2f}", delta_color="normal")
-        if phi_mn_pos >= mu_pos:
-            st.success("✅ Strength PASS")
-        else:
-            st.error("❌ Strength FAIL")
+        st.success("✅ Strength PASS") if phi_mn_pos >= mu_pos else st.error("❌ Strength FAIL")
 
     with col2:
         st.markdown("**Negative Moment (-M)**")
@@ -238,10 +252,7 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Demand $M_u^-$", f"{mu_neg_abs:.2f} kN-m")
         st.metric("Capacity $\phi M_n^-$", f"{phi_mn_neg:.2f} kN-m",
                   delta=f"{(phi_mn_neg - mu_neg_abs):.2f}", delta_color="normal")
-        if phi_mn_neg >= mu_neg_abs:
-            st.success("✅ Strength PASS")
-        else:
-            st.error("❌ Strength FAIL")
+        st.success("✅ Strength PASS") if phi_mn_neg >= mu_neg_abs else st.error("❌ Strength FAIL")
 
     with col3:
         st.markdown("**Shear Force (V)**")
@@ -249,10 +260,7 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Demand $V_u$", f"{vu:.2f} kN")
         st.metric("Capacity $\phi V_n$", f"{phi_vn:.2f} kN",
                   delta=f"{(phi_vn - vu):.2f}", delta_color="normal")
-        if phi_vn >= vu:
-            st.success("✅ Shear PASS")
-        else:
-            st.error("❌ Shear FAIL")
+        st.success("✅ Shear PASS") if phi_vn >= vu else st.error("❌ Shear FAIL")
             
     st.info(f"💡 **Final Detailing:** Top {design_res['top_n']}DB{design_res['top_db']} | "
             f"Bottom {design_res['bot_n']}DB{design_res['bot_db']} | "
