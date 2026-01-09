@@ -46,17 +46,12 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         for l_idx, layer in enumerate(top_layers):
             if layer['n'] > 0:
                 if l_idx == 0:
-                    # ชั้นที่ 1: เหล็กเมน ลากยาวตลอด
                     x_s, x_e = x_curr, x_curr + span_L
                 else:
-                    # ชั้นที่ 2+: เหล็กเสริมพิเศษ หยุดที่ 0.3L จาก Support
-                    # วาดฝั่งซ้ายและขวาของ Span
                     cut_off = span_L * 0.30
-                    # ฝั่งซ้าย
                     ax.plot([x_curr, x_curr + cut_off], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
-                    # ฝั่งขวา
                     ax.plot([x_curr + span_L - cut_off, x_curr + span_L], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
-                    x_s, x_e = None, None # ไม่ต้องวาดเส้นกลาง
+                    x_s, x_e = None, None
                 
                 if x_s is not None:
                     ax.plot([x_s, x_e], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
@@ -68,10 +63,8 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         for l_idx, layer in enumerate(bot_layers):
             if layer['n'] > 0:
                 if l_idx == 0:
-                    # ชั้นที่ 1: ลากเข้า Support
                     x_s, x_e = x_curr + 50, x_curr + span_L - 50
                 else:
-                    # ชั้นที่ 2+: หยุดที่ 0.125L (Cut-off point)
                     offset = span_L * 0.125
                     x_s, x_e = x_curr + offset, x_curr + span_L - offset
                 
@@ -92,10 +85,9 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         b_label = "\n".join([f"L{idx+1}: {int(l['n'])}DB{int(l['db'])}" for idx, l in enumerate(bot_layers) if l['n'] > 0])
         ax.text(mid, v_h + 80, t_label, color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
         ax.text(mid, -120, b_label, color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
-        
         x_curr += span_L
 
-    # 6. วาด Supports (ใช้โค้ดเดิมของคุณ)
+    # 6. วาด Supports
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
             sx = row['x'] * 1000
@@ -113,17 +105,28 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     return svg_string, None
 
 def plot_cross_section(res):
-    # (ใช้โค้ดเดิมที่รองรับ Multi-layer และแก้ KeyError แล้ว)
+    """
+    วาดรูปตัดขวางคาน (Cross Section) - ห้ามตัดทิ้งเด็ดขาด
+    """
     b, h = float(res.get('b', 200)), float(res.get('h', 400))
     cover = float(res.get('cover', 25))
     stir_db = float(res.get('stir_db', 9))
+    
+    # ดึงข้อมูล Layers
     top_layers = res.get('top_layers') or [{'n': res.get('top', {}).get('n', 0), 'db': res.get('top_db', 16)}]
     bot_layers = res.get('bot_layers') or [{'n': res.get('bot', {}).get('n', 0), 'db': res.get('bot_db', 16)}]
+    
     fig, ax = plt.subplots(figsize=(6.0, 5.0))
     x0, y0 = -b/2, -h/2
+    
+    # 1. วาดคอนกรีต
     ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
+    
+    # 2. วาดเหล็กปลอก
     s_x, s_y, s_w, s_h = x0+cover, y0+cover, b-2*cover, h-2*cover
     ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, edgecolor='#34495e', lw=1.5, zorder=2))
+    
+    # 3. วาดเหล็กบนทุกลเยอร์
     v_spacing = 25.0 
     curr_y_top = (h/2) - cover - stir_db
     for l in top_layers:
@@ -131,18 +134,38 @@ def plot_cross_section(res):
         if n <= 0: continue
         y_p = curr_y_top - (db/2)
         x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
+        for x in x_p:
+            ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
         curr_y_top -= (db + v_spacing)
+
+    # 4. วาดเหล็กล่างทุกลเยอร์
     curr_y_bot = (-h/2) + cover + stir_db
     for l in bot_layers:
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n <= 0: continue
         y_p = curr_y_bot + (db/2)
         x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
+        for x in x_p:
+            ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
         curr_y_bot += (db + v_spacing)
+
+    # 5. ใส่รายละเอียดข้างรูป
+    text_x = b/2 + (b * 0.2)
+    top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
+    bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
+    
+    ax.text(text_x, h/2 - cover, f"Top: {top_t}", color='#d30000', va='top', fontweight='bold')
+    ax.text(text_x, 0, f"Stirrup: RB{int(stir_db)}@{int(res.get('shear', {}).get('s', 150))}", color='#34495e', va='center', fontweight='bold')
+    ax.text(text_x, -h/2 + cover, f"Bot: {bot_t}", color='#008c00', va='bottom', fontweight='bold')
+    ax.text(0, h/2 + (h*0.15), f"SECTION {int(b)}x{int(h)}", ha='center', fontweight='black', fontsize=12)
+
     ax.set_aspect('equal')
     ax.axis('off')
+    ax.set_xlim(-b*0.7, b*2.0)
+    ax.set_ylim(-h*0.7, h*1.1)
+    
     f = io.StringIO()
     fig.savefig(f, format="svg", bbox_inches='tight', transparent=True)
-    return f.getvalue()
+    svg_string = f.getvalue()
+    plt.close(fig)
+    return svg_string
