@@ -145,9 +145,9 @@ else:
                     ma_pos_svc, delta_svc_mm = 0, 0
 
                 with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Design Forces: Mu+={mu_pos:.1f}, Mu-={mu_neg:.1f}, Vu={vu_max:.1f}", expanded=True):
-                    # 💎 แก้ไข: ใช้ columns เพื่อแบ่งพื้นที่แสดง Input และ Cross Section
-                    col_input, col_section = st.columns([3, 1])
-
+                    # 💎 เพิ่มการแบ่ง Column เพื่อแสดงรูป Section คู่กับ Input
+                    col_input, col_draw = st.columns([2, 1])
+                    
                     with col_input:
                         c_const, c_cov = st.columns([3, 1])
                         with c_const: st.caption(f"Design Constants: fc'={fc}, fy={fy}, Size {b_mm:.0f}x{h_mm:.0f} mm")
@@ -196,19 +196,19 @@ else:
                             clr_v = "green" if status_v == "OK" else "red"
                             st.markdown(f"$\phi V_n$: :{clr_v}[**{phi_Vn:.1f}**] kN ({status_v})")
                     
-                    with col_section:
-                        # 💎 วาดรูปตัดขวาง (Cross Section) สำหรับ Span นี้โดยเฉพาะ
-                        st.markdown("<p style='text-align:center; font-weight:bold;'>Preview Section</p>", unsafe_allow_html=True)
-                        cs_data = {
+                    with col_draw:
+                        # 💎 แสดงรูปหน้าตัดคาน (Cross Section) ประจำ Span นี้
+                        st.markdown("<p style='text-align:center; font-weight:bold;'>Section Preview</p>", unsafe_allow_html=True)
+                        current_span_data = {
                             'b': b_mm, 'h': h_mm, 'cover': cover_mm,
                             'top': {'n': top_n}, 'top_db': top_db,
                             'bot': {'n': bot_n}, 'bot_db': bot_db,
                             'stir_db': stir_db, 'shear': {'s': stir_s}
                         }
-                        cs_svg = section_plotter.plot_cross_section(cs_data)
+                        cs_svg = section_plotter.plot_cross_section(current_span_data)
                         st.components.v1.html(
-                            f'<div style="background-color: white; border-radius: 8px; display: flex; justify-content: center;">{cs_svg}</div>',
-                            height=280
+                            f'<div style="background-color: white; border-radius: 8px; display: flex; justify-content: center; padding: 10px;">{cs_svg}</div>',
+                            height=350
                         )
 
                     final_design_res.append({
