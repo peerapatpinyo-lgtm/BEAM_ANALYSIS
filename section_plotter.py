@@ -84,7 +84,7 @@ def plot_as_svg(spans, sup_df, design_res, h_m, cover_mm):
     ax.set_xlim(-1000, total_L + 1000)
     ax.set_ylim(-800, v_h + 800)
     
-    # แปลงผลลัพธ์เป็น SVG String เพื่อส่งให้ Browser แสดงผลสดๆ
+    # แปลงผลลัพธ์เป็น SVG String
     f = io.StringIO()
     fig.savefig(f, format="svg", bbox_inches='tight')
     plt.close(fig)
