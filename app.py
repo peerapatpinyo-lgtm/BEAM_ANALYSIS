@@ -91,7 +91,6 @@ else:
                         with ct2: t_qty = st.number_input("Qty", 2, 20, 2, key=f"tn_{i}")
                         with ct3: t_lay = st.selectbox("Layers", [1, 2, 3], index=0, key=f"tl_{i}")
                         
-                        # Reference stirrup for 'd' calculation (will be updated by user input below)
                         ref_s_db = 9 
                         d_t = h_mm - (cover_mm + ref_s_db + t_db/2 + (t_lay-1)*25)
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
@@ -123,10 +122,10 @@ else:
 | **Capacity (kNm)** | $M_u$: {mu_pos:.1f} | - | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
 """)
 
-                        # --- 3. SHEAR STIRRUPS (Final Position) ---
+                        # --- 3. SHEAR STIRRUPS ---
                         st.markdown("#### 🌀 Shear Stirrups")
                         cs1, cs2 = st.columns(2)
-                        with cs1: stir_db = st.selectbox("Stirrup Size", [6, 9, 12], index=1, key=f"sdb_final_{i}")
+                        with cs1: stir_db = st.selectbox("Stirrup Size (mm)", [6, 9, 12], index=1, key=f"sdb_final_{i}")
                         with cs2: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, key=f"ss_{i}")
                         
                         status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_b, fc, fy, stir_db, stir_s)
