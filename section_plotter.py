@@ -5,7 +5,7 @@ import numpy as np
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    วาดรูปตัดยาวคาน (Longitudinal Section)
+    วาดรูปตัดยาวคาน (Longitudinal Section) พร้อมรายละเอียดเหล็กเสริม
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
@@ -48,7 +48,6 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     x_curr = 0
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
-        
         s_spacing = res['shear']['s']
         num_stirrups = int(span_L / s_spacing)
         for j in range(num_stirrups + 1):
@@ -58,7 +57,6 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
         
         mid = x_curr + span_L/2
         ax.text(mid, -150, f"RB{int(res['stir_db'])}@{int(s_spacing)}", color='#7f8c8d', fontsize=9, ha='center', style='italic')
-
         ax.plot([x_curr, x_curr + span_L], [y_t, y_t], color='#d30000', lw=3.5, zorder=10, antialiased=False)
         ax.plot([x_curr + 40, x_curr + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10, antialiased=False)
         
@@ -75,77 +73,76 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     f_svg = io.StringIO()
     fig.savefig(f_svg, format="svg", bbox_inches='tight')
     svg_string = f_svg.getvalue()
-
+    
     f_png = io.BytesIO()
     fig.savefig(f_png, format="png", dpi=300, bbox_inches='tight')
     png_bytes = f_png.getvalue()
-
     plt.close(fig)
     return svg_string, png_bytes
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) ฉบับแก้รูปขาดและลดพื้นที่ขาวขั้นสุด
+    วาดรูปตัดขวางคาน (Cross Section) ฉบับจัดระเบียบใหม่ 
+    ลดพื้นที่สีขาวและเน้นความคมชัดแบบ Drawing มาตรฐาน
     """
-    b = float(res['b'])
-    h = float(res['h'])
+    b, h = float(res['b']), float(res['h'])
     cover = float(res['cover'])
     
-    # 1. ใช้สัดส่วน Figure ที่เน้นกว้างขึ้นเล็กน้อยเพื่อรองรับป้ายชื่อข้าง
-    fig, ax = plt.subplots(figsize=(4.8, 3.8))
+    # 1. กำหนดขนาด Figure ให้กระชับ (กว้างกว่าสูงเล็กน้อยเพื่อรองรับ Text ด้านข้าง)
+    fig, ax = plt.subplots(figsize=(4.5, 3.5))
     x0, y0 = -b/2, -h/2
     
-    # 2. วาดคอนกรีต (เส้นหนา คมชัด)
+    # 2. วาดหน้าตัดคอนกรีต (เส้นขอบหนาชัดเจน)
     ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
     
     # 3. วาดเหล็กปลอก
     stir_off = cover
     ax.add_patch(patches.Rectangle((x0 + stir_off, y0 + stir_off), b - 2*stir_off, h - 2*stir_off, 
-                                   fill=False, edgecolor='#2c3e50', lw=1.2, zorder=2))
+                                   fill=False, edgecolor='#34495e', lw=1.2, zorder=2))
     
-    # 4. เหล็กเมนบน + เส้นชี้แก้รูปขาด (ขยับเส้นชี้ให้แคบลง)
+    # 4. เหล็กเมนบน (Top Bars)
     n_top = int(res['top']['n'])
     db_top = float(res['top_db'])
-    y_pos_top = (h/2) - stir_off - (db_top/2) - 2
+    y_top = (h/2) - stir_off - (db_top/2) - 1.5
     x_top = np.linspace(x0 + stir_off + 10, x0 + b - stir_off - 10, n_top) if n_top > 1 else [0]
     for x in x_top:
-        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1.5, color='#d30000', zorder=10))
+        ax.add_patch(patches.Circle((x, y_top), db_top/2 + 1.2, color='#d30000', zorder=10))
     
-    # เส้นชี้เหล็กบน (ปรับ xytext ไม่ให้ไกลเกินไปจนรูปขาด)
-    ax.annotate(f"{n_top}-DB{int(db_top)}", xy=(x_top[0], y_pos_top), xytext=(x0 - b*0.25, h*0.35),
-                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.15", color='#d30000', lw=1.2),
-                fontsize=11, fontweight='bold', color='#d30000', ha='right')
+    # เส้นชี้เหล็กบน (จัดวางให้ไม่หลุดขอบและประหยัดพื้นที่ขาว)
+    ax.annotate(f"{n_top}-DB{int(db_top)}", xy=(x_top[0], y_top), xytext=(x0 - b*0.2, h*0.4),
+                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.1", color='#d30000', lw=1),
+                fontsize=10, fontweight='bold', color='#d30000', ha='right')
 
-    # 5. เหล็กเมนล่าง + เส้นชี้แก้รูปขาด
+    # 5. เหล็กเมนล่าง (Bottom Bars)
     n_bot = int(res['bot']['n'])
     db_bot = float(res['bot_db'])
-    y_pos_bot = (-h/2) + stir_off + (db_bot/2) + 2
+    y_bot = (-h/2) + stir_off + (db_bot/2) + 1.5
     x_bot = np.linspace(x0 + stir_off + 10, x0 + b - stir_off - 10, n_bot) if n_bot > 1 else [0]
     for x in x_bot:
-        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1.5, color='#008c00', zorder=10))
+        ax.add_patch(patches.Circle((x, y_bot), db_bot/2 + 1.2, color='#008c00', zorder=10))
         
     # เส้นชี้เหล็กล่าง
-    ax.annotate(f"{n_bot}-DB{int(db_bot)}", xy=(x_bot[-1], y_pos_bot), xytext=(b/2 + b*0.25, -h*0.35),
-                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.15", color='#008c00', lw=1.2),
-                fontsize=11, fontweight='bold', color='#008c00', ha='left')
+    ax.annotate(f"{n_bot}-DB{int(db_bot)}", xy=(x_bot[-1], y_bot), xytext=(b/2 + b*0.2, -h*0.4),
+                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.1", color='#008c00', lw=1),
+                fontsize=10, fontweight='bold', color='#008c00', ha='left')
 
-    # 6. ชื่อ Section (ดึงลงมาชิดขอบบน) และเหล็กปลอก (ดึงขึ้นมาชิดขอบล่าง)
-    ax.text(0, h/2 + (h*0.02), f"SECTION {int(b)}x{int(h)}", ha='center', va='bottom', fontweight='black', fontsize=12)
-    ax.text(0, -h/2 - (h*0.02), f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
-            ha='center', va='top', color='#34495e', fontsize=10, fontweight='bold')
+    # 6. ข้อความประกอบ (วางชิดขอบคอนกรีตที่สุดเพื่อขยับรูปขึ้น)
+    ax.text(0, h/2 + 2, f"SECTION {int(b)}x{int(h)}", ha='center', va='bottom', fontweight='black', fontsize=11)
+    ax.text(0, -h/2 - 2, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
+            ha='center', va='top', color='#555555', fontsize=9, fontweight='bold')
     
-    # --- 7. ปรับ Viewport (หัวใจสำคัญของการลดพื้นที่ขาวและกันรูปขาด) ---
+    # --- 7. Viewport Optimization ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # บีบ ylim ให้เหลือพื้นที่ขาวด้านบน/ล่างแค่ 12% (รูปจะใหญ่ขึ้นและขยับขึ้น)
-    # ขยาย xlim ให้ครอบคลุมป้ายชื่อที่อาจจะขาด (ซ้าย-ขวา 70%)
-    ax.set_ylim(-h*0.65, h*0.65)
-    ax.set_xlim(-b*0.8, b*0.8)
+    # บีบขอบเขตแนวตั้งให้เหลือน้อยที่สุดเพื่อให้รูปขยับขึ้น
+    ax.set_ylim(-h*0.62, h*0.62)
+    # ขยายขอบเขตแนวนอนให้พอดีกับเส้นชี้ (แก้ปัญหาต้นฉบับที่รูปขาด)
+    ax.set_xlim(-b*0.85, b*0.85)
     
     f = io.StringIO()
-    # ใช้ pad_inches=0 เพื่อตัดขอบทิ้งทั้งหมด
-    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0, transparent=True)
+    # ตัดขอบขาวทิ้งทั้งหมดด้วย pad_inches=0
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.01, transparent=True)
     svg_string = f.getvalue()
     plt.close(fig)
     return svg_string
