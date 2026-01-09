@@ -154,9 +154,15 @@ else:
                         st.caption(f"Design Constants: fc'={fc} MPa, fy={fy} MPa, Size {b_mm}x{h_mm} mm")
                         cover_mm = st.number_input(f"Covering (mm)", 20.0, 50.0, 25.0, 5.0, key=f"cov_{i}")
 
-                        # 1. Bottom
+                        # Calculate As_min for validation
                         d_est = h_mm - cover_mm - 20
-                        as_req_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_est, fc, fy, b_mm)
+                        as_min = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_est, (1.4 / fy) * b_mm * d_est)
+
+                        # 1. Bottom Reinforcement
+                        st.markdown("##### 1. Bottom Rebar (Mid-Span)")
+                        as_req_calc_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_est, fc, fy, b_mm)
+                        as_req_bot = max(as_req_calc_bot, as_min)
+                        
                         c1, c2, c3 = st.columns([1, 1, 1])
                         with c1: st.write(f"Req As: `{as_req_bot:.0f}` mm²")
                         with c2: bot_db = st.selectbox("DB Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
@@ -165,8 +171,11 @@ else:
                         d_real_b = h_mm - cover_mm - 9 - (bot_db / 2)
                         phi_Mn_bot, as_prov_bot, _, _, _, _ = rc_design_engine.get_phi_Mn_details(bot_n, bot_db, d_real_b, b_mm, fc, fy)
 
-                        # 2. Top
-                        as_req_top, _, _ = rc_design_engine.get_as_req(mu_neg, d_est, fc, fy, b_mm)
+                        # 2. Top Reinforcement
+                        st.markdown("##### 2. Top Rebar (Supports)")
+                        as_req_calc_top, _, _ = rc_design_engine.get_as_req(mu_neg, d_est, fc, fy, b_mm)
+                        as_req_top = max(as_req_calc_top, as_min)
+                        
                         c1, c2, c3 = st.columns([1, 1, 1])
                         with c1: st.write(f"Req As: `{as_req_top:.0f}` mm²")
                         with c2: top_db = st.selectbox("DB Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
@@ -175,7 +184,8 @@ else:
                         d_real_t = h_mm - cover_mm - 9 - (top_db / 2)
                         phi_Mn_top, as_prov_top, _, _, _, _ = rc_design_engine.get_phi_Mn_details(top_n, top_db, d_real_t, b_mm, fc, fy)
 
-                        # 3. Shear
+                        # 3. Shear Reinforcement
+                        st.markdown("##### 3. Shear Stirrups")
                         c1, c2, c3 = st.columns([1, 1, 1])
                         with c1: st.write(f"Vu: `{vu_max:.1f}` kN")
                         with c2: stir_db = st.selectbox("Size", [6, 9, 12], index=0, key=f"sdb_{i}")
@@ -228,7 +238,7 @@ else:
                 })
             st.table(pd.DataFrame(summary_list))
             
-            if st.button("🔄 Generate Detailed Drawings", type="primary"):
+            if st.button("🔄 Generate Detailed Drawings", key="gen_draw", type="primary"):
                 try:
                     svg_long, png_data = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, cover_mm)
                     st.components.v1.html(f'<div style="background:white; overflow-x:auto;">{svg_long}</div>', height=450, scrolling=True)
