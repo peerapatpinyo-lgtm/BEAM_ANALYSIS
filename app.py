@@ -145,53 +145,72 @@ else:
                     ma_pos_svc, delta_svc_mm = 0, 0
 
                 with st.expander(f"📍 **Span {i+1}** (L={s_len} m) | Design Forces: Mu+={mu_pos:.1f}, Mu-={mu_neg:.1f}, Vu={vu_max:.1f}", expanded=True):
-                    c_const, c_cov = st.columns([3, 1])
-                    with c_const: st.caption(f"Design Constants: fc'={fc}, fy={fy}, Size {b_mm:.0f}x{h_mm:.0f} mm")
-                    with c_cov: cover_mm = st.number_input(f"Covering (mm)", value=25.0, step=5.0, key=f"cov_{i}")
+                    # 💎 แก้ไข: ใช้ columns เพื่อแบ่งพื้นที่แสดง Input และ Cross Section
+                    col_input, col_section = st.columns([3, 1])
 
-                    st.markdown("##### 1. Bottom Reinforcement (Mid-Span)")
-                    d_eff_bot_est = h_mm - cover_mm - 20 
-                    as_req_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
-                    
-                    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-                    with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_bot:.0f}` mm²")
-                    with c2: bot_db = st.selectbox("DB", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
-                    with c3: bot_n = st.number_input("Qty", 2, 10, 2, key=f"bn_{i}")
-                    
-                    d_eff_bot_real = h_mm - cover_mm - 9 - (bot_db / 2)
-                    phi_Mn_bot, as_prov_bot, _, _, _, _ = rc_design_engine.get_phi_Mn_details(bot_n, bot_db, d_eff_bot_real, b_mm, fc, fy)
-                    pass_b = (phi_Mn_bot >= mu_pos) and (phi_Mn_bot > 0)
-                    with c4: 
-                        clr_b = "green" if pass_b else "red"
-                        msg_b = f"**{phi_Mn_bot:.2f}**" if phi_Mn_bot > 0 else "**FAIL**"
-                        st.markdown(f"$\phi M_n$: :{clr_b}[{msg_b}] kNm vs $M_u$: **{mu_pos:.2f}**")
-                    
-                    st.markdown("##### 2. Top Reinforcement (Supports)")
-                    as_req_top, _, _ = rc_design_engine.get_as_req(mu_neg, d_eff_bot_est, fc, fy, b_mm)
-                    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-                    with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_top:.0f}` mm²")
-                    with c2: top_db = st.selectbox("DB", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
-                    with c3: top_n = st.number_input("Qty", 2, 10, 2, key=f"tn_{i}")
-                    
-                    d_eff_top_real = h_mm - cover_mm - 9 - (top_db / 2)
-                    phi_Mn_top, as_prov_top, _, _, _, _ = rc_design_engine.get_phi_Mn_details(top_n, top_db, d_eff_top_real, b_mm, fc, fy)
-                    pass_t = (phi_Mn_top >= mu_neg) and (phi_Mn_top > 0)
-                    with c4:
-                        clr_t = "green" if pass_t else "red"
-                        msg_t = f"**{phi_Mn_top:.2f}**" if phi_Mn_top > 0 else "**FAIL**"
-                        st.markdown(f"$\phi M_n$: :{clr_t}[{msg_t}] kNm vs $M_u$: **{mu_neg:.2f}**")
+                    with col_input:
+                        c_const, c_cov = st.columns([3, 1])
+                        with c_const: st.caption(f"Design Constants: fc'={fc}, fy={fy}, Size {b_mm:.0f}x{h_mm:.0f} mm")
+                        with c_cov: cover_mm = st.number_input(f"Covering (mm)", value=25.0, step=5.0, key=f"cov_{i}")
 
-                    st.markdown("##### 3. Shear Reinforcement")
-                    c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
-                    with c1: st.markdown(f"**Design $V_u$:**\n`{vu_max:.2f}` kN")
-                    with c2: stir_db = st.selectbox("Stirrup", [6, 9, 12], index=0, key=f"sdb_{i}")
-                    with c3: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, 10, key=f"ss_{i}")
+                        st.markdown("##### 1. Bottom Reinforcement (Mid-Span)")
+                        d_eff_bot_est = h_mm - cover_mm - 20 
+                        as_req_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_eff_bot_est, fc, fy, b_mm)
+                        
+                        c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+                        with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_bot:.0f}` mm²")
+                        with c2: bot_db = st.selectbox("DB", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
+                        with c3: bot_n = st.number_input("Qty", 2, 10, 2, key=f"bn_{i}")
+                        
+                        d_eff_bot_real = h_mm - cover_mm - 9 - (bot_db / 2)
+                        phi_Mn_bot, as_prov_bot, _, _, _, _ = rc_design_engine.get_phi_Mn_details(bot_n, bot_db, d_eff_bot_real, b_mm, fc, fy)
+                        pass_b = (phi_Mn_bot >= mu_pos) and (phi_Mn_bot > 0)
+                        with c4: 
+                            clr_b = "green" if pass_b else "red"
+                            msg_b = f"**{phi_Mn_bot:.2f}**" if phi_Mn_bot > 0 else "**FAIL**"
+                            st.markdown(f"$\phi M_n$: :{clr_b}[{msg_b}] kNm vs $M_u$: **{mu_pos:.2f}**")
+                        
+                        st.markdown("##### 2. Top Reinforcement (Supports)")
+                        as_req_top, _, _ = rc_design_engine.get_as_req(mu_neg, d_eff_bot_est, fc, fy, b_mm)
+                        c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+                        with c1: st.markdown(f"**Req $A_s$:**\n`{as_req_top:.0f}` mm²")
+                        with c2: top_db = st.selectbox("DB", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
+                        with c3: top_n = st.number_input("Qty", 2, 10, 2, key=f"tn_{i}")
+                        
+                        d_eff_top_real = h_mm - cover_mm - 9 - (top_db / 2)
+                        phi_Mn_top, as_prov_top, _, _, _, _ = rc_design_engine.get_phi_Mn_details(top_n, top_db, d_eff_top_real, b_mm, fc, fy)
+                        pass_t = (phi_Mn_top >= mu_neg) and (phi_Mn_top > 0)
+                        with c4:
+                            clr_t = "green" if pass_t else "red"
+                            msg_t = f"**{phi_Mn_top:.2f}**" if phi_Mn_top > 0 else "**FAIL**"
+                            st.markdown(f"$\phi M_n$: :{clr_t}[{msg_t}] kNm vs $M_u$: **{mu_neg:.2f}**")
+
+                        st.markdown("##### 3. Shear Reinforcement")
+                        c1, c2, c3, c4 = st.columns([1, 1, 1, 2])
+                        with c1: st.markdown(f"**Design $V_u$:**\n`{vu_max:.2f}` kN")
+                        with c2: stir_db = st.selectbox("Stirrup", [6, 9, 12], index=0, key=f"sdb_{i}")
+                        with c3: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, 10, key=f"ss_{i}")
+                        
+                        status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_eff_bot_real, fc, fy, stir_db, stir_s)
+                        with c4:
+                            clr_v = "green" if status_v == "OK" else "red"
+                            st.markdown(f"$\phi V_n$: :{clr_v}[**{phi_Vn:.1f}**] kN ({status_v})")
                     
-                    status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_eff_bot_real, fc, fy, stir_db, stir_s)
-                    with c4:
-                        clr_v = "green" if status_v == "OK" else "red"
-                        st.markdown(f"$\phi V_n$: :{clr_v}[**{phi_Vn:.1f}**] kN ({status_v})")
-                    
+                    with col_section:
+                        # 💎 วาดรูปตัดขวาง (Cross Section) สำหรับ Span นี้โดยเฉพาะ
+                        st.markdown("<p style='text-align:center; font-weight:bold;'>Preview Section</p>", unsafe_allow_html=True)
+                        cs_data = {
+                            'b': b_mm, 'h': h_mm, 'cover': cover_mm,
+                            'top': {'n': top_n}, 'top_db': top_db,
+                            'bot': {'n': bot_n}, 'bot_db': bot_db,
+                            'stir_db': stir_db, 'shear': {'s': stir_s}
+                        }
+                        cs_svg = section_plotter.plot_cross_section(cs_data)
+                        st.components.v1.html(
+                            f'<div style="background-color: white; border-radius: 8px; display: flex; justify-content: center;">{cs_svg}</div>',
+                            height=280
+                        )
+
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -211,17 +230,14 @@ else:
             if st.button("🔄 Generate Drawings", type="primary"):
                 try:
                     st.write("**Longitudinal Section (Vector Graphics):**")
-                    # 💎 แก้ไขจุดนี้: รับค่า 2 ตัวแปร (SVG และ PNG) เพื่อให้แสดงผลได้และโหลดรูปได้
                     svg_content, png_data = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, final_design_res[0]['cover'])
                     
-                    # แสดงรูปภาพ SVG บนเว็บ
                     st.components.v1.html(
                         f'<div style="background-color: white; padding: 10px; border-radius: 5px; overflow-x: auto;">{svg_content}</div>',
                         height=450,
                         scrolling=True
                     )
                     
-                    # เพิ่มปุ่มดาวน์โหลดไฟล์ภาพ
                     st.download_button(
                         label="📥 Download Drawing (PNG)",
                         data=png_data,
