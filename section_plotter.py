@@ -5,7 +5,7 @@ import numpy as np
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    วาดรูปตัดยาวคาน (Longitudinal Section) พร้อมรายละเอียดเหล็กเสริมและระยะห่าง
+    วาดรูปตัดยาวคาน (Longitudinal Section)
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
@@ -85,16 +85,16 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) แก้ไขปัญหารูปโดนตัดครึ่งและจัดตำแหน่งใหม่ให้สมดุล
+    วาดรูปตัดขวางคาน (Cross Section) แบบลดพื้นที่สีขาวให้เหลือน้อยที่สุด
     """
     b = float(res['b'])
     h = float(res['h'])
     cover = float(res['cover'])
     
-    # 1. ตั้งค่า Figure ให้สมดุล
-    fig, ax = plt.subplots(figsize=(5, 5))
+    # 1. ปรับขนาด Figure ให้กระชับ (กว้าง 4 สูง 5)
+    fig, ax = plt.subplots(figsize=(4, 5))
     
-    # ใช้ระบบพิกัดที่ให้ 0,0 อยู่ตรงกลางคานเพื่อให้การกระจาย Text รอบข้างทำได้ง่าย
+    # พิกัด 0,0 อยู่ตรงกลางคาน
     x0, y0 = -b/2, -h/2
     
     # 2. วาดหน้าตัดคอนกรีต
@@ -105,59 +105,50 @@ def plot_cross_section(res):
     ax.add_patch(patches.Rectangle((x0 + stir_off, y0 + stir_off), b - 2*stir_off, h - 2*stir_off, 
                                    fill=False, edgecolor='#2c3e50', lw=1.5, zorder=2))
     
-    # 4. วาดและระบุเหล็กเมนบน (Top Bars)
+    # 4. เหล็กเมนบน (Top Bars)
     n_top = int(res['top']['n'])
     db_top = float(res['top_db'])
     y_pos_top = (h/2) - stir_off - (db_top/2) - 2
-    # กระจายเหล็กบน
-    if n_top > 1:
-        x_top = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_top)
-    else:
-        x_top = [0]
+    x_top = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_top) if n_top > 1 else [0]
     
     for x in x_top:
         ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1, color='#d30000', zorder=10))
     
-    # Label เหล็กบน (วางเหนือคาน)
-    ax.text(0, h/2 + (h*0.1), f"{n_top}-DB{int(db_top)}", color='#d30000', 
-            ha='center', va='bottom', fontweight='bold', fontsize=11)
+    # Label บน - ขยับลงมาชิดขึ้น (h*0.05)
+    ax.text(0, h/2 + (h*0.05), f"{n_top}-DB{int(db_top)}", color='#d30000', 
+            ha='center', va='bottom', fontweight='bold', fontsize=10)
 
-    # 5. วาดและระบุเหล็กเมนล่าง (Bottom Bars)
+    # 5. เหล็กเมนล่าง (Bottom Bars)
     n_bot = int(res['bot']['n'])
     db_bot = float(res['bot_db'])
     y_pos_bot = (-h/2) + stir_off + (db_bot/2) + 2
-    # กระจายเหล็กล่าง
-    if n_bot > 1:
-        x_bot = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_bot)
-    else:
-        x_bot = [0]
+    x_bot = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_bot) if n_bot > 1 else [0]
     
     for x in x_bot:
         ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1, color='#008c00', zorder=10))
         
-    # Label เหล็กล่าง (วางใต้คาน)
-    ax.text(0, -h/2 - (h*0.1), f"{n_bot}-DB{int(db_bot)}", color='#008c00', 
-            ha='center', va='top', fontweight='bold', fontsize=11)
+    # Label ล่าง - ขยับขึ้นมาชิดขึ้น (h*0.05)
+    ax.text(0, -h/2 - (h*0.05), f"{n_bot}-DB{int(db_bot)}", color='#008c00', 
+            ha='center', va='top', fontweight='bold', fontsize=10)
 
-    # 6. ข้อความหัวข้อ (Section Name) และเหล็กปลอก
-    ax.text(0, h/2 + (h*0.3), f"SECTION {int(b)}x{int(h)} mm", ha='center', fontweight='black', fontsize=13)
-    ax.text(0, -h/2 - (h*0.3), f"Stirrup: RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
-            ha='center', color='#34495e', fontsize=10, fontweight='bold')
+    # 6. ข้อความหัวข้อและเหล็กปลอก - ดึงเข้ามาให้ชิดคานที่สุด
+    ax.text(0, h/2 + (h*0.18), f"SECTION {int(b)}x{int(h)}", ha='center', fontweight='black', fontsize=12)
+    ax.text(0, -h/2 - (h*0.18), f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
+            ha='center', color='#34495e', fontsize=9, fontweight='bold')
     
-    # --- 7. ปรับ Viewport ให้สมดุลและไม่โดนตัดขอบ ---
+    # --- 7. ปรับ Viewport (บีบ Margin ให้เหลือน้อยที่สุด) ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # กำหนดขอบเขตการแสดงผล (Margin) ให้พอดีกับข้อความทั้งบนและล่าง
-    # เพิ่มระยะแนวตั้ง (ylim) ให้มากขึ้นเพื่อไม่ให้ตัวหนังสือ Stirrup หาย
-    v_margin = h * 0.5
-    h_margin = b * 0.3
-    ax.set_ylim(-h/2 - v_margin, h/2 + v_margin)
-    ax.set_xlim(-b/2 - h_margin, b/2 + h_margin)
+    # ลด Margin จาก 0.5 เหลือ 0.35 เพื่อตัดพื้นที่สีขาวส่วนเกิน
+    v_limit = h * 0.35
+    h_limit = b * 0.15
+    ax.set_ylim(-h/2 - v_limit, h/2 + v_limit)
+    ax.set_xlim(-b/2 - h_limit, b/2 + h_limit)
     
     f = io.StringIO()
-    # ใช้ bbox_inches='tight' และเพิ่ม pad_inches เล็กน้อยเพื่อป้องกันขอบตัวหนังสือขาด
-    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.15, transparent=True)
+    # ใช้ pad_inches=0.02 เพื่อให้ขอบชิดที่สุดโดยที่ตัวหนังสือไม่ขาด
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.02, transparent=True)
     svg_string = f.getvalue()
     plt.close(fig)
     return svg_string
