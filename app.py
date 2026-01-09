@@ -133,6 +133,7 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
+                # Ultimate Strength Values
                 mask_ult = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 if any(mask_ult):
                     mu_pos = max(0.0, (M_ult[mask_ult] / 1000.0).max())
@@ -140,6 +141,14 @@ else:
                     vu_max = abs((V_ult[mask_ult] / 1000.0)).max()
                 else:
                     mu_pos, mu_neg, vu_max = 0, 0, 0
+                
+                # Service Load Values (For Report/Deflection)
+                mask_svc = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
+                if any(mask_svc):
+                    ma_pos_svc = max(0.0, (M_svc[mask_svc] / 1000.0).max())
+                    delta_svc_mm = abs((D_svc[mask_svc] * 1000.0)).max()
+                else:
+                    ma_pos_svc, delta_svc_mm = 0, 0
 
                 with st.expander(f"📍 SPAN {i+1} (L={s_len} m)", expanded=True):
                     col_input, col_draw = st.columns([2, 1])
@@ -147,7 +156,6 @@ else:
                     with col_input:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, 5, key=f"cov_{i}")
                         d_est = h_mm - cover_mm - 20
-                        # Calculation of As_min
                         as_min = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_est, (1.4 / fy) * b_mm * d_est)
 
                         # --- BOTTOM STEEL AREA COMPARISON ---
@@ -155,7 +163,6 @@ else:
                         as_req_calc_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_est, fc, fy, b_mm)
                         as_req_bot = max(as_req_calc_bot, as_min)
                         
-                        # Comparison Label
                         st.markdown(f"""
                         <div style="background-color:#f0f2f6; padding:10px; border-radius:5px; border-left: 5px solid #2e7d32;">
                         <b>Area Comparison:</b><br>
@@ -226,6 +233,7 @@ else:
                         cs_svg = section_plotter.plot_cross_section(cs_data)
                         st.components.v1.html(f'<div style="background:white; padding:10px;">{cs_svg}</div>', height=400)
 
+                    # บรรทัดสำคัญ: เก็บข้อมูลให้ครบเพื่อให้ reporter.py ดึงไปใช้ได้
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -233,7 +241,8 @@ else:
                         'pos': {'n': bot_n, 'area': as_prov_bot, 'status': (phi_Mn_bot >= mu_pos)},
                         'neg': {'n': top_n, 'area': as_prov_top, 'status': (phi_Mn_top >= mu_neg)},
                         'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
-                        'bot': {'n': bot_n, 'db': bot_db}, 'top': {'n': top_n, 'db': top_db}
+                        'bot': {'n': bot_n, 'db': bot_db}, 'top': {'n': top_n, 'db': top_db},
+                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': delta_svc_mm  # <--- แก้ไขจุดนี้
                     })
 
             st.markdown("---")
