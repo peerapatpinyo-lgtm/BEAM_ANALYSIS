@@ -5,7 +5,7 @@ import numpy as np
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    วาดรูปตัดยาวคาน (Longitudinal Section) พร้อมรายละเอียดเหล็กเสริม
+    วาดรูปตัดยาวคาน (Longitudinal Section)
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
@@ -82,14 +82,14 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) ฉบับจัดระเบียบ Text ไว้ด้านข้างทั้งหมด 
-    ไม่มีลูกศร เพื่อลดพื้นที่ขาวและขยับคานขึ้นชิดขอบบน
+    วาดรูปตัดขวางคาน (Cross Section) จัดกลุ่มตัวหนังสือไว้ด้านขวาทั้งหมด
+    และเว้นระยะห่างระหว่างรูปกับตัวหนังสือให้ชัดเจน
     """
     b, h = float(res['b']), float(res['h'])
     cover = float(res['cover'])
     
-    # กำหนดขนาด Figure (เน้นกว้างเพื่อรองรับข้อความข้างคาน)
-    fig, ax = plt.subplots(figsize=(5.0, 3.0))
+    # กำหนดขนาด Figure (เพิ่มความกว้างเพื่อรองรับ Space ด้านขวา)
+    fig, ax = plt.subplots(figsize=(5.5, 3.2))
     x0, y0 = -b/2, -h/2
     
     # 1. วาดหน้าตัดคอนกรีต
@@ -106,10 +106,6 @@ def plot_cross_section(res):
     x_top = np.linspace(x0 + cover + 10, x0 + b - cover - 10, n_top) if n_top > 1 else [0]
     for x in x_top:
         ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1.2, color='#d30000', zorder=10))
-    
-    # ระบุเหล็กบน (วางไว้ด้านขวาของคาน ระดับเดียวกับเหล็ก)
-    ax.text(b/2 + 15, y_pos_top, f"{n_top}-DB{int(db_top)} (TOP)", 
-            color='#d30000', va='center', ha='left', fontsize=10, fontweight='bold')
 
     # 4. เหล็กเมนล่าง (Bottom Bars)
     n_bot = int(res['bot']['n'])
@@ -118,26 +114,36 @@ def plot_cross_section(res):
     x_bot = np.linspace(x0 + cover + 10, x0 + b - cover - 10, n_bot) if n_bot > 1 else [0]
     for x in x_bot:
         ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1.2, color='#008c00', zorder=10))
-        
-    # ระบุเหล็กล่าง (วางไว้ด้านขวาของคาน ระดับเดียวกับเหล็ก)
-    ax.text(b/2 + 15, y_pos_bot, f"{n_bot}-DB{int(db_bot)} (BOT)", 
+
+    # --- ส่วนการจัดวางตัวหนังสือด้านขวา (Right Side Annotation) ---
+    # เว้น Space จากขอบคานด้านขวาออกไป (b*0.15)
+    text_x_start = b/2 + (b * 0.15)
+    
+    # ระบุเหล็กบน
+    ax.text(text_x_start, y_pos_top, f"{n_top}-DB{int(db_top)} (TOP)", 
+            color='#d30000', va='center', ha='left', fontsize=10, fontweight='bold')
+    
+    # ระบุเหล็กปลอก (Stirrup) - วางไว้ตรงกลางความสูงคาน
+    ax.text(text_x_start, 0, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])} (STIR.)", 
+            color='#34495e', va='center', ha='left', fontsize=9, fontweight='bold')
+    
+    # ระบุเหล็กล่าง
+    ax.text(text_x_start, y_pos_bot, f"{n_bot}-DB{int(db_bot)} (BOT)", 
             color='#008c00', va='center', ha='left', fontsize=10, fontweight='bold')
 
-    # 5. เหล็กปลอก (Stirrup) - วางไว้ด้านซ้ายตรงกลางคาน
-    ax.text(-b/2 - 15, 0, f"STIRRUP:\nRB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
-            ha='right', va='center', color='#34495e', fontsize=9, fontweight='bold')
-
-    # 6. ชื่อ Section (วางชิดขอบบน)
-    ax.text(0, h/2 + 3, f"SECTION {int(b)}x{int(h)}", ha='center', va='bottom', fontweight='black', fontsize=11)
+    # 5. ชื่อ Section (วางไว้กึ่งกลางคานด้านบน)
+    ax.text(0, h/2 + (h*0.05), f"SECTION {int(b)}x{int(h)}", 
+            ha='center', va='bottom', fontweight='black', fontsize=11)
     
-    # --- 7. ปรับ Viewport ให้ Compact ที่สุด ---
+    # --- 6. Viewport Optimization ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # บีบแนวตั้ง (ylim) ให้เกือบเท่าความสูงคาน เพื่อให้รูปขยับขึ้น
-    ax.set_ylim(-h/2 - 15, h/2 + 25)
-    # ขยายแนวนอน (xlim) เพื่อรองรับ Text ซ้าย-ขวา
-    ax.set_xlim(-b/2 - 80, b/2 + 85)
+    # บีบแนว Y ให้รูปขยับขึ้น (ylim ด้านล่างน้อย ด้านบนเผื่อชื่อ Section)
+    ax.set_ylim(-h/2 - (h*0.1), h/2 + (h*0.25))
+    
+    # ขยายแนว X ด้านขวาให้กว้างกว่าด้านซ้ายเพื่อให้เห็นตัวหนังสือครบและมี Space
+    ax.set_xlim(-b/2 - (b*0.1), b/2 + (b*0.8))
     
     f = io.StringIO()
     fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.01, transparent=True)
