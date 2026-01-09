@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import io
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 # --- 1. IMPORT CUSTOM MODULES ---
 import input_handler, solver, design_view, section_plotter, reporter
@@ -12,12 +14,101 @@ import rc_utils, rc_design_engine, rc_load_processor, app_styles
 st.set_page_config(page_title="Pro RC Beam Design", layout="wide", page_icon="🏗️")
 app_styles.apply_custom_css()
 
-# --- 3. MAIN HEADER ---
+# --- 3. INTERNAL HELPER: PLOT CROSS SECTION (FIXED) ---
+def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
+    """
+    Generate Cross Section Image using Matplotlib.
+    Fixed: Aspect ratio and x-limits to prevent text clipping.
+    """
+    # 1. Setup Figure (Portrait)
+    fig, ax = plt.subplots(figsize=(5, 6))
+    
+    # 2. Draw Concrete
+    rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='black', facecolor='white')
+    ax.add_patch(rect)
+    
+    # 3. Draw Stirrup
+    stirrup_rect = patches.Rectangle((cover, cover), b - 2*cover, h - 2*cover, 
+                                     linewidth=1.5, edgecolor='#34495e', facecolor='none', linestyle='-')
+    ax.add_patch(stirrup_rect)
+    
+    # 4. Draw Rebars
+    # --- Top Rebar ---
+    # Simplified: Visualize based on total count, using dia of first layer
+    n_top = sum(l['n'] for l in top_layers)
+    dia_top = top_layers[0]['db']
+    
+    start_x = cover + dia_top/2
+    end_x = b - cover - dia_top/2
+    
+    if n_top > 1:
+        gap = (end_x - start_x) / (n_top - 1)
+        for i in range(n_top):
+            cx = start_x + i*gap
+            cy = h - cover - dia_top/2
+            ax.add_patch(patches.Circle((cx, cy), radius=dia_top/2, color='#c0392b'))
+    else:
+        ax.add_patch(patches.Circle((b/2, h - cover - dia_top/2), radius=dia_top/2, color='#c0392b'))
+
+    # --- Bot Rebar ---
+    n_bot = sum(l['n'] for l in bot_layers)
+    dia_bot = bot_layers[0]['db']
+    
+    start_x = cover + dia_bot/2
+    end_x = b - cover - dia_bot/2
+    
+    if n_bot > 1:
+        gap = (end_x - start_x) / (n_bot - 1)
+        for i in range(n_bot):
+            cx = start_x + i*gap
+            cy = cover + dia_bot/2
+            ax.add_patch(patches.Circle((cx, cy), radius=dia_bot/2, color='#27ae60'))
+    else:
+        ax.add_patch(patches.Circle((b/2, cover + dia_bot/2), radius=dia_bot/2, color='#27ae60'))
+
+    # 5. Add Labels (Fixed Position)
+    text_x = b + (b * 0.1) # Offset text to the right
+    
+    # Top Label
+    ax.text(text_x, h - cover, f"Top:\n{n_top}DB{int(dia_top)}", 
+            color='#c0392b', fontsize=12, fontweight='bold', va='center')
+
+    # Bot Label
+    ax.text(text_x, cover + dia_bot, f"Bot:\n{n_bot}DB{int(dia_bot)}", 
+            color='#27ae60', fontsize=12, fontweight='bold', va='center')
+    
+    # Shear Label (Boxed)
+    shear_text = f"Shear:\nRB{int(shear_res['db'])} @ {int(shear_res['s'])} mm"
+    ax.text(text_x, h/2, shear_text, 
+            color='#2c3e50', fontsize=10, fontweight='bold', va='center',
+            bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="#34495e", alpha=0.9))
+
+    # Title
+    ax.set_title(f"SECTION {int(b)}x{int(h)} mm", fontsize=14, fontweight='bold', pad=20)
+
+    # 6. Final Adjustments
+    ax.set_aspect('equal')
+    ax.axis('off')
+    # *** KEY FIX: Expand Limits ***
+    ax.set_xlim(-50, b + 250) 
+    ax.set_ylim(-50, h + 50)
+    
+    plt.tight_layout()
+    return fig
+
+# --- 4. MAIN HEADER ---
 st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div>', unsafe_allow_html=True)
 
-# --- 4. SIDEBAR ---
+# --- 5. SIDEBAR ---
 with st.sidebar:
     params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
+    
+    # --- ADDED: UNIT COST INPUTS ---
+    st.markdown("---")
+    st.markdown("### 💰 Cost Estimation (BOQ)")
+    price_conc = st.number_input("Concrete (Baht/m³)", value=2200, step=50)
+    price_steel = st.number_input("Rebar (Baht/kg)", value=28.0, step=0.5)
+    price_form = st.number_input("Formwork (Baht/m²)", value=300, step=10)
 
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
@@ -65,16 +156,14 @@ else:
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
                 # --- Analysis Data Extraction ---
-                # Ultimate Forces
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
-                # Service Forces (For Deflection)
+                # Service Forces
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
                 ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
-                # Note: solver returns deflection in meters, convert to mm
                 delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0
 
                 with st.expander(f"📍 SPAN {i+1} (L={s_len} m)", expanded=True):
@@ -82,7 +171,7 @@ else:
                     with col_input:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, key=f"cov_{i}")
 
-                        # --- 1. TOP STEEL (Support) ---
+                        # --- 1. TOP STEEL ---
                         st.markdown("#### 🔼 Top Reinforcement (Negative Moment)")
                         num_t_layers = st.selectbox("Number of Top Layers", [1, 2, 3], index=0, key=f"tl_qty_{i}")
                         top_layers = []
@@ -106,7 +195,7 @@ else:
                         | **Capacity (kNm)** | $M_u$: {mu_neg:.1f} | --- | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
                         """)
 
-                        # --- 2. BOTTOM STEEL (Mid-Span) ---
+                        # --- 2. BOTTOM STEEL ---
                         st.markdown("#### 🔽 Bottom Reinforcement (Positive Moment)")
                         num_b_layers = st.selectbox("Number of Bottom Layers", [1, 2, 3], index=0, key=f"bl_qty_{i}")
                         bot_layers = []
@@ -139,48 +228,39 @@ else:
                         if phi_Vn < vu_max: st.error(f"❌ **Shear Failure:** $\phi V_n$ {phi_Vn:.1f} < $V_u$ {vu_max:.1f} kN")
                         else: st.success(f"✅ **Shear Capacity Passed:** $\phi V_n$ {phi_Vn:.1f} ≥ $V_u$ {vu_max:.1f} kN")
 
-                        # --- 4. DEFLECTION CHECK (NEW SERVICEABILITY LOGIC) ---
+                        # --- 4. DEFLECTION CHECK ---
                         st.markdown("---")
                         st.markdown("#### 📉 Deflection Control (Serviceability)")
-                        
-                        # Call the new function
                         d_inst, d_long, Ie, Icr, lambda_d = rc_design_engine.check_serviceability(
                             ma_pos_svc, delta_elastic_mm, b_mm, h_mm, d_b, as_prov_b, as_prov_t, fc
                         )
-                        
                         limit_240 = (s_len * 1000) / 240
                         limit_480 = (s_len * 1000) / 480
-                        
                         status_def = "✅ OK" if d_long <= limit_240 else "❌ Fail"
                         
-                        # Display Results Table
                         st.markdown(f"""
                         | Check Item | Value | Limit (L/240) | Limit (L/480) | Status |
                         | :--- | :---: | :---: | :---: | :---: |
                         | Immediate $\Delta$ | {d_inst:.2f} mm | - | - | - |
                         | **Long-term $\Delta$** | **{d_long:.2f} mm** | **{limit_240:.2f} mm** | {limit_480:.2f} mm | **{status_def}** |
                         """)
-                        
-                        st.caption(f"*Calculated using ACI 318-19 (Bischoff's Formula), $I_e$={Ie/1e4:.0f}cm⁴, $\lambda_\Delta$={lambda_d:.2f}")
-                        if d_long > limit_240:
-                            st.warning("⚠️ การแอ่นตัวระยะยาวเกินค่ามาตรฐาน! แนะนำให้: 1) เพิ่มความลึกคาน 2) เพิ่มเหล็กรับแรงอัด (เหล็กบน) เพื่อลด Creep")
+                        st.caption(f"*Calculated using ACI 318-19, $I_e$={Ie/1e4:.0f}cm⁴, $\lambda_\Delta$={lambda_d:.2f}")
 
                     with col_draw:
-                        cs_data = {
-                            'b': b_mm, 'h': h_mm, 'cover': cover_mm, 
-                            'top_layers': top_layers, 
-                            'bot_layers': bot_layers,
-                            'top_db': top_layers[0]['db'], 
-                            'bot_db': bot_layers[0]['db'], 
-                            'stir_db': stir_db, 
-                            'shear': {'s': stir_s}
-                        }
-                        st.components.v1.html(f'<div style="background:white; padding:10px; border-radius:10px; border:1px solid #ddd;">{section_plotter.plot_cross_section(cs_data)}</div>', height=420)
+                        # --- UPDATED: Use Matplotlib Fix ---
+                        fig_cs = plot_cross_section_fixed(
+                            b=b_mm, h=h_mm, cover=cover_mm,
+                            top_layers=top_layers,
+                            bot_layers=bot_layers,
+                            shear_res={'db': stir_db, 's': stir_s}
+                        )
+                        st.pyplot(fig_cs)
+                        plt.close(fig_cs) # Clean memory
 
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
-                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': d_long, # Store Long-term for report
+                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': d_long, 
                         'top_db': top_layers[0]['db'], 'bot_db': bot_layers[0]['db'], 'stir_db': stir_db, 
                         'pos': {'n': sum(l['n'] for l in bot_layers), 'area': as_prov_b, 'layers': bot_layers, 'status': (phi_Mn_b >= mu_pos)},
                         'neg': {'n': sum(l['n'] for l in top_layers), 'area': as_prov_t, 'layers': top_layers, 'status': (phi_Mn_t >= mu_neg)},
@@ -216,10 +296,67 @@ else:
                 for res in final_design_res:
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
+        
+        # ================= ADDED: BOQ SECTION =================
+        st.markdown("---")
+        st.header("💵 Bill of Quantities (BOQ)")
+        
+        if final_design_res:
+            total_conc_vol, total_steel_weight, total_form_area = 0, 0, 0
+            boq_details = []
+
+            for res in final_design_res:
+                L = res['L']
+                b, h = res['b'], res['h']
+                cover = res['cover']
+                
+                # 1. Concrete
+                vol = (b/1000) * (h/1000) * L
+                total_conc_vol += vol
+                
+                # 2. Formwork
+                f_area = ((2*h + b) / 1000) * L
+                total_form_area += f_area
+                
+                # 3. Steel
+                # Top
+                w_top = sum((l['db']**2 / 162) * l['n'] * L for l in res['neg']['layers'])
+                # Bot
+                w_bot = sum((l['db']**2 / 162) * l['n'] * L for l in res['pos']['layers'])
+                # Stirrup
+                stir_len = 2 * ((b - 2*cover) + (h - 2*cover)) / 1000
+                num_stir = (L * 1000) / res['shear']['s'] + 1
+                w_stir = (res['shear']['db']**2 / 162) * stir_len * num_stir
+                
+                total_steel_weight += (w_top + w_bot + w_stir)
+
+            # Waste 10% for steel
+            total_steel_weight *= 1.10
+            
+            # Costs
+            cost_conc = total_conc_vol * price_conc
+            cost_steel = total_steel_weight * price_steel
+            cost_form = total_form_area * price_form
+            total_cost = cost_conc + cost_steel + cost_form
+
+            # Display Metrics
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Concrete", f"{total_conc_vol:.2f} m³", f"{cost_conc:,.0f} ฿")
+            c2.metric("Rebar (+10%)", f"{total_steel_weight:.0f} kg", f"{cost_steel:,.0f} ฿")
+            c3.metric("Formwork", f"{total_form_area:.1f} m²", f"{cost_form:,.0f} ฿")
+            c4.metric("TOTAL COST", f"{total_cost:,.0f} ฿", border=True)
+            
+            # Table
+            boq_df = pd.DataFrame({
+                "Item": ["Concrete", "Rebar (inc. waste 10%)", "Formwork", "<b>TOTAL</b>"],
+                "Quantity": [f"{total_conc_vol:.2f}", f"{total_steel_weight:.2f}", f"{total_form_area:.2f}", "-"],
+                "Unit": ["m³", "kg", "m²", "-"],
+                "Unit Price": [f"{price_conc:,.0f}", f"{price_steel:,.0f}", f"{price_form:,.0f}", "-"],
+                "Amount (THB)": [f"{cost_conc:,.0f}", f"{cost_steel:,.0f}", f"{cost_form:,.0f}", f"<b>{total_cost:,.0f}</b>"]
+            })
+            st.markdown(boq_df.to_html(escape=False, index=False), unsafe_allow_html=True)
 
     except Exception as e:
         st.error(f"❌ **System Error:** {e}")
         st.info("รายละเอียด Error สำหรับการ Debug:")
         st.exception(e)
-
-# ... (Import bim_exporter at the top) ...
