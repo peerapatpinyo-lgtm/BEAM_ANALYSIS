@@ -86,73 +86,66 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 # --- 💎 แก้ไขฟังก์ชัน Cross Section ให้แสดงผลครบและระบุเหล็กกำกับ ---
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) พร้อมเส้นชี้ระบุจำนวนและขนาดเหล็ก
+    วาดรูปตัดขวางคาน (Cross Section) ให้เต็มพื้นที่ และจัดสมดุล Margin ใหม่
     """
     b = float(res['b'])
     h = float(res['h'])
     cover = float(res['cover'])
     
-    # ปรับขนาด Figure ให้มีพื้นที่พอสำหรับ Label ด้านข้าง
-    fig, ax = plt.subplots(figsize=(5, 6))
+    # สร้าง Figure ให้กระชับขึ้น
+    fig, ax = plt.subplots(figsize=(4, 5))
     
-    # 1. วาดหน้าตัดคอนกรีต
-    ax.add_patch(patches.Rectangle((0, 0), b, h, facecolor='#f8f9fa', edgecolor='black', lw=3, zorder=1))
+    # 1. วาดหน้าตัดคอนกรีต (ใช้พิกัดเริ่มที่ 0,0)
+    ax.add_patch(patches.Rectangle((0, 0), b, h, facecolor='#fdfdfd', edgecolor='black', lw=2.5, zorder=1))
     
     # 2. วาดเหล็กปลอก (Stirrup)
-    stir_offset = cover
-    ax.add_patch(patches.Rectangle((stir_offset, stir_offset), b-2*stir_offset, h-2*stir_offset, 
-                                   fill=False, edgecolor='#2c3e50', lw=2, zorder=2))
+    stir_off = cover
+    ax.add_patch(patches.Rectangle((stir_off, stir_off), b-2*stir_off, h-2*stir_off, 
+                                   fill=False, edgecolor='#34495e', lw=1.5, zorder=2))
     
-    # 3. วาดเหล็กเมนบน (Top Bars) และใส่ Label
+    # 3. เหล็กบน (Top Bars)
     n_top = int(res['top']['n'])
     db_top = float(res['top_db'])
-    # คำนวณตำแหน่งเหล็ก (เผื่อระยะรัศมีเหล็กปลอก)
-    bar_y_top = h - stir_offset - 10
-    if n_top > 1:
-        x_top = np.linspace(stir_offset + 12, b - stir_offset - 12, n_top)
-    else:
-        x_top = [b/2]
-        
-    for x in x_top:
-        ax.add_patch(patches.Circle((x, bar_y_top), db_top/2 + 2, color='#d30000', zorder=10))
+    y_top = h - stir_off - (db_top/2) - 2 # ขยับลงมาจากขอบปลอกเล็กน้อย
+    x_top = np.linspace(stir_off + 12, b - stir_off - 12, n_top) if n_top > 1 else [b/2]
     
-    # เส้นชี้ระบุเหล็กบน
-    ax.annotate(f"{n_top}-DB{int(db_top)}", xy=(x_top[0], bar_y_top), xytext=(-b*0.4, h + h*0.05),
-                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=-0.1", color='black'),
-                fontsize=11, fontweight='bold', color='#d30000')
+    for x in x_top:
+        ax.add_patch(patches.Circle((x, y_top), db_top/2 + 1, color='#d30000', zorder=10))
+    
+    # เส้นชี้เหล็กบน (ชี้ออกด้านซ้าย)
+    ax.annotate(f"{n_top}-DB{int(db_top)}", xy=(x_top[0], y_top), xytext=(-b*0.35, h * 0.9),
+                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.1", color='#d30000'),
+                fontsize=10, fontweight='bold', color='#d30000', ha='right')
 
-    # 4. วาดเหล็กเมนล่าง (Bottom Bars) และใส่ Label
+    # 4. เหล็กล่าง (Bottom Bars)
     n_bot = int(res['bot']['n'])
     db_bot = float(res['bot_db'])
-    bar_y_bot = stir_offset + 10
-    if n_bot > 1:
-        x_bot = np.linspace(stir_offset + 12, b - stir_offset - 12, n_bot)
-    else:
-        x_bot = [b/2]
-        
-    for x in x_bot:
-        ax.add_patch(patches.Circle((x, bar_y_bot), db_bot/2 + 2, color='#008c00', zorder=10))
-        
-    # เส้นชี้ระบุเหล็กล่าง
-    ax.annotate(f"{n_bot}-DB{int(db_bot)}", xy=(x_bot[-1], bar_y_bot), xytext=(b*0.8, -h*0.15),
-                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=-0.1", color='black'),
-                fontsize=11, fontweight='bold', color='#008c00')
-
-    # 5. ใส่หัวข้อและเหล็กปลอก
-    ax.text(b/2, h + h*0.18, f"SECTION {int(b)}x{int(h)} mm", ha='center', fontweight='bold', fontsize=12)
-    ax.text(b/2, -h*0.25, f"Stirrup: RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
-            ha='center', color='#2c3e50', fontsize=10, bbox=dict(facecolor='white', edgecolor='#7f8c8d', alpha=0.8))
+    y_bot = stir_off + (db_bot/2) + 2 # ขยับขึ้นมาจากขอบปลอกเล็กน้อย
+    x_bot = np.linspace(stir_off + 12, b - stir_off - 12, n_bot) if n_bot > 1 else [b/2]
     
-    # ปรับแต่งสัดส่วนและขอบเขตให้โชว์ Label ครบ (ไม่โดนตัด)
+    for x in x_bot:
+        ax.add_patch(patches.Circle((x, y_bot), db_bot/2 + 1, color='#008c00', zorder=10))
+        
+    # เส้นชี้เหล็กล่าง (ชี้ออกด้านขวา)
+    ax.annotate(f"{n_bot}-DB{int(db_bot)}", xy=(x_bot[-1], y_bot), xytext=(b*1.35, h * 0.1),
+                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.1", color='#008c00'),
+                fontsize=10, fontweight='bold', color='#008c00', ha='left')
+
+    # 5. ข้อความรายละเอียด (จัดให้อยู่ชิดรูปมากขึ้น)
+    ax.text(b/2, h + (h*0.08), f"SECTION {int(b)}x{int(h)}", ha='center', fontweight='bold', fontsize=11)
+    ax.text(b/2, - (h*0.12), f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
+            ha='center', color='#555', fontsize=9, style='italic')
+    
+    # --- ปรับแต่ง Viewport ให้สมดุล ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # ขยายขอบเขต (Viewport) ให้กว้างพอสำหรับ Leader lines
-    ax.set_xlim(-b*0.6, b*1.6)
-    ax.set_ylim(-h*0.4, h*1.4)
+    # ตั้งค่าขอบเขต (Margins) ให้พอดีกับเส้นชี้ ไม่เหลือที่ว่างสีขาวมากเกินไป
+    ax.set_xlim(-b*0.5, b*1.5) 
+    ax.set_ylim(-h*0.2, h*1.2)
     
     f = io.StringIO()
-    fig.savefig(f, format="svg", bbox_inches='tight', transparent=True)
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.05, transparent=True)
     svg_string = f.getvalue()
     plt.close(fig)
     return svg_string
