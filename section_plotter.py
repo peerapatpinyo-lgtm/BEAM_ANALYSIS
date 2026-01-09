@@ -7,7 +7,7 @@ import textwrap
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm):
     """
-    วาดรูปตัดยาวคาน พร้อมรายละเอียดเหล็กเสริมและเหล็กปลอก (Stirrups)
+    วาดรูปตัดยาวคาน พร้อมรายละเอียดเหล็กเสริมและเหล็กปลอก
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
@@ -88,9 +88,9 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         ax.text(mid, v_h + 80, "\n".join(t_labels), color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
         ax.text(mid, -120, "\n".join(reversed(b_labels)), color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
         
-        # --- ระบุรายละเอียดเหล็กปลอกในรูปตัดยาว ---
+        # --- เพิ่มรายละเอียดเหล็กปลอก (Long Section) ---
         ax.text(mid, v_h/2, f"STIRRUPS:\nRB{int(stir_db)} @ {stir_s/1000:.2f} m", 
-                color='#2c3e50', ha='center', va='center', fontsize=9, fontweight='bold', 
+                color='#34495e', ha='center', va='center', fontsize=9, fontweight='bold', 
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#34495e', lw=1, alpha=0.9))
         
         x_curr += span_L
@@ -107,7 +107,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน: แสดงรายละเอียด Stirrups พร้อมค่า Smax เทียบชัดเจน
+    วาดรูปตัดขวางคาน: เพิ่มรายละเอียด Stirrups เทียบกับ Smax ให้ชัดเจน
     """
     b, h = float(res.get('b', 200)), float(res.get('h', 400))
     cover = float(res.get('cover', 25))
@@ -127,11 +127,11 @@ def plot_cross_section(res):
     
     warnings = []
     
-    # --- คำนวณ Smax (Limit) ---
+    # --- ใหม่: คำนวณและแสดงผล Smax เทียบกับ Stirrup ที่เลือก ---
     s_max_limit = 0
     if stir_s:
         s_val = float(stir_s)
-        # d_eff ประมาณการ (h - cover - stir_db - ครึ่งหนึ่งของเหล็กหลัก)
+        # d ≈ h - cover - stir_db - (main_db/2) -> ใช้ค่าประมาณการ
         d_eff = h - cover - stir_db - 12 
         s_max_limit = min(600, d_eff / 2)
         if s_val > s_max_limit:
@@ -163,7 +163,7 @@ def plot_cross_section(res):
             for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
             curr_y_bot += (db + 25.0)
 
-    # 3. Warning Section (ไม่ย่อ คงเดิม)
+    # 3. Warning Section
     if warnings:
         warn_msg = "⚠️ WARNING: " + " | ".join(warnings)
         wrapped_warn = "\n".join(textwrap.wrap(warn_msg, width=45))
@@ -172,7 +172,7 @@ def plot_cross_section(res):
                 ha='center', va='top', 
                 bbox=dict(boxstyle="round,pad=0.4", fc='#d30000', ec='none'))
 
-    # 4. Label ข้อมูล (Cross Section)
+    # 4. Label เหล็กหลักและเหล็กปลอก (Cross Section)
     text_x = b/2 + 25
     top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
     bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
@@ -180,19 +180,17 @@ def plot_cross_section(res):
     ax.text(text_x, h/2 - 10, f"Top:\n{textwrap.fill(top_t, 18)}", color='#d30000', va='top', fontweight='bold', fontsize=9)
     ax.text(text_x, -h/2 + 10, f"Bot:\n{textwrap.fill(bot_t, 18)}", color='#008c00', va='bottom', fontweight='bold', fontsize=9)
     
-    # --- ส่วนการเทียบ Smax ที่เห็นชัดเจน ---
+    # --- ส่วนแสดงรายละเอียด Stirrup & Smax แบบเทียบชัดเจน ---
     if stir_s:
-        is_fail = float(stir_s) > s_max_limit
-        stir_color = '#d30000' if is_fail else '#2c3e50'
+        stir_color = '#d30000' if float(stir_s) > s_max_limit else '#34495e'
         stir_label = (
             f"Shear Reinforcement:\n"
             f"RB{int(stir_db)} @ {int(stir_s)} mm\n"
             f"-------------------\n"
-            f"Smax Limit: {int(s_max_limit)} mm\n"
-            f"Status: {'TOO WIDE' if is_fail else 'OK'}"
+            f"S_max Limit: {int(s_max_limit)} mm"
         )
         ax.text(text_x, 0, stir_label, color=stir_color, va='center', fontweight='bold', fontsize=9,
-                bbox=dict(boxstyle='round,pad=0.5', fc='#f8f9fa', ec=stir_color, lw=1.5))
+                bbox=dict(boxstyle='round,pad=0.5', fc='#f8f9fa', ec=stir_color, lw=1))
         
     ax.text(0, h/2 + 20, f"SECTION {int(b)}x{int(h)}", ha='center', va='bottom', fontweight='black', fontsize=11)
 
@@ -201,7 +199,7 @@ def plot_cross_section(res):
 
     lower_lim = y0 - (h * 0.5 if warnings else h * 0.2)
     upper_lim = h/2 + (h * 0.25)
-    ax.set_xlim(-b*0.8, b*2.4) # ขยายพื้นที่ขวาเพื่อไม่ให้ตัวหนังสือขาด
+    ax.set_xlim(-b*0.8, b*2.4) # ขยายขอบเขตขวาเพื่อแสดง Label เปรียบเทียบ
     ax.set_ylim(lower_lim, upper_lim) 
     
     f = io.StringIO()
