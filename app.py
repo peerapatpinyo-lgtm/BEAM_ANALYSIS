@@ -221,3 +221,36 @@ else:
         st.error(f"❌ **System Error:** {e}")
         st.info("รายละเอียด Error สำหรับการ Debug:")
         st.exception(e)
+
+# ... (Import bim_exporter at the top) ...
+import bim_exporter
+
+# ... (Inside the main logic, maybe after final_design_res is populated) ...
+
+# ================= SIDEBAR EXPORT SECTION =================
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("### 📤 BIM Export")
+    
+    if 'final_design_res' in locals() and final_design_res:
+        if st.button("🏗️ Prepare IFC Model"):
+            with st.spinner("Generating BIM Model (IFC4)..."):
+                # Call the generator
+                ifc_str = bim_exporter.generate_ifc_model(
+                    project_name="Gemini RC Beam Project",
+                    spans=spans,
+                    params=params,
+                    design_results=final_design_res
+                )
+                
+                # Create Download Button
+                st.download_button(
+                    label="💾 Download .IFC File",
+                    data=ifc_str,
+                    file_name="rc_beam_model.ifc",
+                    mime="application/x-step",
+                    help="Import this file into Revit, Tekla, or Navisworks"
+                )
+                st.success("BIM Model Ready!")
+    else:
+        st.info("Run Analysis first to enable export.")
