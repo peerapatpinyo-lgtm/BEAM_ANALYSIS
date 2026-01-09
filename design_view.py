@@ -2,11 +2,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
+import streamlit as st
 
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
     Creates a Textbook-style structural analysis plot.
-    Original Version: Includes internal unit conversion (/1000) for display.
+    Includes internal unit conversion (/1000) for display.
     """
     
     # --- Create Subplots ---
@@ -15,7 +16,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         shared_xaxes=True, 
         vertical_spacing=0.08,
         subplot_titles=(
-            "<b>1. Free Body Diagram</b>", 
+            "<b>1. Free Body Diagram (FBD)</b>", 
             "<b>2. Shear Force Diagram (SFD)</b>", 
             "<b>3. Bending Moment Diagram (BMD)</b>",
             "<b>4. Elastic Curve (Deflection)</b>"
@@ -24,7 +25,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     )
 
     # ==========================================
-    # ROW 1: LOAD MODEL
+    # ROW 1: LOAD MODEL (FREE BODY DIAGRAM)
     # ==========================================
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
@@ -58,17 +59,15 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     for l in load_iter:
         span_idx = int(l['span_index'])
         start_x = cum_dist[span_idx]
-        mag_kN = l['mag'] / 1000.0
+        mag_kN = l['mag'] / 1000.0 # แสดงผลเป็น kN
         
         if l['type'] == 'P':
-            # [FIXED POSITION] Use 'd_start'
             x_loc = start_x + float(l['d_start']) 
-            
             fig.add_annotation(
                 x=x_loc, y=0, ax=0, ay=-50,
                 xref="x1", yref="y1",
                 showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2, arrowcolor="#c0392b",
-                text=f"<b>P={mag_kN:.2f}</b>", yshift=5, row=1, col=1
+                text=f"<b>P={mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
             )
 
         elif l['type'] == 'U':
@@ -99,16 +98,16 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             )
 
     # ==========================================
-    # ROW 2: SHEAR FORCE
+    # ROW 2: SHEAR FORCE (SFD)
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
     fig.add_trace(go.Scatter(
         x=res_df['x'], y=res_df['shear']/1000, 
-        mode='lines', name='Shear', line=dict(color='#e74c3c', width=2),
+        mode='lines', name='Shear (kN)', line=dict(color='#e74c3c', width=2),
         fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
     ), row=2, col=1)
     
-    # Max/Min Shear Labels
+    # Label Max/Min Shear
     v_max = res_df['shear'].max() / 1000
     v_min = res_df['shear'].min() / 1000
     for val in [v_max, v_min]:
@@ -116,21 +115,21 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             idx = (res_df['shear']/1000 - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
-                text=f"{val:.2f}", showarrow=False, yshift=10 if val>0 else -10,
-                font=dict(color='#e74c3c', size=10), row=2, col=1
+                text=f"<b>{val:.2f} kN</b>", showarrow=False, yshift=15 if val>0 else -15,
+                font=dict(color='#e74c3c', size=11), row=2, col=1
             )
 
     # ==========================================
-    # ROW 3: BENDING MOMENT
+    # ROW 3: BENDING MOMENT (BMD)
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
     fig.add_trace(go.Scatter(
         x=res_df['x'], y=res_df['moment']/1000, 
-        mode='lines', name='Moment', line=dict(color='#27ae60', width=2),
+        mode='lines', name='Moment (kNm)', line=dict(color='#27ae60', width=2),
         fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
     ), row=3, col=1)
 
-    # Max/Min Moment Labels
+    # Label Max/Min Moment
     m_max = res_df['moment'].max() / 1000
     m_min = res_df['moment'].min() / 1000
     for val in [m_max, m_min]:
@@ -138,18 +137,18 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             idx = (res_df['moment']/1000 - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
-                text=f"<b>{val:.2f}</b>", 
-                showarrow=True, arrowhead=1, ay=20 if val>0 else -20,
-                font=dict(color='#27ae60'), row=3, col=1
+                text=f"<b>{val:.2f} kN-m</b>", 
+                showarrow=True, arrowhead=1, ay=30 if val>0 else -30,
+                font=dict(color='#27ae60', size=11), row=3, col=1
             )
 
     # ==========================================
-    # ROW 4: DEFLECTION
+    # ROW 4: DEFLECTION (Elastic Curve)
     # ==========================================
     fig.add_hline(y=0, line_color="black", line_width=1, row=4, col=1)
     fig.add_trace(go.Scatter(
         x=res_df['x'], y=res_df['deflection'], 
-        mode='lines', name='Deflection', line=dict(color='#8e44ad', width=2)
+        mode='lines', name='Deflection (mm)', line=dict(color='#8e44ad', width=2)
     ), row=4, col=1)
     
     idx_max_def = res_df['deflection'].abs().idxmax()
@@ -157,31 +156,80 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     
     fig.add_annotation(
         x=res_df['x'].iloc[idx_max_def], y=max_def_val,
-        text=f"<b>Max: {max_def_val:.3f} mm</b>",
+        text=f"<b>Max δ: {max_def_val:.3f} mm</b>",
         showarrow=True, arrowhead=1, 
-        ay=30 if max_def_val < 0 else -30,
-        font=dict(color='#8e44ad'), row=4, col=1
+        ay=40 if max_def_val < 0 else -40,
+        font=dict(color='#8e44ad', size=11), row=4, col=1
     )
 
     # ==========================================
-    # LAYOUT
+    # LAYOUT & STYLING
     # ==========================================
     for x_pos in cum_dist:
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
     fig.update_layout(
-        title="Structural Analysis Results",
-        height=900, 
+        title="<b>Structural Analysis & Design Forces</b>",
+        height=950, 
         showlegend=False, 
         template="plotly_white", 
         hovermode="x unified",
-        margin=dict(t=50, b=60, l=60, r=20)
+        margin=dict(t=80, b=60, l=60, r=20)
     )
     
     fig.update_yaxes(visible=False, range=[-0.5, 0.8], row=1, col=1)
     fig.update_yaxes(title_text="V (kN)", showgrid=True, row=2, col=1)
-    fig.update_yaxes(title_text="M (kNm)", autorange="reversed", showgrid=True, row=3, col=1)
+    # BMD: นิยมวาดโมเมนต์บวกด้านล่าง (autorange='reversed')
+    fig.update_yaxes(title_text="M (kN-m)", autorange="reversed", showgrid=True, row=3, col=1)
     fig.update_yaxes(title_text="δ (mm)", showgrid=True, zeroline=True, row=4, col=1)
-    fig.update_xaxes(title_text="Distance x (m)", row=4, col=1)
+    fig.update_xaxes(title_text="Beam Length, x (m)", row=4, col=1)
 
     return fig
+
+def display_design_comparison(mu_pos, mu_neg, vu, design_res):
+    """
+    NEW: Dashboard สำหรับเปรียบเทียบค่าดีไซน์ Mu vs PhiMn และ Vu vs PhiVn
+    แบบ Interactive พร้อมหน่วยครบถ้วน
+    """
+    st.markdown("---")
+    st.subheader("🛠 Interactive RC Design Check")
+    
+    # ดึงค่าจาก Span แรกเป็นตัวอย่าง (หรือวน Loop ตามจำนวน Span)
+    # ในที่นี้สมมติค่า Mu_pos, Mu_neg, Vu เป็นค่าสูงสุดที่เกิดในคาน
+    
+    c1, c2, c3 = st.columns(3)
+    
+    with c1:
+        st.markdown("**Flexure Check (Positive)**")
+        phi_mn_pos = design_res.get('phi_Mn_pos', 0.0)
+        st.write(f"Demand $M_u^+$: `{mu_pos:.2f}` kN-m")
+        st.write(f"Capacity $\phi M_n^+$: `{phi_mn_pos:.2f}` kN-m")
+        if phi_mn_pos >= mu_pos:
+            st.success("✅ PASS")
+        else:
+            st.error("❌ FAIL")
+
+    with c2:
+        st.markdown("**Flexure Check (Negative)**")
+        phi_mn_neg = design_res.get('phi_Mn_neg', 0.0)
+        st.write(f"Demand $M_u^-$: `{abs(mu_neg):.2f}` kN-m")
+        st.write(f"Capacity $\phi M_n^-$: `{phi_mn_neg:.2f}` kN-m")
+        if phi_mn_neg >= abs(mu_neg):
+            st.success("✅ PASS")
+        else:
+            st.error("❌ FAIL")
+
+    with c3:
+        st.markdown("**Shear Check**")
+        phi_vn = design_res.get('phi_Vn', 0.0)
+        st.write(f"Demand $V_u$: `{vu:.2f}` kN")
+        st.write(f"Capacity $\phi V_n$: `{phi_vn:.2f}` kN")
+        if phi_vn >= vu:
+            st.success("✅ PASS")
+        else:
+            st.error("❌ FAIL")
+            
+    # รายละเอียดเหล็กเสริม
+    st.info(f"💡 **Rebar Info:** Top {design_res['top_n']}DB{design_res['top_db']} | "
+            f"Bot {design_res['bot_n']}DB{design_res['bot_db']} | "
+            f"Stirrup RB{design_res['stir_db']}@{design_res['stir_spacing']} mm")
