@@ -6,18 +6,14 @@ def get_centroid_and_d(layers, h, cover, stir_db):
     """
     คำนวณจุดศูนย์ถ่วงของกลุ่มเหล็กเสริม (Centroid) และ Effective Depth (d)
     layers: list ของ dict เช่น [{'n': 3, 'db': 20}, {'n': 2, 'db': 20}]
-    h: ความลึกคาน (mm)
-    cover: ระยะหุ้ม (mm)
-    stir_db: ขนาดเหล็กปลอก (mm)
     """
     if not layers:
         return 0.0, 0.0, 0.0
     
     total_area = 0.0
     sum_ay = 0.0
-    vertical_spacing = 25.0 # ระยะห่างขั้นต่ำระหว่างชั้นเหล็ก (ACI: 25mm หรือ 1db)
+    vertical_spacing = 25.0 
     
-    # เริ่มวางจากชั้นล่างสุดขึ้นมา (สำหรับเหล็กรับแรงดึงบวก)
     current_y_from_bottom = cover + stir_db
     
     for layer in layers:
@@ -26,19 +22,17 @@ def get_centroid_and_d(layers, h, cover, stir_db):
         if n <= 0: continue
         
         area = n * (np.pi * (db/2)**2)
-        # ระยะจากขอบล่างถึงกึ่งกลางเหล็กชั้นนั้นๆ
         y_center = current_y_from_bottom + (db/2)
         
         total_area += area
         sum_ay += (area * y_center)
         
-        # ปรับระดับความสูงสำหรับชั้นถัดไป (ขอบบนเหล็กเดิม + spacing + ครึ่งหนึ่งของเหล็กใหม่)
         current_y_from_bottom += db + vertical_spacing
         
     if total_area == 0:
         return 0.0, 0.0, 0.0
         
-    y_bar = sum_ay / total_area # ระยะ centroid จากขอบล่าง
+    y_bar = sum_ay / total_area 
     d_eff = h - y_bar
     
     return float(d_eff), float(total_area), float(y_bar)
@@ -46,41 +40,32 @@ def get_centroid_and_d(layers, h, cover, stir_db):
 def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     """
     Calculate Required Steel Area based on ACI 318
-    MUST RETURN EXACTLY 3 VALUES: (as_req, rho, is_fail)
     """
-    # 1. จัดการกรณี Moment เป็น 0 หรือ d_eff ใช้งานไม่ได้
     if Mu_kNm == 0 or d_eff_mm <= 0: 
         return 0.0, 0.0, False
         
-    Mu = abs(Mu_kNm) * 1e6 # หน่วย N-mm
+    Mu = abs(Mu_kNm) * 1e6 
     phi = 0.9 
     
-    # 2. คำนวณ Rn และตรวจสอบหน้าตัด
     Rn = Mu / (phi * b_mm * d_eff_mm**2)
     term_inside = 1 - (2 * Rn) / (0.85 * fc)
     
-    # 3. จัดการกรณีหน้าตัดเล็กเกินไป (Section Fail)
     if term_inside < 0:
         return 0.0, 0.0, True 
 
-    # 4. คำนวณพื้นที่เหล็ก
     rho = (0.85 * fc / fy) * (1 - np.sqrt(term_inside))
     as_req_calc = rho * b_mm * d_eff_mm
     
-    # 5. พื้นที่เหล็กขั้นต่ำ (As_min)
     as_min = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm, (1.4 / fy) * b_mm * d_eff_mm)
     
     as_final = max(as_req_calc, as_min)
     
-    # ส่งคืน 3 ค่าตามที่ app.py ต้องการเป๊ะๆ
     return float(as_final), float(rho), False
 
 def get_phi_Mn_details_multi(layers, d_eff, b, h, fc, fy):
     """
     Calculate Moment Capacity (Phi Mn) สำหรับเหล็กหลายชั้น
-    MUST RETURN EXACTLY 6 VALUES: (phi_Mn, Ast, a, Mn, c, strain_t)
     """
-    # หาพื้นที่เหล็กทั้งหมดจากทุกลเยอร์
     Ast = sum([l['n'] * (np.pi * (l['db']/2)**2) for l in layers])
     
     if Ast == 0 or d_eff <= 0: 
@@ -90,15 +75,11 @@ def get_phi_Mn_details_multi(layers, d_eff, b, h, fc, fy):
     beta1 = get_beta1(fc)
     c = a / beta1
     
-    # ตรวจสอบความลึก block
     if a >= d_eff: 
         return 0.0, float(Ast), float(a), 0.0, float(c), -1.0 
 
-    # คำนวณ Strain (ใช้ d ของชั้นที่ไกลที่สุดจากขอบกำลังอัด ตาม ACI เพื่อเช็ค Ductility)
-    # แต่ในที่นี้เพื่อความง่ายและปลอดภัย จะใช้ d_eff จาก centroid
     strain_t = 0.003 * (d_eff - c) / c if c > 0 else 999.0 
 
-    # หาค่า Phi (Strength Reduction Factor)
     if strain_t >= 0.005:
         phi = 0.90
     elif strain_t <= 0.002:
@@ -107,20 +88,19 @@ def get_phi_Mn_details_multi(layers, d_eff, b, h, fc, fy):
         phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
     Mn = Ast * fy * (d_eff - a/2)
-    phi_Mn = phi * Mn / 1e6 # kN-m
+    phi_Mn = phi * Mn / 1e6 
     
     return float(phi_Mn), float(Ast), float(a), float(Mn), float(c), float(strain_t)
 
 def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
     """
     Check Shear Capacity
-    MUST RETURN EXACTLY 6 VALUES: (status, phi_Vn, phi_Vc, phi_Vs, Vc, Vs)
     """
     if d <= 0: 
         return "FAIL (Invalid d)", 0.0, 0.0, 0.0, 0.0, 0.0
     
-    Vu = abs(Vu_kN) * 1000 # N
-    phi = 0.75 # ACI Shear
+    Vu = abs(Vu_kN) * 1000 
+    phi = 0.75 
     
     Vc = 0.17 * np.sqrt(fc) * b * d
     phi_Vc = phi * Vc
@@ -130,7 +110,7 @@ def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
     Vs = (Av * fy * d) / s
     phi_Vs = phi * Vs
     
-    phi_Vn = (phi_Vc + phi_Vs) / 1000 # kN
+    phi_Vn = (phi_Vc + phi_Vs) / 1000 
     
     is_ok = (phi_Vn * 1000) >= Vu
     
@@ -141,7 +121,71 @@ def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
 
     return status, float(phi_Vn), float(phi_Vc/1000), float(phi_Vs/1000), float(Vc), float(Vs)
 
-# คงฟังก์ชันเดิมไว้เพื่อความ Backward Compatible สำหรับการเรียกแบบชั้นเดียว
-def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
-    layers = [{'n': n, 'db': db}]
-    return get_phi_Mn_details_multi(layers, d_eff, b, 0, fc, fy)
+def check_serviceability(Ma_kNm, delta_elastic_mm, b, h, d_eff, Ast_bot, Ast_top, fc, Es=200000):
+    """
+    คำนวณ Long-term Deflection ตาม ACI 318-19 (Bischoff's Formula)
+    Must return: (delta_immediate, delta_longterm, Ie, Icr, lambda_delta)
+    """
+    if Ma_kNm == 0:
+        return 0.0, 0.0, 0.0, 0.0, 0.0
+
+    Ma = abs(Ma_kNm) * 1e6 # N-mm
+    Ec = 4700 * np.sqrt(fc) # MPa
+    n = Es / Ec # Modular Ratio
+    
+    # 1. Calculate Gross Inertia (Ig)
+    Ig = (b * h**3) / 12
+    yt = h / 2
+    
+    # 2. Calculate Cracking Moment (Mcr) - ACI Eq. 24.2.3.5
+    fr = 0.62 * np.sqrt(fc) # Modulus of Rupture
+    Mcr = (fr * Ig) / yt
+    
+    # 3. Calculate Cracked Inertia (Icr) using Transformed Section
+    # หาตำแหน่งแกนสะเทิน (x) จากสมการกำลังสอง: (b/2)x^2 + nAs'(x-d') - nAs(d-x) = 0
+    # เพื่อความง่าย (Simplify) เราจะคิดเฉพาะเหล็กรับแรงดึง (Singly Reinforced) สำหรับ Icr
+    # เพราะผลของเหล็กรับแรงอัดต่อ Icr มีน้อย แต่มีผลมากต่อ Long-term multiplier
+    
+    rho = Ast_bot / (b * d_eff)
+    k = np.sqrt(2*rho*n + (rho*n)**2) - (rho*n)
+    kd = k * d_eff
+    
+    Icr = (b * kd**3) / 3 + n * Ast_bot * (d_eff - kd)**2
+    
+    # 4. Calculate Effective Inertia (Ie) - ACI 318-19 (Bischoff's Formula) Eq. 24.2.3.5b
+    # ถ้า Ma <= (2/3)Mcr ให้ใช้ Ig
+    # ถ้า Ma > (2/3)Mcr ให้ใช้สูตร Bischoff
+    
+    limit_Mcr = (2/3) * Mcr
+    
+    if Ma <= limit_Mcr:
+        Ie = Ig
+    else:
+        # Bischoff's Formula
+        term = (limit_Mcr / Ma)**2
+        denom = 1 - term * (1 - (Icr / Ig))
+        Ie = Icr / denom
+        
+    # Limit Ie must not exceed Ig
+    Ie = min(Ie, Ig)
+    
+    # 5. Calculate Immediate Deflection (Adjusted for Stiffness)
+    # delta_elastic มาจาก Solver ที่ใช้ Stiffness E*I (โดยที่ I อาจจะเป็น Ig)
+    # เราต้องปรับสัดส่วน: delta_real = delta_elastic * (Ig / Ie)
+    # สมมติว่า Solver ใช้ Ig ในการคำนวณ (ซึ่งเป็นปกติของ Simple Solver)
+    
+    delta_immediate = delta_elastic_mm * (Ig / Ie)
+    
+    # 6. Long-term Deflection Multiplier (ACI Table 24.2.4.1.3)
+    # Lambda = Xi / (1 + 50*rho')
+    # Xi = 2.0 (for duration > 5 years)
+    
+    xi = 2.0
+    # rho' = Ast_top / (b * d) -> Compression steel at mid-span
+    rho_prime = Ast_top / (b * d_eff) if d_eff > 0 else 0
+    
+    lambda_delta = xi / (1 + 50 * rho_prime)
+    
+    delta_longterm = delta_immediate + (lambda_delta * delta_immediate)
+    
+    return float(delta_immediate), float(delta_longterm), float(Ie), float(Icr), float(lambda_delta)
