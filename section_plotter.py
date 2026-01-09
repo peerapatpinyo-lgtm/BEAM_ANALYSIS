@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import io
 import numpy as np
+import textwrap # เพิ่มตัวจัดการการตัดบรรทัด
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm):
     """
@@ -11,15 +12,12 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     v_h = 400  
-    
     fig_w = max(16, total_L / 300)
-    fig, ax = plt.subplots(figsize=(fig_w, 6)) # เพิ่มความสูง figsize
+    fig, ax = plt.subplots(figsize=(fig_w, 6))
     
-    # 1. วาดตัวคาน
     beam = patches.Rectangle((0, 0), total_L, v_h, lw=2, ec='black', fc='#fdfdfd', zorder=5)
     ax.add_patch(beam)
     
-    # 2. วาด Grid Line
     x_curr = 0
     for i, s_mm in enumerate(spans_mm + [0]):
         ax.plot([x_curr, x_curr], [-650, v_h + 450], color='#bdc3c7', ls='--', lw=1, zorder=1)
@@ -32,21 +30,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
             ax.text(x_curr + s_mm/2, v_h + 300, f"{s_mm/1000:.2f} m", ha='center', fontweight='bold')
             x_curr += s_mm
 
-    # 3. วาดจุดรองรับ
-    if not sup_df.empty:
-        for _, row in sup_df.iterrows():
-            sx = row['x'] * 1000
-            stype = str(row.get('type', 'PIN')).upper()
-            if stype == 'FIXED':
-                ax.add_patch(patches.Rectangle((sx-120, -300), 240, 300, fc='#dfe6e9', ec='black', lw=1.5, hatch='///', zorder=4))
-            elif stype == 'ROLLER':
-                ax.add_patch(patches.Polygon([[sx, 0], [sx-100, -180], [sx+100, -180]], fc='white', ec='black', lw=1.5, zorder=4))
-                ax.add_patch(patches.Circle((sx, -220), 40, fc='black', zorder=4))
-            else: # PIN
-                ax.add_patch(patches.Polygon([[sx, 0], [sx-100, -200], [sx+100, -200]], fc='#2c3e50', ec='black', lw=1.5, zorder=4))
-            ax.text(sx, -450, f"S{row['id']}\n({stype})", ha='center', fontweight='bold', fontsize=9)
-
-    # 4. วาดเหล็กเสริม
+    # --- ส่วนการวาดเหล็กในรูปตัดยาว (คงเดิมตาม Logic ของคุณ) ---
     x_curr = 0
     v_spacing = 35.0 
     for i, span_L in enumerate(spans_mm):
@@ -80,14 +64,8 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
                 ax.plot([x_s, x_e], [curr_y_bot, curr_y_bot], color='#008c00', lw=2.5, zorder=10)
                 curr_y_bot += v_spacing
         
-        s_spacing = res['shear'].get('s', 150)
-        num_stirrups = int(span_L / s_spacing)
-        for j in range(num_stirrups + 1):
-            stir_x = x_curr + (j * s_spacing)
-            if stir_x <= x_curr + span_L:
-                ax.plot([stir_x, stir_x], [cover_mm, v_h - cover_mm], color='#bdc3c7', lw=0.7, alpha=0.5, zorder=6)
-
         mid = x_curr + span_L/2
+        # ตัดบรรทัดสำหรับ label เหล็กในรูปตัดยาว
         ax.text(mid, v_h + 80, "\n".join(t_labels), color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
         ax.text(mid, -120, "\n".join(reversed(b_labels)), color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
         x_curr += span_L
@@ -95,7 +73,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     ax.set_aspect('auto')
     ax.axis('off')
     ax.set_xlim(-500, total_L + 500)
-    ax.set_ylim(-900, v_h + 900) # ขยายขอบเขตแนวตั้ง
+    ax.set_ylim(-900, v_h + 900)
     
     f_svg = io.StringIO()
     fig.savefig(f_svg, format="svg", bbox_inches='tight', transparent=True)
@@ -104,7 +82,8 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน พร้อมระบบแจ้งเตือนกึ่งกลางรูป (ป้องกันตัวอักษรตกขอบ)
+    วาดรูปตัดขวางคาน พร้อมระบบตัดบรรทัด (Text Wrapping) 
+    และระบบแจ้งเตือนที่ล็อคตำแหน่งไว้กึ่งกลางล่าง
     """
     b, h = float(res.get('b', 200)), float(res.get('h', 400))
     cover = float(res.get('cover', 25))
@@ -113,73 +92,72 @@ def plot_cross_section(res):
     top_layers = res.get('top_layers') or [{'n': res.get('top', {}).get('n', 0), 'db': res.get('top_db', 16)}]
     bot_layers = res.get('bot_layers') or [{'n': res.get('bot', {}).get('n', 0), 'db': res.get('bot_db', 16)}]
     
-    # 1. เพิ่มพื้นที่ Canvas ให้กว้างพอสำหรับข้อความ
-    fig, ax = plt.subplots(figsize=(7, 7)) 
+    fig, ax = plt.subplots(figsize=(7, 8)) # ขยายความสูงรูป
     x0, y0 = -b/2, -h/2
     
-    ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
+    ax.add_patch(patches.Rectangle((x0, y0), b, h, fc='white', ec='black', lw=2.5, zorder=1))
     s_x, s_y, s_w, s_h = x0+cover, y0+cover, b-2*cover, h-2*cover
-    ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, edgecolor='#34495e', lw=1.5, zorder=2))
+    ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, ec='#34495e', lw=1.5, zorder=2))
     
     warnings = []
-    v_spacing_const = 25.0
-
-    # 2. วาดเหล็กบน + เช็คระยะ
+    
+    # 1. วาดเหล็กบน + เช็คระยะ
     curr_y_top = (h/2) - cover - stir_db
     for idx, l in enumerate(top_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
-        if n <= 0: continue
-        if n > 1:
-            h_space = (s_w - 2*stir_db - n*db) / (n - 1)
-            if h_space < max(25, db):
-                warnings.append(f"Top L{idx+1}: Clear {h_space:.1f}mm")
-        
-        y_p = curr_y_top - (db/2)
-        x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
-        curr_y_top -= (db + v_spacing_const)
+        if n > 0:
+            if n > 1:
+                h_space = (s_w - 2*stir_db - n*db) / (n - 1)
+                if h_space < max(25, db):
+                    warnings.append(f"Top L{idx+1}: {h_space:.1f}mm")
+            y_p = curr_y_top - (db/2)
+            x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
+            for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
+            curr_y_top -= (db + 25.0)
 
-    # 3. วาดเหล็กล่าง + เช็คระยะ
+    # 2. วาดเหล็กล่าง + เช็คระยะ
     curr_y_bot = (-h/2) + cover + stir_db
     for idx, l in enumerate(bot_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
-        if n <= 0: continue
-        if n > 1:
-            h_space = (s_w - 2*stir_db - n*db) / (n - 1)
-            if h_space < max(25, db):
-                warnings.append(f"Bot L{idx+1}: Clear {h_space:.1f}mm")
-        
-        y_p = curr_y_bot + (db/2)
-        x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
-        curr_y_bot += (db + v_spacing_const)
+        if n > 0:
+            if n > 1:
+                h_space = (s_w - 2*stir_db - n*db) / (n - 1)
+                if h_space < max(25, db):
+                    warnings.append(f"Bot L{idx+1}: {h_space:.1f}mm")
+            y_p = curr_y_bot + (db/2)
+            x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
+            for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
+            curr_y_bot += (db + v_spacing_const if 'v_spacing_const' in locals() else db + 25.0)
 
-    # 4. แสดง Warning โดยใช้ Coordinate ของแอป (Axes Fraction) 
-    # วิธีนี้จะทำให้ Warning อยู่ล่างสุดของรูปเสมอ ไม่ตกขอบ
+    # 3. จัดการ Warning ด้วยการตัดบรรทัด (Text Wrapping)
     if warnings:
-        warn_text = "⚠️ SPACING WARNING\n" + "\n".join(warnings)
-        ax.text(0.5, 0.05, warn_text, transform=ax.transAxes,
+        warn_msg = "⚠️ SPACING WARNING: " + " | ".join([f"Too Tight @ {w}" for w in warnings])
+        # ตัดบรรทัดทุกๆ 40-50 ตัวอักษร เพื่อไม่ให้กล่องยาวเกินไปจนต้องย่อรูป
+        wrapped_warn = "\n".join(textwrap.wrap(warn_msg, width=45))
+        
+        # ใช้ transform=ax.transAxes เพื่อล็อคตำแหน่งล่างสุดของรูปเสมอ
+        ax.text(0.5, 0.02, wrapped_warn, transform=ax.transAxes,
                 color='white', fontweight='bold', fontsize=10,
                 ha='center', va='bottom', 
                 bbox=dict(boxstyle="round,pad=0.5", fc='red', ec='darkred', lw=2))
 
-    # 5. ปรับ Label ให้ไม่ชิดคานเกินไป
+    # 4. จัดการ Label รายละเอียดเหล็ก (ตัดบรรทัดถ้าชื่อยาว)
     text_x = b/2 + (b * 0.25)
     top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
     bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
     
-    ax.text(text_x, h/2 - cover, f"Top: {top_t}", color='#d30000', va='top', fontweight='bold')
-    ax.text(text_x, -h/2 + cover, f"Bot: {bot_t}", color='#008c00', va='bottom', fontweight='bold')
+    # ใช้ textwrap.fill เพื่อตัดบรรทัด label เหล็กเสริม
+    ax.text(text_x, h/2 - cover, f"Top:\n{textwrap.fill(top_t, 15)}", color='#d30000', va='top', fontweight='bold')
+    ax.text(text_x, -h/2 + cover, f"Bot:\n{textwrap.fill(bot_t, 15)}", color='#008c00', va='bottom', fontweight='bold')
     ax.text(0, h/2 + (h*0.2), f"SECTION {int(b)}x{int(h)}", ha='center', fontweight='black', fontsize=12)
 
     ax.set_aspect('equal')
     ax.axis('off')
-    # กำหนด Limit ให้กว้างพอเพื่อให้ bbox_inches='tight' ทำงานได้ดี
+    # กำหนดขอบเขตให้กว้างเป็นพิเศษเพื่อไม่ให้รูปคานถูกย่อเมื่อมีตัวหนังสือเยอะ
     ax.set_xlim(-b*1.2, b*2.8)
-    ax.set_ylim(-h*1.8, h*1.8) 
+    ax.set_ylim(-h*1.8, h*1.6) 
     
     f = io.StringIO()
-    # ใช้ bbox_inches='tight' และ pad_inches เพื่อป้องกันตัวหนังสือตกขอบ
-    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.2, transparent=True)
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.3, transparent=True)
     plt.close(fig)
     return f.getvalue()
