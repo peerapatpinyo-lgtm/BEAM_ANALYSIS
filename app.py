@@ -91,12 +91,14 @@ else:
                         with ct2: t_qty = st.number_input("Qty", 2, 20, 2, key=f"tn_{i}")
                         with ct3: t_lay = st.selectbox("Layers", [1, 2, 3], index=0, key=f"tl_{i}")
                         
+                        # Reference d calculation
                         ref_s_db = 9 
                         d_t = h_mm - (cover_mm + ref_s_db + t_db/2 + (t_lay-1)*25)
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
                         as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
                         phi_Mn_t, as_prov_t, _, _, _, _ = rc_design_engine.get_phi_Mn_details(t_qty, t_db, d_t, b_mm, fc, fy)
 
+                        # --- ตาราง Top Steel พร้อมหน่วยครบถ้วน ---
                         st.markdown(f"""
 | Top Steel Analysis | Calc $A_s$ ($M_u$) | Min $A_{{s,min}}$ | Provided $A_s$ | Status |
 | :--- | :--- | :--- | :--- | :--- |
@@ -115,6 +117,7 @@ else:
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
                         phi_Mn_b, as_prov_b, _, _, _, _ = rc_design_engine.get_phi_Mn_details(b_qty, b_db, d_b, b_mm, fc, fy)
 
+                        # --- ตาราง Bottom Steel พร้อมหน่วยครบถ้วน ---
                         st.markdown(f"""
 | Bottom Steel Analysis | Calc $A_s$ ($M_u$) | Min $A_{{s,min}}$ | Provided $A_s$ | Status |
 | :--- | :--- | :--- | :--- | :--- |
