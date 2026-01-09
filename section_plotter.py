@@ -4,14 +4,15 @@ import io
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm):
     """
-    วาดแบบขยายคานพร้อมเหล็กปลอก และส่งคืนทั้ง SVG String และ PNG Bytes
+    วาดแบบขยายคานพร้อมเหล็กปลอก (Stirrups)
+    คืนค่าเป็น (svg_string, png_bytes)
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     v_h = 350 
     
-    # กำหนดขนาดรูปภาพตามความยาวคาน
-    fig, ax = plt.subplots(figsize=(max(16, total_L/350), 4.5))
+    # สร้าง Figure แบบ High DPI
+    fig, ax = plt.subplots(figsize=(max(16, total_L/350), 4.5), dpi=300)
     
     # 1. วาดคอนกรีต
     ax.add_patch(patches.Rectangle((0, 0), total_L, v_h, lw=2, ec='black', fc='white', zorder=2))
@@ -27,12 +28,12 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
             sx = curr_x + (j * s_spacing)
             if sx <= curr_x + span_L:
                 ax.plot([sx, sx], [cover_mm, v_h - cover_mm], 
-                        color='#bdc3c7', lw=0.8, ls='-', zorder=3)
+                        color='#dfe6e9', lw=1.0, ls='-', zorder=3)
         
         # วาดเหล็กเมน (บน/ล่าง)
         y_t, y_b = v_h - cover_mm - 10, cover_mm + 10
         ax.plot([curr_x, curr_x + span_L], [y_t, y_t], color='#d30000', lw=3.5, zorder=10)
-        ax.plot([curr_x + 40, x_end := curr_x + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10)
+        ax.plot([curr_x + 40, curr_x + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10)
         
         # ป้ายบอกเหล็ก
         mid = curr_x + span_L/2
@@ -57,15 +58,14 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     ax.set_xlim(-500, total_L + 500)
     ax.set_ylim(-500, v_h + 600)
     
-    # --- 💎 ขั้นตอนสำคัญ: เตรียมข้อมูลส่งกลับ 2 รูปแบบ ---
-    # 1. สำหรับแสดงผลบนเว็บ (SVG)
+    # 1. ส่งออกเป็น SVG String (เพื่อแสดงผลบนเว็บให้ชัด)
     f_svg = io.StringIO()
     fig.savefig(f_svg, format="svg", bbox_inches='tight')
     svg_data = f_svg.getvalue()
     
-    # 2. สำหรับดาวน์โหลด (PNG)
+    # 2. ส่งออกเป็น PNG Bytes (เพื่อปุ่มดาวน์โหลด)
     f_png = io.BytesIO()
-    fig.savefig(f_png, format="png", dpi=300, bbox_inches='tight')
+    fig.savefig(f_png, format="png", bbox_inches='tight')
     png_bytes = f_png.getvalue()
     
     plt.close(fig)
