@@ -2,118 +2,88 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-# --- 📐 Engineering Visual Standards ---
-plt.rcParams['figure.dpi'] = 300           # บังคับความชัดระดับพิมพ์เขียว
-plt.rcParams['font.size'] = 10             # ขนาดฟอนต์มาตรฐาน
-plt.rcParams['font.weight'] = 'bold'       # ตัวหนาเพื่อความชัดเจน
-plt.rcParams['axes.linewidth'] = 1.5       # เส้นขอบภาพหนาขึ้น
+# --- 📐 Precision Settings (แก้ภาพฟุ้ง) ---
+plt.rcParams['path.simplify'] = True
+plt.rcParams['path.simplify_threshold'] = 1.0
+plt.rcParams['text.antialiased'] = True 
 
-C_BEAM = '#000000'
-C_TOP  = '#E31A1C' # แดงเข้ม (Top Rebar)
-C_BOT  = '#33A02C' # เขียวเข้ม (Bot Rebar)
-C_STIR = '#7F8C8D' # เทาเข้ม (Stirrup)
+C_CONC = '#000000' # ดำสนิท
+C_TOP  = '#FF0000' # แดงสด
+C_BOT  = '#008000' # เขียวเข้ม
+C_DIM  = '#2980b9' # สีฟ้าสำหรับเส้นบอกระยะ
 
-def _draw_advanced_support(ax, x, y_bottom, sup_type, sup_id):
-    """วาด Support แบบสัญลักษณ์ทางวิศวกรรมสากล (Sharp & Solid)"""
-    if sup_type.lower() == 'fixed':
-        # สัญลักษณ์การยึดแน่น (Hatch wall)
-        ax.add_patch(patches.Rectangle((x-120, y_bottom-400), 240, 400, fc='#BDC3C7', ec='black', lw=2, hatch='///'))
-    elif sup_type.lower() == 'roller':
-        # Roller: สามเหลี่ยม + ฐานวงกลม
-        pts = np.array([[x, y_bottom], [x-100, y_bottom-180], [x+100, y_bottom-180]])
-        ax.add_patch(patches.Polygon(pts, fc='white', ec='black', lw=2, zorder=10))
-        ax.add_patch(patches.Circle((x, y_bottom-220), 30, fc='black', zorder=11))
-    else: # Pin / Hinge
+def _draw_pro_support(ax, x, y_bottom, sup_type, sup_id):
+    """วาดสัญลักษณ์ Support พร้อมระบุชื่อ Type"""
+    t = sup_type.upper()
+    if t == 'FIXED':
+        ax.add_patch(patches.Rectangle((x-120, y_bottom-400), 240, 400, fc='#dfe6e9', ec='black', lw=2, hatch='///'))
+    elif t == 'ROLLER':
         pts = np.array([[x, y_bottom], [x-100, y_bottom-200], [x+100, y_bottom-200]])
-        ax.add_patch(patches.Polygon(pts, fc='#2C3E50', ec='black', lw=2, zorder=10))
-    
-    ax.annotate(f"S{sup_id}", xy=(x, y_bottom-450), ha='center', va='top', fontsize=12, fontweight='black', color='blue')
+        ax.add_patch(patches.Polygon(pts, fc='white', ec='black', lw=2))
+        ax.add_patch(patches.Circle((x, y_bottom-230), 30, fc='black'))
+    else: # PIN
+        pts = np.array([[x, y_bottom], [x-100, y_bottom-200], [x+100, y_bottom-200]])
+        ax.add_patch(patches.Polygon(pts, fc='#2c3e50', ec='black', lw=2))
+        ax.plot([x-150, x+150], [-200, -200], color='black', lw=2)
+
+    # ระบุทั้ง ID และ TYPE
+    ax.text(x, y_bottom - 480, f"S{sup_id}: {t}", ha='center', fontweight='black', fontsize=11)
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """
-    วาดรูปตัดตามยาวระดับ Advanced Structural Detailing 
-    คานผอมเพรียว ตัวหนังสือคมชัดสูงสุด ไม่มีการทับซ้อน
-    """
+    """รูปตัดตามยาวฉบับวิศวกรมืออาชีพ: คมชัด บอกระยะ และระบุประเภท Support"""
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
-    v_h = 500  # บังคับความสูงคานให้เพรียวบาง (Thin-Beam Visualization)
+    v_h = 500 # ความสูงคานในรูป (เพรียวบาง)
     
-    # 1. ปรับขนาดรูปภาพตามความยาวคาน (Dynamic Scaling)
-    fig_w = max(18, total_L / 350)
-    fig, ax = plt.subplots(figsize=(fig_w, 4))
+    fig_w = max(20, total_L / 300)
+    fig, ax = plt.subplots(figsize=(fig_w, 5), dpi=300) # DPI 300 เพื่อความคมชัดสูงสุด
     
-    # 2. วาดตัวคาน (Beam Body) - แยกเลเยอร์ชัดเจน
-    ax.add_patch(patches.Rectangle((0, 0), total_L, v_h, lw=2.5, ec=C_BEAM, fc='white', zorder=2))
-    
-    # 3. วาด Grid Lines (Center-to-Center Line)
-    curr_x = 0
-    for i, span_L in enumerate(spans_mm + [0]):
-        ax.plot([curr_x, curr_x], [-600, v_h + 400], color='#BDC3C7', ls='-.', lw=1, zorder=1)
-        ax.annotate(chr(65+i), xy=(curr_x, v_h + 500), ha='center', va='center', 
-                    bbox=dict(boxstyle='circle', fc='white', ec='black', lw=1.5), fontsize=14)
-        if i < len(spans_mm): curr_x += spans_mm[i]
+    # 1. วาดคอนกรีตและเส้นบอกระยะหุ้ม (Dimension Line แนวตั้ง)
+    ax.add_patch(patches.Rectangle((0, 0), total_L, v_h, lw=2.5, ec=C_CONC, fc='white', zorder=2))
+    # เส้นบอกระยะหุ้ม (Covering) ที่หัวคาน
+    ax.annotate('', xy=(50, 0), xytext=(50, cover_mm), arrowprops=dict(arrowstyle='<->', color=C_DIM))
+    ax.text(60, cover_mm/2, f'cov.{cover_mm}', color=C_DIM, fontsize=8, va='center')
 
-    # 4. วาด Support
+    # 2. เส้นบอกระยะ Span (Dimension Lines แนวนอนด้านบน)
+    curr_x = 0
+    for s_mm in spans_mm:
+        ax.annotate('', xy=(curr_x, v_h + 300), xytext=(curr_x + s_mm, v_h + 300),
+                    arrowprops=dict(arrowstyle='<->', lw=1.5, color=C_DIM))
+        ax.text(curr_x + s_mm/2, v_h + 350, f"{s_mm/1000:.2f} m", ha='center', color=C_DIM, fontweight='bold')
+        curr_x += s_mm
+
+    # 3. Support และ Grid Lines
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
-            _draw_advanced_support(ax, row['x']*1000, 0, row.get('type', 'Pin'), row.get('id', ''))
+            sx = row['x'] * 1000
+            _draw_pro_support(ax, sx, 0, row.get('type', 'PIN'), row.get('id', ''))
+            # Grid line
+            ax.plot([sx, sx], [-600, v_h + 400], color='#bdc3c7', ls='--', lw=1, zorder=1)
 
-    # 5. วาดเหล็กเสริม (Reinforcement Layers)
-    y_t = v_h * 0.8  # Top Zone
-    y_b = v_h * 0.2  # Bottom Zone
-    
+    # 4. เหล็กเสริม (Reinforcement)
+    y_t, y_b = v_h * 0.85, v_h * 0.15
     x_curr = 0
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
         mid = x_curr + span_L/2
         
-        # เหล็กบน (Top Bar) พร้อมการวาด Hook ปลายคาน
-        ax.plot([x_curr, x_curr + span_L], [y_t, y_t], color=C_TOP, lw=4, zorder=20, solid_capstyle='round')
+        # วาดเส้นเหล็ก (หนาและคม)
+        ax.plot([x_curr, x_curr + span_L], [y_t, y_t], color=C_TOP, lw=4, zorder=10, solid_capstyle='butt')
+        ax.plot([x_curr + 30, x_curr + span_L - 30], [y_b, y_b], color=C_BOT, lw=4, zorder=10, solid_capstyle='butt')
         
-        # เหล็กล่าง (Bottom Bar)
-        ax.plot([x_curr + 40, x_curr + span_L - 40], [y_b, y_b], color=C_BOT, lw=4, zorder=20)
+        # ตัวหนังสือแบบ High-Contrast (ใช้ Bbox สีขาวตัดขอบ)
+        props = dict(boxstyle='round,pad=0.2', fc='white', ec='none', alpha=0.9)
+        ax.text(mid, v_h + 100, f"{int(res['neg']['n'])}-DB{int(res['top_db'])} (TOP)", 
+                color=C_TOP, ha='center', fontweight='black', fontsize=12, bbox=props)
+        ax.text(mid, y_b - 50, f"{int(res['pos']['n'])}-DB{int(res['bot_db'])} (BOT)", 
+                color=C_BOT, ha='center', va='top', fontweight='black', fontsize=11, bbox=props)
         
-        # --- การใส่ตัวหนังสือแบบ Annotation (ไม่แตกเมื่อซูม) ---
-        # เหล็กบน
-        ax.annotate(f"{int(res['neg']['n'])}-DB{int(res['top_db'])} (TOP)", xy=(mid, v_h + 80), 
-                    ha='center', va='bottom', fontsize=12, color=C_TOP, fontweight='black')
-        
-        # เหล็กล่าง (ระบุจำนวนเหล็กเสริมล่างตามที่คุณต้องการ)
-        ax.annotate(f"{int(res['pos']['n'])}-DB{int(res['bot_db'])} (BOT)", xy=(mid, y_b + 40), 
-                    ha='center', va='bottom', fontsize=11, color=C_BOT, fontweight='black')
-        
-        # เหล็กปลอก
-        ax.annotate(f"RB{int(res['stir_db'])} @ {int(res['shear']['s'])} mm", xy=(mid, -150), 
-                    ha='center', va='top', fontsize=10, color='#34495E', style='italic')
-
         x_curr += span_L
 
-    # 6. ตั้งค่ามุมมองและสเกล
-    ax.set_aspect('auto') # บังคับให้ยาวเพรียวตามแนวราบ
+    # 5. Final Layout
+    ax.set_aspect('auto')
     ax.axis('off')
-    ax.set_xlim(-800, total_L + 800)
-    ax.set_ylim(-900, v_h + 700)
-    
+    ax.set_xlim(-1000, total_L + 1000)
+    ax.set_ylim(-1000, v_h + 800)
     plt.tight_layout()
-    return fig
-
-def plot_section(b_m, h_m, cover_mm, n_top, n_bot, db_top, db_bot, title="SECTION"):
-    """หน้าตัดขวางความละเอียดสูง"""
-    b, h = b_m * 1000, h_m * 1000
-    fig, ax = plt.subplots(figsize=(4, 5))
-    ax.add_patch(patches.Rectangle((0, 0), b, h, lw=3, ec='black', fc='none', zorder=1))
-    
-    gap = cover_mm + 20
-    def _draw_bars(n, y, db, color):
-        if n <= 0: return
-        xs = np.linspace(gap, b - gap, int(n)) if n > 1 else [b/2]
-        for x in xs:
-            ax.add_patch(patches.Circle((x, y), db/2, fc=color, ec='black', lw=1, zorder=10))
-
-    _draw_bars(n_top, h - gap, db_top, C_TOP)
-    _draw_bars(n_bot, gap, db_bot, C_BOT)
-    
-    ax.set_title(title, fontweight='black', fontsize=14, pad=15)
-    ax.axis('equal')
-    ax.axis('off')
     return fig
