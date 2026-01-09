@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -211,10 +210,16 @@ else:
             
             if st.button("🔄 Generate Drawings", type="primary"):
                 try:
-                    st.write("**Longitudinal Section:**")
-                    fig_long = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, final_design_res[0]['cover'])
-                    st.pyplot(fig_long, use_container_width=True)
-                except Exception as e: st.error(f"Drawing Error: {e}")
+                    st.write("**Longitudinal Section (Vector Graphics):**")
+                    # 💎 แก้ไขจุดนี้: รับค่า SVG String และแสดงผลผ่าน HTML component
+                    svg_content = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, final_design_res[0]['cover'])
+                    st.components.v1.html(
+                        f'<div style="background-color: white; padding: 10px; border-radius: 5px; overflow-x: auto;">{svg_content}</div>',
+                        height=450,
+                        scrolling=True
+                    )
+                except Exception as e: 
+                    st.error(f"Drawing Error: {e}")
 
         # ================= TAB 3: DETAILED REPORT =================
         with tab3:
