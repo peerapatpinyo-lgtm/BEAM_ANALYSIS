@@ -85,7 +85,7 @@ else:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, key=f"cov_{i}")
 
                         # --- 1. TOP STEEL (Support) ---
-                        st.markdown("#### 🔼 Top Steel (Support)")
+                        st.markdown("#### 🔼 Top Reinforcement (Negative Moment)")
                         ct1, ct2, ct3 = st.columns([2, 2, 1])
                         with ct1: t_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
                         with ct2: t_qty = st.number_input("Qty", 2, 20, 2, key=f"tn_{i}")
@@ -97,16 +97,16 @@ else:
                         as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
                         phi_Mn_t, as_prov_t, _, _, _, _ = rc_design_engine.get_phi_Mn_details(t_qty, t_db, d_t, b_mm, fc, fy)
 
-                        # แก้ไขหัวตารางให้ถูกต้องและระบุหน่วยครบถ้วน
+                        # ตารางที่ปรับปรุงให้ดูง่ายขึ้น
                         st.markdown(f"""
-| Top Steel Analysis | Calc $A_s$ ($M_u$) | Min $A_{{s,min}}$ | Provided $A_s$ | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **Steel Area (mm²)** | {as_req_t:.0f} | {as_min_t:.0f} | **{as_prov_t:.0f}** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
-| **Capacity (kNm)** | $M_u$: {mu_neg:.1f} | - | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
+| **Analysis Category** | **Required** | **Minimum** | **Provided** | **Status** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Steel Area ($A_s$, mm²)** | {as_req_t:.0f} | {as_min_t:.0f} | **{as_prov_t:.0f}** | {"✅" if as_prov_t >= max(as_req_t, as_min_t) else "❌"} |
+| **Bending Capacity (kNm)** | $M_u$: {mu_neg:.1f} | --- | **$\phi M_n$: {phi_Mn_t:.1f}** | {"✅" if phi_Mn_t >= mu_neg else "❌"} |
 """)
 
                         # --- 2. BOTTOM STEEL (Mid-Span) ---
-                        st.markdown("#### 🔽 Bottom Steel (Mid-Span)")
+                        st.markdown("#### 🔽 Bottom Reinforcement (Positive Moment)")
                         cb1, cb2, cb3 = st.columns([2, 2, 1])
                         with cb1: b_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
                         with cb2: b_qty = st.number_input("Qty", 2, 20, 3, key=f"bn_{i}")
@@ -116,27 +116,26 @@ else:
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
                         phi_Mn_b, as_prov_b, _, _, _, _ = rc_design_engine.get_phi_Mn_details(b_qty, b_db, d_b, b_mm, fc, fy)
 
-                        # แก้ไขหัวตารางให้ถูกต้องและระบุหน่วยครบถ้วน
                         st.markdown(f"""
-| Bottom Steel Analysis | Calc $A_s$ ($M_u$) | Min $A_{{s,min}}$ | Provided $A_s$ | Status |
-| :--- | :--- | :--- | :--- | :--- |
-| **Steel Area (mm²)** | {as_req_b:.0f} | {as_min_t:.0f} | **{as_prov_b:.0f}** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
-| **Capacity (kNm)** | $M_u$: {mu_pos:.1f} | - | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
+| **Analysis Category** | **Required** | **Minimum** | **Provided** | **Status** |
+| :--- | :---: | :---: | :---: | :---: |
+| **Steel Area ($A_s$, mm²)** | {as_req_b:.0f} | {as_min_t:.0f} | **{as_prov_b:.0f}** | {"✅" if as_prov_b >= max(as_req_b, as_min_t) else "❌"} |
+| **Bending Capacity (kNm)** | $M_u$: {mu_pos:.1f} | --- | **$\phi M_n$: {phi_Mn_b:.1f}** | {"✅" if phi_Mn_b >= mu_pos else "❌"} |
 """)
 
                         # --- 3. SHEAR STIRRUPS ---
-                        st.markdown("#### 🌀 Shear Stirrups")
+                        st.markdown("#### 🌀 Shear Reinforcement (Stirrups)")
                         cs1, cs2 = st.columns(2)
                         with cs1: stir_db = st.selectbox("Stirrup Size (mm)", [6, 9, 12], index=1, key=f"sdb_final_{i}")
                         with cs2: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, key=f"ss_{i}")
                         
                         status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_b, fc, fy, stir_db, stir_s)
-                        if phi_Vn < vu_max: st.error(f"❌ **Shear Fail:** $\phi V_n$ {phi_Vn:.1f} < $V_u$ {vu_max:.1f} kN")
-                        else: st.success(f"✅ **Shear Pass:** $\phi V_n$ {phi_Vn:.1f} ≥ $V_u$ {vu_max:.1f} kN")
+                        if phi_Vn < vu_max: st.error(f"❌ **Shear Failure:** $\phi V_n$ {phi_Vn:.1f} < $V_u$ {vu_max:.1f} kN")
+                        else: st.success(f"✅ **Shear Capacity Passed:** $\phi V_n$ {phi_Vn:.1f} ≥ $V_u$ {vu_max:.1f} kN")
 
                     with col_draw:
                         cs_data = {'b': b_mm, 'h': h_mm, 'cover': cover_mm, 'top': {'n': t_qty, 'layers': t_lay}, 'top_db': t_db, 'bot': {'n': b_qty, 'layers': b_lay}, 'bot_db': b_db, 'stir_db': stir_db, 'shear': {'s': stir_s}}
-                        st.components.v1.html(f'<div style="background:white; padding:10px; border-radius:5px;">{section_plotter.plot_cross_section(cs_data)}</div>', height=400)
+                        st.components.v1.html(f'<div style="background:white; padding:10px; border-radius:10px; border:1px solid #ddd;">{section_plotter.plot_cross_section(cs_data)}</div>', height=400)
 
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -155,11 +154,11 @@ else:
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
-                st.warning("⚠️ กรุณาออกแบบใน Tab 2 ก่อน")
+                st.warning("⚠️ กรุณาทำการออกแบบใน Tab 2 ก่อนแสดงรายงาน")
             else:
                 for i, res in enumerate(final_design_res):
-                    with st.expander(f"📘 Span {i+1} Details", expanded=(i==0)):
+                    with st.expander(f"📘 Span {i+1} Design Details", expanded=(i==0)):
                         reporter.render_calculation_report(res)
 
     except Exception as e:
-        st.error(f"❌ Error: {e}")
+        st.error(f"❌ **System Error:** {e}")
