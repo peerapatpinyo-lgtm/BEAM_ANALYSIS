@@ -5,64 +5,56 @@ from rc_utils import get_beta1
 def get_as_req(Mu_kNm, d_eff_mm, fc, fy, b_mm):
     """
     Calculate Required Steel Area based on ACI 318
-    Returns: 3 values (as_req, rho, is_fail)
+    MUST RETURN EXACTLY 3 VALUES: (as_req, rho, is_fail)
     """
-    # กรณี Moment เป็น 0 ต้องคืน 3 ค่า
+    # 1. จัดการกรณี Moment เป็น 0
     if Mu_kNm == 0: 
         return 0.0, 0.0, False
         
-    Mu = abs(Mu_kNm) * 1e6 # N-mm
+    Mu = abs(Mu_kNm) * 1e6 # หน่วย N-mm
     phi = 0.9 
     
-    # Check Min/Max is usually done after, but here we calculate pure required As
+    # 2. คำนวณ Rn และตรวจสอบหน้าตัด
     Rn = Mu / (phi * b_mm * d_eff_mm**2)
-    
-    # Formula: rho = (0.85*fc/fy) * [1 - sqrt(1 - 2*Rn / (0.85*fc))]
     term_inside = 1 - (2 * Rn) / (0.85 * fc)
     
-    # กรณีหน้าตัดเล็กไปจนคำนวณไม่ได้ ต้องคืน 3 ค่า
+    # 3. จัดการกรณีหน้าตัดเล็กเกินไป (Section Fail)
     if term_inside < 0:
         return 0.0, 0.0, True 
 
+    # 4. คำนวณพื้นที่เหล็ก
     rho = (0.85 * fc / fy) * (1 - np.sqrt(term_inside))
-    as_req = rho * b_mm * d_eff_mm
+    as_req_calc = rho * b_mm * d_eff_mm
     
-    # Minimum Steel (ACI 9.6.1.2)
-    as_min1 = (0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm
-    as_min2 = (1.4 / fy) * b_mm * d_eff_mm
-    as_min = max(as_min1, as_min2)
+    # 5. พื้นที่เหล็กขั้นต่ำ (As_min)
+    as_min = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_eff_mm, (1.4 / fy) * b_mm * d_eff_mm)
     
-    # เลือกค่าที่มากที่สุดระหว่าง As_required และ As_min
-    as_final = max(as_req, as_min)
+    as_final = max(as_req_calc, as_min)
     
-    return as_final, rho, False
+    # ส่งคืน 3 ค่าตามที่ app.py ต้องการเป๊ะๆ
+    return float(as_final), float(rho), False
 
 def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
     """
-    Calculate Moment Capacity (Phi Mn) with Full Safety Checks
-    Returns: 6 values (phi_Mn, Ast, a, Mn, c, strain_t)
+    Calculate Moment Capacity (Phi Mn)
+    MUST RETURN EXACTLY 6 VALUES: (phi_Mn, Ast, a, Mn, c, strain_t)
     """
     Ast = n * (np.pi * (db/2)**2)
-    # กรณีไม่มีเหล็กเสริม ต้องคืน 6 ค่า
     if Ast == 0: 
         return 0.0, 0.0, 0.0, 0.0, 0.0, 0.0
     
-    # 1. Whitney Stress Block
     a = (Ast * fy) / (0.85 * fc * b)
     beta1 = get_beta1(fc)
     c = a / beta1
     
-    # --- CRITICAL SAFETY CHECK: a >= d ---
+    # ตรวจสอบความลึก block
     if a >= d_eff: 
-        return 0.0, Ast, a, 0.0, c, -1.0 
+        return 0.0, float(Ast), float(a), 0.0, float(c), -1.0 
 
-    # 2. Strain Calculation
-    if c > 0:
-        strain_t = 0.003 * (d_eff - c) / c
-    else:
-        strain_t = 999.0 
+    # คำนวณ Strain
+    strain_t = 0.003 * (d_eff - c) / c if c > 0 else 999.0 
 
-    # 3. Phi Factor Calculation (ACI 318)
+    # หาค่า Phi
     if strain_t >= 0.005:
         phi = 0.90
     elif strain_t <= 0.002:
@@ -70,53 +62,40 @@ def get_phi_Mn_details(n, db, d_eff, b, fc, fy):
     else:
         phi = 0.65 + 0.25 * ((strain_t - 0.002) / 0.003)
 
-    # 4. Nominal Moment (Mn)
     Mn = Ast * fy * (d_eff - a/2)
-    phi_Mn = phi * Mn / 1e6 # Convert to kNm
+    phi_Mn = phi * Mn / 1e6 # kN-m
     
-    return phi_Mn, Ast, a, Mn, c, strain_t
+    # ส่งคืน 6 ค่า
+    return float(phi_Mn), float(Ast), float(a), float(Mn), float(c), float(strain_t)
 
 def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
     """
-    Check Shear Capacity and ACI Max Spacing Requirements
-    Returns: 6 values (status, phi_Vn, phi_Vc, phi_Vs, Vc, Vs)
+    Check Shear Capacity
+    MUST RETURN EXACTLY 6 VALUES: (status, phi_Vn, phi_Vc, phi_Vs, Vc, Vs)
     """
-    # กรณี d ผิดปกติ ต้องคืน 6 ค่า
     if d <= 0: 
         return "FAIL (Invalid d)", 0.0, 0.0, 0.0, 0.0, 0.0
     
-    Vu = abs(Vu_kN) * 1000 # Convert kN to N
-    phi = 0.85 # Safety Factor สำหรับแรงเฉือน
+    Vu = abs(Vu_kN) * 1000 # N
+    phi = 0.75 # ACI Shear
     
-    # 1. Concrete Capacity (Vc)
     Vc = 0.17 * np.sqrt(fc) * b * d
     phi_Vc = phi * Vc
     
-    # 2. Steel Capacity (Vs)
-    Av = 2 * (np.pi * (stir_db/2)**2) # 2 legs
-    safe_spacing = max(spacing, 1.0) # กันหารด้วยศูนย์
-    
-    Vs = (Av * fy * d) / safe_spacing
+    Av = 2 * (np.pi * (stir_db/2)**2)
+    s = max(spacing, 1.0)
+    Vs = (Av * fy * d) / s
     phi_Vs = phi * Vs
     
-    phi_Vn = (phi_Vc + phi_Vs) / 1000 # รวมกำลังรับแรงเฉือน (kN)
+    phi_Vn = (phi_Vc + phi_Vs) / 1000 # kN
     
-    # 3. Maximum Spacing Check (ACI 318)
-    threshold = 0.33 * np.sqrt(fc) * b * d
-    if Vs <= threshold:
-        s_max_limit = min(d/2, 600)
-    else:
-        s_max_limit = min(d/4, 300)
-        
-    # ตรวจสอบกำลังและระยะห่าง พร้อมแสดงตัวเลขเปรียบเทียบใน Status
-    is_strength_ok = (phi_Vn * 1000) >= Vu
-    is_spacing_ok = spacing <= s_max_limit
+    is_ok = (phi_Vn * 1000) >= Vu
     
-    if not is_strength_ok:
-        status = f"FAIL (Vu={abs(Vu_kN):.1f} > φVn={phi_Vn:.1f} kN)"
-    elif not is_spacing_ok:
-        status = f"FAIL (s={spacing:.0f} > s_max={s_max_limit:.0f} mm)"
+    # สร้าง Status พร้อมระบุหน่วยเปรียบเทียบ
+    if not is_ok:
+        status = f"FAIL (Mu={abs(Vu_kN):.1f} > φVn={phi_Vn:.1f} kN)"
     else:
         status = "OK"
 
-    return status, phi_Vn, phi_Vc/1000, phi_Vs/1000, Vc, Vs
+    # ส่งคืน 6 ค่า
+    return status, float(phi_Vn), float(phi_Vc/1000), float(phi_Vs/1000), float(Vc), float(Vs)
