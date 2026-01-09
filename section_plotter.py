@@ -2,78 +2,84 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-# --- 🏗️ Professional Constants ---
-C_CONC = '#000000'
-C_TOP  = '#d63031' # สีแดงเหล็กบน
-C_BOT  = '#27ae60' # สีเขียวเหล็กล่าง
-C_STIR = '#b2bec3'
+# --- 📐 Professional Styling ---
+C_BEAM = '#000000'
+C_TOP  = '#D63031'
+C_BOT  = '#27AE60'
+C_STIR = '#636E72'
 
-def _draw_support_by_type(ax, x, y_bottom, sup_type, sup_id):
-    """วาดสัญลักษณ์ Support ตามประเภท (Standard Structural Symbols)"""
+def _draw_pro_support(ax, x, y_bottom, sup_type, sup_id):
+    """วาดสัญลักษณ์ Support มาตรฐานวิศวกรรมสากล"""
+    s = 180 # Scale size
     if sup_type.lower() == 'fixed':
-        # เสาคอนกรีตหนา
-        ax.add_patch(patches.Rectangle((x-100, y_bottom-500), 200, 500, fc='#dfe6e9', ec='black', lw=1.5, zorder=1))
+        # สัญลักษณ์ผนังรับแรง (Hatch pattern)
+        ax.add_patch(patches.Rectangle((x-100, y_bottom-400), 200, 400, fc='#dfe6e9', ec='black', lw=1.5, hatch='///'))
     elif sup_type.lower() == 'roller':
-        # สามเหลี่ยมมีล้อ
-        pts = np.array([[x, y_bottom], [x-80, y_bottom-200], [x+80, y_bottom-200]])
-        ax.add_patch(patches.Polygon(pts, fc='white', ec='black', lw=1.2, zorder=1))
-        ax.add_patch(patches.Circle((x, y_bottom-230), 25, fc='white', ec='black', lw=1, zorder=1))
-    else: # Pin / Hinge (Default)
-        # รูปสามเหลี่ยมฐานติดพื้น
-        pts = np.array([[x, y_bottom], [x-80, y_bottom-250], [x+80, y_bottom-250]])
-        ax.add_patch(patches.Polygon(pts, fc='#f1f2f6', ec='black', lw=1.2, zorder=1))
-    
-    # ชื่อ Support
-    ax.text(x, y_bottom - 650, f"S{sup_id}", ha='center', va='top', fontweight='bold', fontsize=9)
+        # สามเหลี่ยม Roller แบบมีช่องว่างด้านล่าง
+        pts = np.array([[x, y_bottom], [x-s/2, y_bottom-s], [x+s/2, y_bottom-s]])
+        ax.add_patch(patches.Polygon(pts, fc='white', ec='black', lw=1.2, zorder=5))
+        ax.plot([x-s, x+s], [y_bottom-s-30, y_bottom-s-30], color='black', lw=1.5)
+    else: # Pin/Hinge
+        # สามเหลี่ยมมีจุดหมุนและฐานหยัก
+        pts = np.array([[x, y_bottom], [x-s/2, y_bottom-s], [x+s/2, y_bottom-s]])
+        ax.add_patch(patches.Polygon(pts, fc='#ced6e0', ec='black', lw=1.2, zorder=5))
+        ax.plot([x-s, x+s], [y_bottom-s, y_bottom-s], color='black', lw=2)
+
+    ax.text(x, y_bottom - 600, f"S{sup_id}", ha='center', fontweight='bold', fontsize=10, color='blue')
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """รูปตัดตามยาวระดับสากล: แยกประเภท Support และระบุเหล็กครบถ้วน"""
+    """
+    รูปตัดตามยาวระดับ High-Resolution (300 DPI) 
+    คานบางยาว (Long-Span) เหล็กชัดเจน ไม่ทับเส้น
+    """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
-    v_h = 1000 # Normalized Visual Height สำหรับคานผอมยาว
+    v_h = 800  # ปรับความสูงคานในรูปให้บางลงอีกเพื่อความสวยงาม
     
-    fig_w = max(16, total_L / 450)
-    fig, ax = plt.subplots(figsize=(fig_w, 3.5), dpi=140)
+    # 1. สร้าง Canvas ความละเอียดสูง
+    fig_w = max(18, total_L / 400)
+    fig, ax = plt.subplots(figsize=(fig_w, 4), dpi=300) # เพิ่ม DPI เป็น 300
     
-    # 1. วาดตัวคาน (Beam Outline)
-    ax.add_patch(patches.Rectangle((0, 0), total_L, v_h, lw=2, ec=C_CONC, fc='white', zorder=2))
+    # 2. วาดขอบคอนกรีต (Outline)
+    ax.add_patch(patches.Rectangle((0, 0), total_L, v_h, lw=2, ec=C_BEAM, fc='white', zorder=2))
     
-    # 2. วาด Support ตาม Type
+    # 3. วาด Support (ใต้ท้องคาน)
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
-            _draw_support_by_type(ax, row['x']*1000, 0, row.get('type', 'Pin'), row.get('id', ''))
+            _draw_pro_support(ax, row['x']*1000, 0, row.get('type', 'Pin'), row.get('id', ''))
 
-    # 3. วาดเหล็กเสริมและใส่ Label ทั้งบนและล่าง
-    y_top = v_h * 0.8
-    y_bot = v_h * 0.2
+    # 4. วาดเหล็กเสริม (Reinforcement Layers)
+    y_top = v_h * 0.85
+    y_bot = v_h * 0.15
     
     x_curr = 0
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
         mid = x_curr + span_L/2
         
-        # วาดเหล็กเมน (Lines)
-        ax.plot([x_curr, x_curr + span_L], [y_top, y_top], color=C_TOP, lw=3, zorder=5, solid_capstyle='round')
-        ax.plot([x_curr + 40, x_curr + span_L - 40], [y_bot, y_bot], color=C_BOT, lw=3, zorder=5, solid_capstyle='round')
+        # เหล็กบน (Top Main)
+        ax.plot([x_curr, x_curr + span_L], [y_top, y_top], color=C_TOP, lw=3.5, zorder=10, solid_capstyle='round')
         
-        # --- 🏷️ ใส่ Label เหล็กบน (Top) ---
-        ax.text(mid, v_h + 150, f"{int(res['neg']['n'])}-DB{int(res['top_db'])} (TOP)", 
-                color=C_TOP, ha='center', fontweight='bold', fontsize=9)
+        # เหล็กล่าง (Bottom Main)
+        ax.plot([x_curr + 40, x_curr + span_L - 40], [y_bot, y_bot], color=C_BOT, lw=3.5, zorder=10, solid_capstyle='round')
         
-        # --- 🏷️ ใส่ Label เหล็กล่าง (Bottom) ---
-        ax.text(mid, y_bot + 60, f"{int(res['pos']['n'])}-DB{int(res['bot_db'])} (BOT)", 
-                color=C_BOT, ha='center', va='bottom', fontweight='bold', fontsize=8)
+        # --- 🏷️ Text Annotations (ใช้ semibold เพื่อความคมชัด) ---
+        ax.text(mid, v_h + 100, f"{int(res['neg']['n'])}-DB{int(res['top_db'])} (TOP)", 
+                color=C_TOP, ha='center', va='bottom', fontsize=11, fontweight='semibold')
         
-        # --- 🏷️ เหล็กปลอก (Stirrup Label) ---
-        ax.text(mid, -150, f"Stir. RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
-                color='#636e72', ha='center', fontsize=8, style='italic')
+        ax.text(mid, y_bot + 50, f"{int(res['pos']['n'])}-DB{int(res['bot_db'])} (BOT)", 
+                color=C_BOT, ha='center', va='bottom', fontsize=10, fontweight='semibold')
+        
+        ax.text(mid, -150, f"RB{int(res['stir_db'])} @ {int(res['shear']['s'])} mm", 
+                color=C_STIR, ha='center', fontsize=9, style='italic')
 
         x_curr += span_L
 
+    # 5. Final Display Setup
     ax.set_aspect('auto')
     ax.axis('off')
-    ax.set_xlim(-600, total_L + 600)
-    ax.set_ylim(-900, v_h + 500)
+    ax.set_xlim(-800, total_L + 800)
+    ax.set_ylim(-800, v_h + 600)
     
     plt.tight_layout()
     return fig
