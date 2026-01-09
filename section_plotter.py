@@ -9,13 +9,13 @@ def plot_as_svg(spans, sup_df, design_res, h_m, cover_mm):
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
-    v_h = 350  # สัดส่วนคานเพรียวบาง (Professional Look)
+    v_h = 350  # สัดส่วนคานเพรียวบางแบบมืออาชีพ
     
-    # 1. กำหนดขนาดรูปภาพตามความยาวจริง
+    # 1. กำหนดขนาดรูปภาพตามสเกลจริง
     fig_w = max(16, total_L / 350)
     fig, ax = plt.subplots(figsize=(fig_w, 4.5))
     
-    # 2. วาดคอนกรีต (ปิด Antialiasing เพื่อให้ขอบคมชัดแบบ CAD)
+    # 2. วาดคอนกรีต (ใช้พิกัดที่แม่นยำและขอบเส้นคม)
     beam = patches.Rectangle((0, 0), total_L, v_h, lw=2, ec='black', fc='white', antialiased=False, zorder=2)
     ax.add_patch(beam)
     
@@ -29,7 +29,7 @@ def plot_as_svg(spans, sup_df, design_res, h_m, cover_mm):
                     bbox=dict(boxstyle='circle', fc='white', ec='black', lw=1.5), 
                     fontsize=14, fontweight='bold')
         
-        # Dimension Line บอกระยะ Span
+        # Dimension Line บอกระยะ Span (เมตร)
         if i < len(spans_mm):
             ax.annotate('', xy=(curr_x, v_h + 250), xytext=(curr_x + s_mm, v_h + 250),
                         arrowprops=dict(arrowstyle='<->', color='#2980b9', lw=1.2))
@@ -55,18 +55,18 @@ def plot_as_svg(spans, sup_df, design_res, h_m, cover_mm):
             
             ax.text(sx, -500, f"S{row['id']}: {stype}", ha='center', fontweight='bold', fontsize=10)
 
-    # 5. วาดเหล็กเสริม Main Rebars (Red=Top, Green=Bot)
+    # 5. วาดเหล็กเสริม (Red=Top, Green=Bot)
     y_t, y_b = v_h * 0.82, v_h * 0.18
     x_curr = 0
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
         mid = x_curr + span_L/2
         
-        # เหล็กเมน (ปิด AA เพื่อให้เส้นคมชัดที่สุด)
+        # เหล็กเมน (วาดเส้นให้หนาและคมชัด)
         ax.plot([x_curr, x_curr + span_L], [y_t, y_t], color='#d30000', lw=3.5, zorder=10, antialiased=False)
         ax.plot([x_curr + 40, x_curr + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10, antialiased=False)
         
-        # ป้ายบอกเหล็ก (ใช้ White Bbox เพื่อให้อ่านง่าย)
+        # ป้ายบอกเหล็กพร้อมพื้นหลังสีขาวเพื่อความคมชัด
         label_opt = dict(ha='center', fontweight='bold', fontsize=11, 
                          bbox=dict(facecolor='white', edgecolor='none', alpha=0.85, pad=0.5))
         
@@ -80,7 +80,7 @@ def plot_as_svg(spans, sup_df, design_res, h_m, cover_mm):
     ax.set_xlim(-1000, total_L + 1000)
     ax.set_ylim(-800, v_h + 800)
     
-    # แปลงเป็น SVG String
+    # แปลงเป็น SVG String เพื่อส่งให้ Browser แสดงผลตรงๆ (ไม่ผ่านไฟล์รูปภาพที่ทำให้เบลอ)
     f = io.StringIO()
     fig.savefig(f, format="svg", bbox_inches='tight')
     plt.close(fig)
