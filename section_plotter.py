@@ -6,15 +6,14 @@ import numpy as np
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm):
     """
-    วาดรูปตัดยาวคาน พร้อม Logic การหยุดเหล็ก (Bar Curtailment)
-    และปรับปรุงตำแหน่ง Support รวมถึงลำดับชั้นเหล็กล่าง
+    วาดรูปตัดยาวคาน (คงโครงสร้างเดิม แต่ปรับปรุงขอบเขตการแสดงผล)
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     v_h = 400  
     
     fig_w = max(16, total_L / 300)
-    fig, ax = plt.subplots(figsize=(fig_w, 5))
+    fig, ax = plt.subplots(figsize=(fig_w, 6)) # เพิ่มความสูง figsize
     
     # 1. วาดตัวคาน
     beam = patches.Rectangle((0, 0), total_L, v_h, lw=2, ec='black', fc='#fdfdfd', zorder=5)
@@ -33,7 +32,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
             ax.text(x_curr + s_mm/2, v_h + 300, f"{s_mm/1000:.2f} m", ha='center', fontweight='bold')
             x_curr += s_mm
 
-    # 3. วาดจุดรองรับตามประเภท (Improved Support Shapes)
+    # 3. วาดจุดรองรับ
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
             sx = row['x'] * 1000
@@ -47,48 +46,40 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
                 ax.add_patch(patches.Polygon([[sx, 0], [sx-100, -200], [sx+100, -200]], fc='#2c3e50', ec='black', lw=1.5, zorder=4))
             ax.text(sx, -450, f"S{row['id']}\n({stype})", ha='center', fontweight='bold', fontsize=9)
 
-    # 4. วาดเหล็กเสริมและ Label
+    # 4. วาดเหล็กเสริม
     x_curr = 0
     v_spacing = 35.0 
-    
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
         stir_db = res.get('stir_db', 9)
-        
-        # --- TOP REINFORCEMENT ---
         top_layers = res.get('top', {}).get('all_layers', [])
         curr_y_top = v_h - (cover_mm + stir_db)
         t_labels = []
         for l_idx, layer in enumerate(top_layers):
             if layer['n'] > 0:
                 t_labels.append(f"L{l_idx+1}: {int(layer['n'])}DB{int(layer['db'])}")
-                if l_idx == 0:
-                    x_s, x_e = x_curr, x_curr + span_L
+                if l_idx == 0: x_s, x_e = x_curr, x_curr + span_L
                 else:
                     cut_off = span_L * 0.30
                     ax.plot([x_curr, x_curr + cut_off], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                     ax.plot([x_curr + span_L - cut_off, x_curr + span_L], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                     x_s, x_e = None, None
-                if x_s is not None:
-                    ax.plot([x_s, x_e], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
+                if x_s is not None: ax.plot([x_s, x_e], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                 curr_y_top -= v_spacing
         
-        # --- BOTTOM REINFORCEMENT ---
         bot_layers = res.get('bot', {}).get('all_layers', [])
         curr_y_bot = cover_mm + stir_db
         b_labels = [] 
         for l_idx, layer in enumerate(bot_layers):
             if layer['n'] > 0:
                 b_labels.append(f"L{l_idx+1}: {int(layer['n'])}DB{int(layer['db'])}")
-                if l_idx == 0:
-                    x_s, x_e = x_curr + 50, x_curr + span_L - 50
+                if l_idx == 0: x_s, x_e = x_curr + 50, x_curr + span_L - 50
                 else:
                     offset = span_L * 0.125
                     x_s, x_e = x_curr + offset, x_curr + span_L - offset
                 ax.plot([x_s, x_e], [curr_y_bot, curr_y_bot], color='#008c00', lw=2.5, zorder=10)
                 curr_y_bot += v_spacing
         
-        # 5. วาดเหล็กปลอก
         s_spacing = res['shear'].get('s', 150)
         num_stirrups = int(span_L / s_spacing)
         for j in range(num_stirrups + 1):
@@ -96,27 +87,24 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
             if stir_x <= x_curr + span_L:
                 ax.plot([stir_x, stir_x], [cover_mm, v_h - cover_mm], color='#bdc3c7', lw=0.7, alpha=0.5, zorder=6)
 
-        # 6. Label เรียงลำดับ (Top: L1 บน | Bot: L1 ล่าง)
         mid = x_curr + span_L/2
         ax.text(mid, v_h + 80, "\n".join(t_labels), color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
         ax.text(mid, -120, "\n".join(reversed(b_labels)), color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
-        
         x_curr += span_L
 
     ax.set_aspect('auto')
     ax.axis('off')
     ax.set_xlim(-500, total_L + 500)
-    ax.set_ylim(-800, v_h + 800)
+    ax.set_ylim(-900, v_h + 900) # ขยายขอบเขตแนวตั้ง
     
     f_svg = io.StringIO()
     fig.savefig(f_svg, format="svg", bbox_inches='tight', transparent=True)
-    svg_string = f_svg.getvalue()
     plt.close(fig)
-    return svg_string, None
+    return f_svg.getvalue(), None
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน พร้อมระบบแจ้งเตือนระยะห่างเหล็ก (Spacing Warning)
+    วาดรูปตัดขวางคาน พร้อมระบบแจ้งเตือนกึ่งกลางรูป (ป้องกันตัวอักษรตกขอบ)
     """
     b, h = float(res.get('b', 200)), float(res.get('h', 400))
     cover = float(res.get('cover', 25))
@@ -125,79 +113,73 @@ def plot_cross_section(res):
     top_layers = res.get('top_layers') or [{'n': res.get('top', {}).get('n', 0), 'db': res.get('top_db', 16)}]
     bot_layers = res.get('bot_layers') or [{'n': res.get('bot', {}).get('n', 0), 'db': res.get('bot_db', 16)}]
     
-    # ปรับ figsize ให้สูงขึ้นเพื่อรองรับกล่องแจ้งเตือน
-    fig, ax = plt.subplots(figsize=(6.5, 6.5))
+    # 1. เพิ่มพื้นที่ Canvas ให้กว้างพอสำหรับข้อความ
+    fig, ax = plt.subplots(figsize=(7, 7)) 
     x0, y0 = -b/2, -h/2
     
-    # 1. วาดคอนกรีต
     ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
-    
-    # 2. วาดเหล็กปลอก
     s_x, s_y, s_w, s_h = x0+cover, y0+cover, b-2*cover, h-2*cover
     ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, edgecolor='#34495e', lw=1.5, zorder=2))
     
     warnings = []
-    v_spacing_const = 25.0 # ระยะคงที่สำหรับวาดรูป
+    v_spacing_const = 25.0
 
-    # 3. วาดเหล็กบน + Check Spacing
+    # 2. วาดเหล็กบน + เช็คระยะ
     curr_y_top = (h/2) - cover - stir_db
     for idx, l in enumerate(top_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n <= 0: continue
-        
-        # Logic เช็คระยะห่างแนวนอน
         if n > 1:
             h_space = (s_w - 2*stir_db - n*db) / (n - 1)
             if h_space < max(25, db):
-                warnings.append(f"Top L{idx+1}: {h_space:.1f}mm")
+                warnings.append(f"Top L{idx+1}: Clear {h_space:.1f}mm")
         
         y_p = curr_y_top - (db/2)
         x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p:
-            ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
+        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
         curr_y_top -= (db + v_spacing_const)
 
-    # 4. วาดเหล็กล่าง (L1 อยู่ล่างสุด) + Check Spacing
+    # 3. วาดเหล็กล่าง + เช็คระยะ
     curr_y_bot = (-h/2) + cover + stir_db
     for idx, l in enumerate(bot_layers):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n <= 0: continue
-        
-        # Logic เช็คระยะห่างแนวนอน
         if n > 1:
             h_space = (s_w - 2*stir_db - n*db) / (n - 1)
             if h_space < max(25, db):
-                warnings.append(f"Bot L{idx+1}: {h_space:.1f}mm")
+                warnings.append(f"Bot L{idx+1}: Clear {h_space:.1f}mm")
         
         y_p = curr_y_bot + (db/2)
         x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p:
-            ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
+        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
         curr_y_bot += (db + v_spacing_const)
 
-    # --- 5. ระบบแจ้งเตือน (ส่วนที่เพิ่มเข้ามาใหม่) ---
+    # 4. แสดง Warning โดยใช้ Coordinate ของแอป (Axes Fraction) 
+    # วิธีนี้จะทำให้ Warning อยู่ล่างสุดของรูปเสมอ ไม่ตกขอบ
     if warnings:
-        warn_text = "⚠️ SPACING WARNING: Concrete might not flow!\n" + "\n".join([f"Too Tight @ {w}" for w in warnings])
-        # วาดกล่องสีแดงใต้รูปคาน
-        ax.text(0, y0 - (h*0.25), warn_text, color='white', fontweight='bold', fontsize=9,
-                ha='center', va='top', bbox=dict(boxstyle="round,pad=0.5", fc='red', ec='darkred', lw=2))
+        warn_text = "⚠️ SPACING WARNING\n" + "\n".join(warnings)
+        ax.text(0.5, 0.05, warn_text, transform=ax.transAxes,
+                color='white', fontweight='bold', fontsize=10,
+                ha='center', va='bottom', 
+                bbox=dict(boxstyle="round,pad=0.5", fc='red', ec='darkred', lw=2))
 
-    # 6. Label รายละเอียด (คงเดิม)
-    text_x = b/2 + (b * 0.2)
+    # 5. ปรับ Label ให้ไม่ชิดคานเกินไป
+    text_x = b/2 + (b * 0.25)
     top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
     bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
     
     ax.text(text_x, h/2 - cover, f"Top: {top_t}", color='#d30000', va='top', fontweight='bold')
-    ax.text(text_x, 0, f"Stirrup: RB{int(stir_db)}@{int(res.get('shear', {}).get('s', 150))}", color='#34495e', va='center', fontweight='bold')
     ax.text(text_x, -h/2 + cover, f"Bot: {bot_t}", color='#008c00', va='bottom', fontweight='bold')
-    ax.text(0, h/2 + (h*0.15), f"SECTION {int(b)}x{int(h)}", ha='center', fontweight='black', fontsize=12)
+    ax.text(0, h/2 + (h*0.2), f"SECTION {int(b)}x{int(h)}", ha='center', fontweight='black', fontsize=12)
 
     ax.set_aspect('equal')
     ax.axis('off')
-    ax.set_xlim(-b*0.8, b*2.2)
-    ax.set_ylim(-h*1.0, h*1.3) # ขยายขอบเขตแกน Y ให้เห็น Warning Box
+    # กำหนด Limit ให้กว้างพอเพื่อให้ bbox_inches='tight' ทำงานได้ดี
+    ax.set_xlim(-b*1.2, b*2.8)
+    ax.set_ylim(-h*1.8, h*1.8) 
     
     f = io.StringIO()
-    fig.savefig(f, format="svg", bbox_inches='tight', transparent=True)
+    # ใช้ bbox_inches='tight' และ pad_inches เพื่อป้องกันตัวหนังสือตกขอบ
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.2, transparent=True)
     plt.close(fig)
     return f.getvalue()
