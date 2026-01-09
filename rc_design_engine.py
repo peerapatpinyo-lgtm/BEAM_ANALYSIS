@@ -1,4 +1,3 @@
-
 # rc_design_engine.py
 import numpy as np
 from rc_utils import get_beta1
