@@ -85,16 +85,14 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) แบบลดพื้นที่สีขาวให้เหลือน้อยที่สุด
+    วาดรูปตัดขวางคาน (Cross Section) แบบ Compact ขั้นสุด ลดพื้นที่ขาวทุกด้าน
     """
     b = float(res['b'])
     h = float(res['h'])
     cover = float(res['cover'])
     
-    # 1. ปรับขนาด Figure ให้กระชับ (กว้าง 4 สูง 5)
-    fig, ax = plt.subplots(figsize=(4, 5))
-    
-    # พิกัด 0,0 อยู่ตรงกลางคาน
+    # 1. ตั้งค่า Figure ให้เตี้ยลง (figsize กว้างกว่าสูง)
+    fig, ax = plt.subplots(figsize=(4.2, 4.2))
     x0, y0 = -b/2, -h/2
     
     # 2. วาดหน้าตัดคอนกรีต
@@ -110,12 +108,11 @@ def plot_cross_section(res):
     db_top = float(res['top_db'])
     y_pos_top = (h/2) - stir_off - (db_top/2) - 2
     x_top = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_top) if n_top > 1 else [0]
-    
     for x in x_top:
         ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1, color='#d30000', zorder=10))
     
-    # Label บน - ขยับลงมาชิดขึ้น (h*0.05)
-    ax.text(0, h/2 + (h*0.05), f"{n_top}-DB{int(db_top)}", color='#d30000', 
+    # Label บน - บีบชิดขอบคอนกรีตที่สุด
+    ax.text(0, h/2 + 5, f"{n_top}-DB{int(db_top)}", color='#d30000', 
             ha='center', va='bottom', fontweight='bold', fontsize=10)
 
     # 5. เหล็กเมนล่าง (Bottom Bars)
@@ -123,32 +120,30 @@ def plot_cross_section(res):
     db_bot = float(res['bot_db'])
     y_pos_bot = (-h/2) + stir_off + (db_bot/2) + 2
     x_bot = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_bot) if n_bot > 1 else [0]
-    
     for x in x_bot:
         ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1, color='#008c00', zorder=10))
         
-    # Label ล่าง - ขยับขึ้นมาชิดขึ้น (h*0.05)
-    ax.text(0, -h/2 - (h*0.05), f"{n_bot}-DB{int(db_bot)}", color='#008c00', 
+    # Label ล่าง - บีบชิดขอบคอนกรีตที่สุด
+    ax.text(0, -h/2 - 5, f"{n_bot}-DB{int(db_bot)}", color='#008c00', 
             ha='center', va='top', fontweight='bold', fontsize=10)
 
-    # 6. ข้อความหัวข้อและเหล็กปลอก - ดึงเข้ามาให้ชิดคานที่สุด
-    ax.text(0, h/2 + (h*0.18), f"SECTION {int(b)}x{int(h)}", ha='center', fontweight='black', fontsize=12)
-    ax.text(0, -h/2 - (h*0.18), f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
-            ha='center', color='#34495e', fontsize=9, fontweight='bold')
+    # 6. ย้าย "เหล็กปลอก" และ "ชื่อ Section" ไปไว้ด้านข้างคาน (เพื่อลดพื้นที่ขาวบน-ล่าง)
+    # ชื่อ Section ไว้ด้านซ้าย, รายละเอียดปลอกไว้ด้านขวา
+    ax.text(x0 - 15, 0, f"SEC\n{int(b)}x{int(h)}", ha='right', va='center', fontweight='black', fontsize=9, rotation=90)
+    ax.text(b/2 + 15, 0, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
+            ha='left', va='center', color='#34495e', fontsize=9, fontweight='bold', rotation=270)
     
-    # --- 7. ปรับ Viewport (บีบ Margin ให้เหลือน้อยที่สุด) ---
+    # --- 7. ปรับ Viewport (บีบพิกัดขั้นสุด) ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # ลด Margin จาก 0.5 เหลือ 0.35 เพื่อตัดพื้นที่สีขาวส่วนเกิน
-    v_limit = h * 0.35
-    h_limit = b * 0.15
-    ax.set_ylim(-h/2 - v_limit, h/2 + v_limit)
-    ax.set_xlim(-b/2 - h_limit, b/2 + h_limit)
+    # กำหนดขอบเขต Y ให้ห่างจากตัวหนังสือบน-ล่างเพียงเล็กน้อย
+    # กำหนดขอบเขต X ให้เผื่อข้อความด้านข้าง
+    ax.set_ylim(-h/2 - (h*0.2), h/2 + (h*0.2)) 
+    ax.set_xlim(-b/2 - (b*0.4), b/2 + (b*0.4))
     
     f = io.StringIO()
-    # ใช้ pad_inches=0.02 เพื่อให้ขอบชิดที่สุดโดยที่ตัวหนังสือไม่ขาด
-    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.02, transparent=True)
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.01, transparent=True)
     svg_string = f.getvalue()
     plt.close(fig)
     return svg_string
