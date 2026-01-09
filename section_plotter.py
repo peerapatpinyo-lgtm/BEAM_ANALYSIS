@@ -3,10 +3,14 @@ import matplotlib.patches as patches
 import io
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm):
+    """
+    วาดแบบขยายคานพร้อมเหล็กปลอก และส่งคืนทั้ง SVG String และ PNG Bytes
+    """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     v_h = 350 
     
+    # กำหนดขนาดรูปภาพตามความยาวคาน
     fig, ax = plt.subplots(figsize=(max(16, total_L/350), 4.5))
     
     # 1. วาดคอนกรีต
@@ -17,7 +21,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         res = design_res[i]
         s_spacing = res['shear']['s']
         
-        # --- เพิ่มเหล็กปลอก (Stirrups) เส้นบางสีอ่อน ---
+        # --- วาดเหล็กปลอก (Stirrups) เส้นบางสีอ่อน ---
         num_stirrups = int(span_L / s_spacing)
         for j in range(num_stirrups + 1):
             sx = curr_x + (j * s_spacing)
@@ -28,7 +32,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         # วาดเหล็กเมน (บน/ล่าง)
         y_t, y_b = v_h - cover_mm - 10, cover_mm + 10
         ax.plot([curr_x, curr_x + span_L], [y_t, y_t], color='#d30000', lw=3.5, zorder=10)
-        ax.plot([curr_x + 40, curr_x + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10)
+        ax.plot([curr_x + 40, x_end := curr_x + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10)
         
         # ป้ายบอกเหล็ก
         mid = curr_x + span_L/2
@@ -41,7 +45,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         
         curr_x += span_L
 
-    # วาด Grid Lines
+    # วาด Grid Lines (A, B, C)
     gx = 0
     for i, s_mm in enumerate(spans_mm + [0]):
         ax.plot([gx, gx], [-400, v_h + 300], color='#7f8c8d', ls='-.', lw=1, zorder=1)
@@ -53,14 +57,16 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     ax.set_xlim(-500, total_L + 500)
     ax.set_ylim(-500, v_h + 600)
     
-    # แปลงเป็น SVG สำหรับแสดงผล
+    # --- 💎 ขั้นตอนสำคัญ: เตรียมข้อมูลส่งกลับ 2 รูปแบบ ---
+    # 1. สำหรับแสดงผลบนเว็บ (SVG)
     f_svg = io.StringIO()
     fig.savefig(f_svg, format="svg", bbox_inches='tight')
     svg_data = f_svg.getvalue()
     
-    # แปลงเป็น PNG สำหรับดาวน์โหลด (High DPI)
+    # 2. สำหรับดาวน์โหลด (PNG)
     f_png = io.BytesIO()
     fig.savefig(f_png, format="png", dpi=300, bbox_inches='tight')
-    plt.close(fig)
+    png_bytes = f_png.getvalue()
     
-    return svg_data, f_png.getvalue()
+    plt.close(fig)
+    return svg_data, png_bytes
