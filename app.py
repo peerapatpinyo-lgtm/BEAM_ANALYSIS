@@ -124,103 +124,111 @@ else:
             c3.metric("Max Moment (-)", f"{abs(min(0, m_min)):.2f} kN-m")
             c4.metric("Max Deflection", f"{d_max:.2f} mm")
 
-        # ================= TAB 2: INTERACTIVE DESIGN =================
-        with tab2:
-            st.header(f"🏗️ Interactive RC Design")
-            if is_service:
-                st.warning("⚠️ You are viewing Service Load graphs, but Design uses Ultimate Loads.")
+# ================= TAB 2: INTERACTIVE DESIGN =================
+with tab2:
+    st.header(f"🏗️ Interactive RC Design")
+    if is_service:
+        st.warning("⚠️ You are viewing Service Load graphs, but Design uses Ultimate Loads.")
+    
+    b_mm, h_mm = rc_utils.normalize_section_units(params['b'], params['h'])
+    fc, fy = params['fc'], params['fy']
+    offsets = [0] + list(np.cumsum(spans))
+    
+    for i in range(n_spans):
+        s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
+        
+        # ดึงแรง Ultimate มาใช้ในการออกแบบเสมอ
+        mask_ult = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
+        if any(mask_ult):
+            mu_pos = max(0.0, (M_ult[mask_ult] / 1000.0).max())
+            mu_neg = abs(min(0.0, (M_ult[mask_ult] / 1000.0).min()))
+            vu_max = abs((V_ult[mask_ult] / 1000.0)).max()
+        else:
+            mu_pos, mu_neg, vu_max = 0, 0, 0
+        
+        # ข้อมูล Service สำหรับเช็ค Deflection ราย Span
+        mask_svc = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
+        ma_pos_svc = max(0.0, (M_svc[mask_svc] / 1000.0).max()) if any(mask_svc) else 0
+        delta_svc_mm = abs((D_svc[mask_svc] * 1000.0)).max() if any(mask_svc) else 0
+
+        with st.expander(f"📍 Span {i+1} (L={s_len} m) | Mu+={mu_pos:.1f} kNm, Mu-={mu_neg:.1f} kNm", expanded=True):
+            col_input, col_draw = st.columns([2, 1])
             
-            b_mm, h_mm = rc_utils.normalize_section_units(params['b'], params['h'])
-            fc, fy = params['fc'], params['fy']
-            offsets = [0] + list(np.cumsum(spans))
-            
-            for i in range(n_spans):
-                s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
+            with col_input:
+                st.caption(f"Design Constants: fc'={fc} MPa, fy={fy} MPa, Size {b_mm}x{h_mm} mm")
+                cover_mm = st.number_input(f"Covering (mm)", 20.0, 50.0, 25.0, 5.0, key=f"cov_{i}")
+
+                # 1. Bottom Reinforcement
+                st.markdown("##### 1. Bottom Rebar (Mid-Span)")
+                d_est = h_mm - cover_mm - 20
+                as_req_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_est, fc, fy, b_mm)
                 
-                # ดึงแรง Ultimate มาใช้ในการออกแบบเสมอ
-                mask_ult = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
-                if any(mask_ult):
-                    mu_pos = max(0.0, (M_ult[mask_ult] / 1000.0).max())
-                    mu_neg = abs(min(0.0, (M_ult[mask_ult] / 1000.0).min()))
-                    vu_max = abs((V_ult[mask_ult] / 1000.0)).max()
-                else:
-                    mu_pos, mu_neg, vu_max = 0, 0, 0
+                c1, c2, c3 = st.columns([1, 1, 1])
+                with c1: st.write(f"Req As: `{as_req_bot:.0f}` mm²")
+                with c2: bot_db = st.selectbox("DB Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
+                with c3: bot_n = st.number_input("Qty", 2, 10, 2, key=f"bn_{i}")
                 
-                # ข้อมูล Service สำหรับเช็ค Deflection ราย Span
-                mask_svc = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
-                ma_pos_svc = max(0.0, (M_svc[mask_svc] / 1000.0).max()) if any(mask_svc) else 0
-                delta_svc_mm = abs((D_svc[mask_svc] * 1000.0)).max() if any(mask_svc) else 0
+                d_real_b = h_mm - cover_mm - 9 - (bot_db / 2)
+                phi_Mn_bot, as_prov_bot, _, _, _, _ = rc_design_engine.get_phi_Mn_details(bot_n, bot_db, d_real_b, b_mm, fc, fy)
 
-                with st.expander(f"📍 Span {i+1} (L={s_len} m) | Mu+={mu_pos:.1f} kNm, Mu-={mu_neg:.1f} kNm", expanded=True):
-                    col_input, col_draw = st.columns([2, 1])
-                    
-                    with col_input:
-                        st.caption(f"Design Constants: fc'={fc} MPa, fy={fy} MPa, Size {b_mm}x{h_mm} mm")
-                        cover_mm = st.number_input(f"Covering (mm)", 20.0, 50.0, 25.0, 5.0, key=f"cov_{i}")
+                # 2. Top Reinforcement
+                st.markdown("##### 2. Top Rebar (Supports)")
+                as_req_top, _, _ = rc_design_engine.get_as_req(mu_neg, d_est, fc, fy, b_mm)
+                
+                c1, c2, c3 = st.columns([1, 1, 1])
+                with c1: st.write(f"Req As: `{as_req_top:.0f}` mm²")
+                with c2: top_db = st.selectbox("DB Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
+                with c3: top_n = st.number_input("Qty", 2, 10, 2, key=f"tn_{i}")
+                
+                d_real_t = h_mm - cover_mm - 9 - (top_db / 2)
+                phi_Mn_top, as_prov_top, _, _, _, _ = rc_design_engine.get_phi_Mn_details(top_n, top_db, d_real_t, b_mm, fc, fy)
 
-                        # 1. Bottom Reinforcement
-                        st.markdown("##### 1. Bottom Rebar (Mid-Span)")
-                        d_est = h_mm - cover_mm - 20
-                        as_req_bot, _, _ = rc_design_engine.get_as_req(mu_pos, d_est, fc, fy, b_mm)
-                        
-                        c1, c2, c3 = st.columns([1, 1, 1])
-                        with c1: st.write(f"Req As: `{as_req_bot:.0f}` mm²")
-                        with c2: bot_db = st.selectbox("DB Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
-                        with c3: bot_n = st.number_input("Qty", 2, 10, 2, key=f"bn_{i}")
-                        
-                        d_real_b = h_mm - cover_mm - 9 - (bot_db / 2)
-                        phi_Mn_bot, as_prov_bot, _, _, _, _ = rc_design_engine.get_phi_Mn_details(bot_n, bot_db, d_real_b, b_mm, fc, fy)
+                # 3. Shear Reinforcement
+                st.markdown("##### 3. Shear Stirrups")
+                c1, c2, c3 = st.columns([1, 1, 1])
+                with c1: st.write(f"Vu: `{vu_max:.1f}` kN")
+                with c2: stir_db = st.selectbox("Size", [6, 9, 12], index=0, key=f"sdb_{i}")
+                with c3: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, 10, key=f"ss_{i}")
+                
+                status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_real_b, fc, fy, stir_db, stir_s)
 
-                        # 2. Top Reinforcement
-                        st.markdown("##### 2. Top Rebar (Supports)")
-                        as_req_top, _, _ = rc_design_engine.get_as_req(mu_neg, d_est, fc, fy, b_mm)
-                        
-                        c1, c2, c3 = st.columns([1, 1, 1])
-                        with c1: st.write(f"Req As: `{as_req_top:.0f}` mm²")
-                        with c2: top_db = st.selectbox("DB Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
-                        with c3: top_n = st.number_input("Qty", 2, 10, 2, key=f"tn_{i}")
-                        
-                        d_real_t = h_mm - cover_mm - 9 - (top_db / 2)
-                        phi_Mn_top, as_prov_top, _, _, _, _ = rc_design_engine.get_phi_Mn_details(top_n, top_db, d_real_t, b_mm, fc, fy)
+                # --- NEW: Call Interactive Comparison Dashboard (แก้ไขส่งค่า As ครบถ้วน) ---
+                design_res_pack = {
+                    'phi_Mn_pos': phi_Mn_bot, 
+                    'phi_Mn_neg': phi_Mn_top, 
+                    'phi_Vn': phi_Vn,
+                    'as_req_bot': as_req_bot,    # ส่งค่า As ที่ต้องการ
+                    'as_prov_bot': as_prov_bot,  # ส่งค่า As ที่จัดให้จริง
+                    'as_req_top': as_req_top,    # ส่งค่า As ที่ต้องการ
+                    'as_prov_top': as_prov_top,  # ส่งค่า As ที่จัดให้จริง
+                    'fc': fc, 'fy': fy, 'b': b_mm, 'h': h_mm, # ส่งค่าเพื่อคำนวณ As_min
+                    'top_n': top_n, 'top_db': top_db, 
+                    'bot_n': bot_n, 'bot_db': bot_db,
+                    'stir_db': stir_db, 'stir_spacing': stir_s
+                }
+                design_view.display_design_comparison(mu_pos, mu_neg, vu_max, design_res_pack)
 
-                        # 3. Shear Reinforcement
-                        st.markdown("##### 3. Shear Stirrups")
-                        c1, c2, c3 = st.columns([1, 1, 1])
-                        with c1: st.write(f"Vu: `{vu_max:.1f}` kN")
-                        with c2: stir_db = st.selectbox("Size", [6, 9, 12], index=0, key=f"sdb_{i}")
-                        with c3: stir_s = st.number_input("Spacing (mm)", 50, 300, 150, 10, key=f"ss_{i}")
-                        
-                        status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_real_b, fc, fy, stir_db, stir_s)
+            with col_draw:
+                st.markdown("<p style='text-align:center;'><b>Section Preview</b></p>", unsafe_allow_html=True)
+                cs_data = {
+                    'b': b_mm, 'h': h_mm, 'cover': cover_mm,
+                    'top': {'n': top_n}, 'top_db': top_db,
+                    'bot': {'n': bot_n}, 'bot_db': bot_db,
+                    'stir_db': stir_db, 'shear': {'s': stir_s}
+                }
+                cs_svg = section_plotter.plot_cross_section(cs_data)
+                st.components.v1.html(f'<div style="background:white; padding:10px;">{cs_svg}</div>', height=350)
 
-                        # --- NEW: Call Interactive Comparison Dashboard ---
-                        design_res_pack = {
-                            'phi_Mn_pos': phi_Mn_bot, 'phi_Mn_neg': phi_Mn_top, 'phi_Vn': phi_Vn,
-                            'top_n': top_n, 'top_db': top_db, 'bot_n': bot_n, 'bot_db': bot_db,
-                            'stir_db': stir_db, 'stir_spacing': stir_s
-                        }
-                        design_view.display_design_comparison(mu_pos, mu_neg, vu_max, design_res_pack)
-
-                    with col_draw:
-                        st.markdown("<p style='text-align:center;'><b>Section Preview</b></p>", unsafe_allow_html=True)
-                        cs_data = {
-                            'b': b_mm, 'h': h_mm, 'cover': cover_mm,
-                            'top': {'n': top_n}, 'top_db': top_db,
-                            'bot': {'n': bot_n}, 'bot_db': bot_db,
-                            'stir_db': stir_db, 'shear': {'s': stir_s}
-                        }
-                        cs_svg = section_plotter.plot_cross_section(cs_data)
-                        st.components.v1.html(f'<div style="background:white; padding:10px;">{cs_svg}</div>', height=350)
-
-                    final_design_res.append({
-                        'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
-                        'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
-                        'top_db': top_db, 'bot_db': bot_db, 'stir_db': stir_db,
-                        'pos': {'n': bot_n, 'area': as_prov_bot, 'status': (phi_Mn_bot >= mu_pos)},
-                        'neg': {'n': top_n, 'area': as_prov_top, 'status': (phi_Mn_top >= mu_neg)},
-                        'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
-                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': delta_svc_mm,
-                        'bot': {'n': bot_n, 'db': bot_db}, 'top': {'n': top_n, 'db': top_db}
-                    })
+            final_design_res.append({
+                'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy,
+                'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
+                'top_db': top_db, 'bot_db': bot_db, 'stir_db': stir_db,
+                'pos': {'n': bot_n, 'area': as_prov_bot, 'status': (phi_Mn_bot >= mu_pos)},
+                'neg': {'n': top_n, 'area': as_prov_top, 'status': (phi_Mn_top >= mu_neg)},
+                'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
+                'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': delta_svc_mm,
+                'bot': {'n': bot_n, 'db': bot_db}, 'top': {'n': top_n, 'db': top_db}
+            })
 
             st.markdown("---")
             st.subheader("📋 Overall Summary")
@@ -258,3 +266,4 @@ else:
         st.error(f"❌ Application Error: {e}")
         import traceback
         st.code(traceback.format_exc())
+
