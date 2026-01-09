@@ -9,8 +9,9 @@ import ifcopenshell.api.project
 import ifcopenshell.api.material
 import ifcopenshell.api.geometry
 import ifcopenshell.api.aggregate
+import ifcopenshell.api.pset
 import uuid
-import numpy as np  # ใช้ numpy สร้าง matrix เอง ชัวร์กว่า
+import numpy as np
 
 def create_guid():
     return ifcopenshell.guid.compress(uuid.uuid1().hex)
@@ -18,7 +19,7 @@ def create_guid():
 def generate_ifc_model(project_name, spans, params, design_results):
     """
     Generate IFC4 file for the continuous beam with design data properties.
-    Fixed: Manual Matrix Construction using Numpy.
+    Fixed: 'product' -> 'products' for material assignment.
     """
     # 1. Initialize IFC File
     model = ifcopenshell.file(schema="IFC4")
@@ -37,6 +38,7 @@ def generate_ifc_model(project_name, spans, params, design_results):
     building = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcBuilding", name="Main Building")
     storey = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcBuildingStorey", name="Level 1")
     
+    # Use products=[...] (List)
     ifcopenshell.api.run("aggregate.assign_object", model, relating_object=project, products=[site])
     ifcopenshell.api.run("aggregate.assign_object", model, relating_object=site, products=[building])
     ifcopenshell.api.run("aggregate.assign_object", model, relating_object=building, products=[storey])
@@ -57,7 +59,7 @@ def generate_ifc_model(project_name, spans, params, design_results):
         # Create Beam Entity
         beam = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcBeam", name=beam_name)
         
-        # --- 5.1 Geometry (Extrusion) ---
+        # --- 5.1 Geometry ---
         profile = model.create_entity("IfcRectangleProfileDef", 
                                       ProfileType="AREA", 
                                       XDim=b_mm, YDim=h_mm)
@@ -67,20 +69,14 @@ def generate_ifc_model(project_name, spans, params, design_results):
         
         ifcopenshell.api.run("geometry.assign_representation", model, product=beam, representation=representation)
         
-        # --- 5.2 Placement (Manual Matrix Fix) ---
-        # สร้าง Transformation Matrix 4x4 (Identity Matrix)
+        # --- 5.2 Placement (Manual Matrix) ---
         matrix = np.eye(4)
-        
-        # กำหนดค่า Translation แกน X (Column สุดท้าย, แถวแรก)
         matrix[0][3] = current_x * 1000.0
-        matrix[1][3] = 0.0
-        matrix[2][3] = 0.0
-        
-        # ส่ง numpy array เข้าไปตรงๆ ได้เลย
         ifcopenshell.api.run("geometry.edit_object_placement", model, product=beam, matrix=matrix)
         
-        # --- 5.3 Material ---
-        ifcopenshell.api.run("material.assign_material", model, product=beam, material=concrete)
+        # --- 5.3 Material (FIXED HERE) ---
+        # เปลี่ยน product=beam เป็น products=[beam]
+        ifcopenshell.api.run("material.assign_material", model, products=[beam], material=concrete)
         
         # --- 5.4 Properties ---
         res = design_results[i]
