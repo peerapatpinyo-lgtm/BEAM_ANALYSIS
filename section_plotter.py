@@ -91,72 +91,87 @@ import numpy as np
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) โดยขยับตำแหน่งให้เห็นเหล็กล่างชัดเจน
-    และกำจัดพื้นที่ว่างด้านบน (Crop ส่วนเกินออก)
+    วาดรูปตัดขวางคาน (Cross Section) แก้ไขปัญหารูปโดนตัดครึ่งและจัดตำแหน่งใหม่ให้สมดุล
     """
     b = float(res['b'])
     h = float(res['h'])
     cover = float(res['cover'])
     
-    # 1. สร้าง Figure (เน้นแนวตั้ง)
+    # 1. ตั้งค่า Figure ให้เป็นสี่เหลี่ยมจัตุรัสเพื่อให้สัดส่วนคานไม่เพี้ยน
     fig, ax = plt.subplots(figsize=(5, 5))
     
-    # 2. วาดหน้าตัดคอนกรีต (ใช้พิกัด 0,0 เป็นมุมซ้ายล่าง)
-    # เพิ่มความหนาของเส้นขอบเพื่อให้เห็นชัดเจน
-    ax.add_patch(patches.Rectangle((0, 0), b, h, facecolor='#ffffff', edgecolor='black', lw=2, zorder=1))
+    # คำนวณจุดเริ่มเพื่อให้คานอยู่กึ่งกลางที่พิกัด 0,0 (กึ่งกลางคานพอดี)
+    x0, y0 = -b/2, -h/2
+    
+    # 2. วาดหน้าตัดคอนกรีต
+    ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
     
     # 3. วาดเหล็กปลอก (Stirrup)
     stir_off = cover
-    ax.add_patch(patches.Rectangle((stir_off, stir_off), b-2*stir_off, h-2*stir_off, 
-                                   fill=False, edgecolor='#2c3e50', lw=1.2, zorder=2))
+    ax.add_patch(patches.Rectangle((x0 + stir_off, y0 + stir_off), b - 2*stir_off, h - 2*stir_off, 
+                                   fill=False, edgecolor='#2c3e50', lw=1.5, zorder=2))
     
     # 4. วาดและระบุเหล็กเมนบน (Top Bars)
     n_top = int(res['top']['n'])
     db_top = float(res['top_db'])
-    y_top = h - stir_off - (db_top/2) - 2
-    x_top = np.linspace(stir_off + 12, b - stir_off - 12, n_top) if n_top > 1 else [b/2]
+    y_pos_top = (h/2) - stir_off - (db_top/2) - 2
+    x_top = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_top) if n_top > 1 else [0]
     
     for x in x_top:
-        ax.add_patch(patches.Circle((x, y_top), db_top/2 + 1, color='#d30000', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1, color='#d30000', zorder=10))
     
-    # Label เหล็กบน (ชี้ออกไปทางซ้ายบน)
-    ax.annotate(f"{n_top}-DB{int(db_top)}", xy=(x_top[0], y_top), xytext=(-b*0.1, h * 1.05),
-                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=-0.1", color='#d30000'),
-                fontsize=11, fontweight='bold', color='#d30000', ha='right')
+    # Label เหล็กบน (วางเหนือคาน)
+    ax.text(0, h/2 + (h*0.1), f"{n_top}-DB{int(db_top)}", color='#d30000', 
+            ha='center', va='bottom', fontweight='bold', fontsize=11)
 
     # 5. วาดและระบุเหล็กเมนล่าง (Bottom Bars)
     n_bot = int(res['bot']['n'])
     db_bot = float(res['bot_db'])
-    y_bot = stir_off + (db_bot/2) + 2  # ตำแหน่งเหล็กล่าง
-    x_bot = np.linspace(stir_off + 12, b - stir_off - 12, n_bot) if n_bot > 1 else [b/2]
+    y_pos_bot = (-h/2) + stir_off + (db_bot/2) + 2
+    x_bot = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_bot) if n_bot > 1 else [0]
     
     for x in x_bot:
-        ax.add_patch(patches.Circle((x, y_bot), db_bot/2 + 1, color='#008c00', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1, color='#008c00', zorder=10))
         
-    # Label เหล็กล่าง (ชี้ออกไปทางขวาข้างๆ คาน เพื่อประหยัดพื้นที่แนวตั้ง)
-    ax.annotate(f"{n_bot}-DB{int(db_bot)}", xy=(x_bot[-1], y_bot), xytext=(b*1.1, y_bot),
-                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0", color='#008c00'),
-                fontsize=11, fontweight='bold', color='#008c00', ha='left', va='center')
+    # Label เหล็กล่าง (วางใต้คาน - จุดนี้คือจุดที่เคยหายไป)
+    ax.text(0, -h/2 - (h*0.1), f"{n_bot}-DB{int(db_bot)}", color='#008c00', 
+            ha='center', va='top', fontweight='bold', fontsize=11)
 
-    # 6. ข้อความกำกับขนาดและเหล็กปลอก (วางชิดขอบ)
-    ax.text(b/2, h + (h*0.12), f"SECTION {int(b)}x{int(h)} mm", ha='center', fontweight='bold', fontsize=12)
-    ax.text(b/2, - (h*0.08), f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
+    # 6. ข้อความหัวข้อ (Section Name) และเหล็กปลอก
+    ax.text(0, h/2 + (h*0.25), f"SECTION {int(b)}x{int(h)} mm", ha='center', fontweight='black', fontsize=13)
+    ax.text(0, -h/2 - (h*0.25), f"Stirrup: RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
             ha='center', color='#34495e', fontsize=10, fontweight='bold')
     
-    # --- ปรับแต่ง Viewport (หัวใจสำคัญของการแก้ปัญหา) ---
+    # --- 7. ปรับ Viewport ให้สมดุล ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # xlim: ให้เผื่อด้านซ้ายสำหรับ label บน และด้านขวาสำหรับ label ล่าง
-    ax.set_xlim(-b*0.4, b*1.5)
-    
-    # ylim: บีบพื้นที่ด้านบนลง (-0.15 คือเผื่อด้านล่างให้เห็นเหล็กและข้อความครบ)
-    # และ 1.25 คือเผื่อด้านบนให้เห็นข้อความหัวข้อ
-    ax.set_ylim(-h*0.15, h*1.25)
+    # ตั้งค่า Margin ให้เหลือพื้นที่รอบคานประมาณ 40% ของความสูงคาน เพื่อให้เห็น Text ครบ
+    margin = h * 0.4
+    ax.set_ylim(-h/2 - margin, h/2 + margin)
+    ax.set_xlim(-b/2 - (b*0.2), b/2 + (b*0.2)) # บีบด้านข้างให้คานดูใหญ่ขึ้น
     
     f = io.StringIO()
-    # ใช้ bbox_inches='tight' พร้อมกำหนด pad_inches ให้เหลือน้อยที่สุด
+    # ใช้ pad_inches=0 เพื่อให้ Streamlit คุมพื้นที่เองได้แม่นยำ
     fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.1, transparent=True)
     svg_string = f.getvalue()
+    plt.close(fig)
+    return svg_string
+💡 คำแนะนำเพิ่มเติมสำหรับ app.py
+เพื่อให้รูปที่แก้ใหม่นี้ไม่โดนตัดในหน้าเว็บ Streamlit ให้ปรับตรงส่วนการแสดงผลดังนี้ครับ:
+
+Python
+
+# ใน app.py ตรงส่วนที่แสดงผล Cross Section
+with col_draw:
+    st.markdown("<p style='text-align:center; font-weight:bold;'>Section Preview</p>", unsafe_allow_html=True)
+    # ... (เตรียมข้อมูล cs_data) ...
+    cs_svg = section_plotter.plot_cross_section(cs_data)
+    
+    # ปรับ height ให้กว้างขึ้นเป็น 400 เพื่อความปลอดภัย
+    st.components.v1.html(
+        f'<div style="background-color: white; border-radius: 8px; display: flex; justify-content: center; align-items: center; padding: 20px;">{cs_svg}</div>',
+        height=400
+    )
     plt.close(fig)
     return svg_string
