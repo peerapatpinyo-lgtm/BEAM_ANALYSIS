@@ -8,8 +8,9 @@ import ifcopenshell.api.context
 import ifcopenshell.api.project
 import ifcopenshell.api.material
 import ifcopenshell.api.geometry
-import ifcopenshell.api.aggregate # Import ตัวนี้เพิ่มเพื่อความชัวร์
+import ifcopenshell.api.aggregate
 import uuid
+import numpy as np  # Import numpy เพื่อความชัวร์ (ถ้าจำเป็นต้องใช้ manual matrix)
 
 def create_guid():
     return ifcopenshell.guid.compress(uuid.uuid1().hex)
@@ -17,7 +18,7 @@ def create_guid():
 def generate_ifc_model(project_name, spans, params, design_results):
     """
     Generate IFC4 file for the continuous beam with design data properties.
-    Fixed for ifcopenshell v0.7.0+ API compliance.
+    Fixed for Matrix 4x4 compatibility.
     """
     # 1. Initialize IFC File
     model = ifcopenshell.file(schema="IFC4")
@@ -36,7 +37,6 @@ def generate_ifc_model(project_name, spans, params, design_results):
     building = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcBuilding", name="Main Building")
     storey = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcBuildingStorey", name="Level 1")
     
-    # --- FIX: Use 'products=[...]' (list) instead of 'product=...' ---
     ifcopenshell.api.run("aggregate.assign_object", model, relating_object=project, products=[site])
     ifcopenshell.api.run("aggregate.assign_object", model, relating_object=site, products=[building])
     ifcopenshell.api.run("aggregate.assign_object", model, relating_object=building, products=[storey])
@@ -58,31 +58,30 @@ def generate_ifc_model(project_name, spans, params, design_results):
         beam = ifcopenshell.api.run("root.create_entity", model, ifc_class="IfcBeam", name=beam_name)
         
         # --- 5.1 Geometry (Extrusion) ---
-        # Create Profile (Rectangle)
         profile = model.create_entity("IfcRectangleProfileDef", 
                                       ProfileType="AREA", 
                                       XDim=b_mm, YDim=h_mm)
         
-        # Create 3D Representation (Extrusion)
-        # Note: add_profile_representation creates the shape
+        # สร้างรูปทรง (Representation)
         representation = ifcopenshell.api.run("geometry.add_profile_representation", model, 
                                               context=body, profile=profile, depth=length_mm)
         
         ifcopenshell.api.run("geometry.assign_representation", model, product=beam, representation=representation)
         
-        # --- 5.2 Placement (Matrix) ---
-        # Shift X to current position. 
-        # Note: In standard extrusion, Z is length. We need to rotate or just place it.
-        # For simplicity in this viewer: We place them along X axis. 
-        # (Standard IFC beams usually extrude along local X, but let's stick to simple placement)
+        # --- 5.2 Placement (Matrix Fix) ---
+        # 1. กำหนดจุดตำแหน่ง (Point) เป็น Tuple (x, y, z) หน่วย mm
+        point = (current_x * 1000.0, 0.0, 0.0)
         
-        # Matrix logic: [x, y, z]
-        ifcopenshell.api.run("geometry.edit_object_placement", model, product=beam, matrix=[current_x * 1000.0, 0.0, 0.0])
+        # 2. สั่งให้ ifcopenshell คำนวณ 4x4 Matrix ให้เอง (ปลอดภัยที่สุด)
+        matrix_4x4 = ifcopenshell.api.run("geometry.calculate_matrix", model, p1=point)
+        
+        # 3. ส่ง Matrix 4x4 เข้าไป
+        ifcopenshell.api.run("geometry.edit_object_placement", model, product=beam, matrix=matrix_4x4)
         
         # --- 5.3 Material ---
         ifcopenshell.api.run("material.assign_material", model, product=beam, material=concrete)
         
-        # --- 5.4 Properties (Embedded Data) ---
+        # --- 5.4 Properties ---
         res = design_results[i]
         props = {
             "Span Length": float(span_len),
@@ -97,7 +96,7 @@ def generate_ifc_model(project_name, spans, params, design_results):
         
         ifcopenshell.api.run("pset.add_pset", model, product=beam, name="Pset_StructuralDesign", properties=props)
         
-        # Assign to Storey (Fix: Use products=[beam])
+        # Assign to Storey
         ifcopenshell.api.run("aggregate.assign_object", model, relating_object=storey, products=[beam])
         
         current_x += span_len
