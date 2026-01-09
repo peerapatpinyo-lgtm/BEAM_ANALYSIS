@@ -179,11 +179,45 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     """
     Dashboard แสดงการเปรียบเทียบค่าออกแบบ (Demand vs Capacity)
+    พร้อมการตรวจสอบพื้นที่เหล็กเสริม (As Required vs As Provided)
     """
     st.markdown("---")
-    st.subheader("🛠 RC Design Strength Verification")
+    st.subheader("🛠 RC Design Verification")
     
-    # คำนวณความต้องการเหล็กเสริมขั้นต่ำ
+    # --- ส่วนที่ 1: ตรวจสอบพื้นที่เหล็กเสริม (Steel Area Check) ---
+    st.markdown("#### 📏 Reinforcement Area ($A_s$)")
+    as_col1, as_col2 = st.columns(2)
+    
+    with as_col1:
+        as_req_bot = design_res.get('as_req_bot', 0.0)
+        as_prov_bot = design_res.get('as_prov_bot', 0.0)
+        st.write("**Bottom Steel (Mid-span)**")
+        st.write(f"Required: `{as_req_bot:.0f}` $mm^2$ | Provided: `{as_prov_bot:.0f}` $mm^2$")
+        
+        ratio_bot = min(as_prov_bot / as_req_bot, 2.0) if as_req_bot > 0 else 1.0
+        st.progress(ratio_bot if ratio_bot <= 1.0 else 1.0)
+        if as_prov_bot >= as_req_bot:
+            st.success(f"✅ Area OK ({(as_prov_bot/as_req_bot*100):.1f}%)")
+        else:
+            st.error(f"❌ Insufficient Area ({(as_prov_bot/as_req_bot*100):.1f}%)")
+
+    with as_col2:
+        as_req_top = design_res.get('as_req_top', 0.0)
+        as_prov_top = design_res.get('as_prov_top', 0.0)
+        st.write("**Top Steel (Support)**")
+        st.write(f"Required: `{as_req_top:.0f}` $mm^2$ | Provided: `{as_prov_top:.0f}` $mm^2$")
+        
+        ratio_top = min(as_prov_top / as_req_top, 2.0) if as_req_top > 0 else 1.0
+        st.progress(ratio_top if ratio_top <= 1.0 else 1.0)
+        if as_prov_top >= as_req_top:
+            st.success(f"✅ Area OK ({(as_prov_top/as_req_top*100):.1f}%)")
+        else:
+            st.error(f"❌ Insufficient Area ({(as_prov_top/as_req_top*100):.1f}%)")
+
+    st.markdown("---")
+    
+    # --- ส่วนที่ 2: ตรวจสอบกำลังรับน้ำหนัก (Strength Check) ---
+    st.markdown("#### ⚡ Section Strength ($\phi M_n, \phi V_n$)")
     col1, col2, col3 = st.columns(3)
     
     with col1:
@@ -193,9 +227,9 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Capacity $\phi M_n^+$", f"{phi_mn_pos:.2f} kN-m", 
                   delta=f"{(phi_mn_pos - mu_pos):.2f}", delta_color="normal")
         if phi_mn_pos >= mu_pos:
-            st.success("✅ PASS (Flexure)")
+            st.success("✅ Strength PASS")
         else:
-            st.error("❌ FAIL (Flexure)")
+            st.error("❌ Strength FAIL")
 
     with col2:
         st.markdown("**Negative Moment (-M)**")
@@ -205,9 +239,9 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Capacity $\phi M_n^-$", f"{phi_mn_neg:.2f} kN-m",
                   delta=f"{(phi_mn_neg - mu_neg_abs):.2f}", delta_color="normal")
         if phi_mn_neg >= mu_neg_abs:
-            st.success("✅ PASS (Flexure)")
+            st.success("✅ Strength PASS")
         else:
-            st.error("❌ FAIL (Flexure)")
+            st.error("❌ Strength FAIL")
 
     with col3:
         st.markdown("**Shear Force (V)**")
@@ -216,10 +250,10 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Capacity $\phi V_n$", f"{phi_vn:.2f} kN",
                   delta=f"{(phi_vn - vu):.2f}", delta_color="normal")
         if phi_vn >= vu:
-            st.success("✅ PASS (Shear)")
+            st.success("✅ Shear PASS")
         else:
-            st.error("❌ FAIL (Shear)")
+            st.error("❌ Shear FAIL")
             
-    st.info(f"💡 **Rebar Configuration:** Top: {design_res['top_n']}DB{design_res['top_db']} | "
-            f"Bottom: {design_res['bot_n']}DB{design_res['bot_db']} | "
-            f"Stirrup: RB{design_res['stir_db']} @ {design_res['stir_spacing']} mm")
+    st.info(f"💡 **Final Detailing:** Top {design_res['top_n']}DB{design_res['top_db']} | "
+            f"Bottom {design_res['bot_n']}DB{design_res['bot_db']} | "
+            f"Stirrup RB{design_res['stir_db']}@{design_res['stir_spacing']} mm")
