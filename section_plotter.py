@@ -5,7 +5,7 @@ import numpy as np
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    วาดรูปตัดยาวคาน (Longitudinal Section)
+    วาดรูปตัดยาวคาน (Longitudinal Section) - คงเดิมไว้เพื่อความครบถ้วนของไฟล์
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
@@ -14,7 +14,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     fig_w = max(16, total_L / 350)
     fig, ax = plt.subplots(figsize=(fig_w, 4.5))
     
-    beam = patches.Rectangle((0, 0), total_L, v_h, lw=2, ec='black', fc='white', antialiased=False, zorder=2)
+    beam = patches.Rectangle((0, 0), total_L, v_h, lw=2, ec='black', fc='white', zorder=2)
     ax.add_patch(beam)
     
     curr_x = 0
@@ -57,12 +57,12 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
         
         mid = x_curr + span_L/2
         ax.text(mid, -150, f"RB{int(res['stir_db'])}@{int(s_spacing)}", color='#7f8c8d', fontsize=9, ha='center', style='italic')
-        ax.plot([x_curr, x_curr + span_L], [y_t, y_t], color='#d30000', lw=3.5, zorder=10, antialiased=False)
-        ax.plot([x_curr + 40, x_curr + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10, antialiased=False)
+        ax.plot([x_curr, x_curr + span_L], [y_t, y_t], color='#d30000', lw=3.5, zorder=10)
+        ax.plot([x_curr + 40, x_curr + span_L - 40], [y_b, y_b], color='#008c00', lw=3.5, zorder=10)
         
         label_opt = dict(ha='center', fontweight='bold', fontsize=11, bbox=dict(facecolor='white', edgecolor='none', alpha=0.85))
-        ax.text(mid, v_h + 80, f"{int(res['neg']['n'])}-DB{int(res['top_db'])} (TOP)", color='#d30000', **label_opt)
-        ax.text(mid, y_b - 50, f"{int(res['pos']['n'])}-DB{int(res['bot_db'])} (BOT)", color='#008c00', va='top', **label_opt)
+        ax.text(mid, v_h + 80, f"{int(res['neg']['n'])}-DB{int(res['top_db'])}", color='#d30000', **label_opt)
+        ax.text(mid, y_b - 50, f"{int(res['pos']['n'])}-DB{int(res['bot_db'])}", color='#008c00', va='top', **label_opt)
         x_curr += span_L
 
     ax.set_aspect('auto')
@@ -82,74 +82,77 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) แบบ High-Detail
-    เน้นเหล็กปลอกสวยงาม และจัดกลุ่ม Text ด้านขวาแบบเว้นระยะห่างพิเศษ
+    วาดรูปตัดขวางคาน (Cross Section)
+    - เหล็กปลอกแบบโค้งมน (Rounded Stirrup)
+    - เว้น Space ระหว่างชื่อ Section กับรูป และตัวหนังสือด้านขวา
     """
     b, h = float(res['b']), float(res['h'])
     cover = float(res['cover'])
     
-    fig, ax = plt.subplots(figsize=(6.0, 3.5))
+    # กำหนดขนาด Figure ให้กว้างพอสำหรับข้อความด้านขวา
+    fig, ax = plt.subplots(figsize=(6.5, 4.0))
     x0, y0 = -b/2, -h/2
     
     # 1. วาดหน้าตัดคอนกรีต
     ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=3, zorder=1))
     
-    # 2. วาดเหล็กปลอก (Detailed Stirrup with Hooks)
-    s_x, s_y = x0 + cover, y0 + cover
+    # 2. วาดเหล็กปลอกแบบโค้ง (Rounded Stirrup)
     s_w, s_h = b - 2*cover, h - 2*cover
-    # ตัวเหล็กปลอกหลัก
-    ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, edgecolor='#2c3e50', lw=2, zorder=2))
-    # วาด Hook (มุมบนซ้าย) เพื่อความสวยงามแบบ Engineering Drawing
-    hook_len = 15
-    ax.plot([s_x, s_x + hook_len], [s_y + s_h, s_y + s_h - hook_len], color='#2c3e50', lw=2, zorder=2)
-    ax.plot([s_x + hook_len, s_x], [s_y + s_h, s_y + s_h - hook_len], color='#2c3e50', lw=2, zorder=2)
+    # ใช้ FancyBboxPatch เพื่อทำมุมโค้งมน
+    stirrup = patches.FancyBboxPatch(
+        (x0 + cover, y0 + cover), s_w, s_h,
+        boxstyle="round,pad=0,mutation_scale=15",
+        fill=False, edgecolor='#2c3e50', lw=2.2, zorder=2
+    )
+    ax.add_patch(stirrup)
     
-    # 3. เหล็กบน (Top Bars)
+    # วาด Hook (ปากเหล็กปลอก) เล็กน้อยเพื่อให้ดูสมจริง
+    ax.plot([x0+cover, x0+cover+15], [y0+h-cover, y0+h-cover-15], color='#2c3e50', lw=2.2, zorder=3)
+    ax.plot([x0+cover+15, x0+cover+15], [y0+h-cover-15, y0+h-cover], color='#2c3e50', lw=2.2, zorder=3)
+    
+    # 3. เหล็กเสริมเมน (Circles)
     n_top, db_top = int(res['top']['n']), float(res['top_db'])
     y_pos_top = (h/2) - cover - (db_top/2) - 2
-    x_top = np.linspace(s_x + 12, s_x + s_w - 12, n_top) if n_top > 1 else [0]
+    x_top = np.linspace(x0 + cover + 12, x0 + b - cover - 12, n_top) if n_top > 1 else [0]
     for x in x_top:
-        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1.5, color='#d30000', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1.2, color='#d30000', zorder=10))
 
-    # 4. เหล็กเมนล่าง (Bottom Bars)
     n_bot, db_bot = int(res['bot']['n']), float(res['bot_db'])
     y_pos_bot = (-h/2) + cover + (db_bot/2) + 2
-    x_bot = np.linspace(s_x + 12, s_x + s_w - 12, n_bot) if n_bot > 1 else [0]
+    x_bot = np.linspace(x0 + cover + 12, x0 + b - cover - 12, n_bot) if n_bot > 1 else [0]
     for x in x_bot:
-        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1.5, color='#008c00', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1.2, color='#008c00', zorder=10))
 
-    # --- ส่วนการจัดวางตัวหนังสือด้านขวา (Right Side Annotation) ---
-    # เว้นระยะห่าง (Space) จากคานออกไป 30% ของความกว้างคาน
-    text_x_start = b/2 + (b * 0.3)
+    # 4. การจัดวางตัวหนังสือด้านขวา (Right Side Annotation) พร้อมเว้น Space
+    # เว้นระยะจากขอบคานด้านขวาออกไป (b * 0.4)
+    text_x = b/2 + (b * 0.4) 
     
-    # ข้อมูลเหล็กบน
-    ax.text(text_x_start, y_pos_top, f"{n_top}-DB{int(db_top)} (Main Top)", 
+    # เหล็กบน
+    ax.text(text_x, y_pos_top, f"{n_top}-DB{int(db_top)} (TOP)", 
             color='#d30000', va='center', ha='left', fontsize=11, fontweight='bold')
     
-    # ข้อมูลเหล็กปลอก (ตรงกลางคาน)
-    ax.text(text_x_start, 0, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])} (Stirrups)", 
+    # เหล็กปลอก (Stirrup) - วางไว้ตรงกลางคานด้านขวา
+    ax.text(text_x, 0, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])} (STIR.)", 
             color='#34495e', va='center', ha='left', fontsize=10, fontweight='bold')
     
-    # ข้อมูลเหล็กล่าง
-    ax.text(text_x_start, y_pos_bot, f"{n_bot}-DB{int(db_bot)} (Main Bot)", 
+    # เหล็กล่าง
+    ax.text(text_x, y_pos_bot, f"{n_bot}-DB{int(db_bot)} (BOT)", 
             color='#008c00', va='center', ha='left', fontsize=11, fontweight='bold')
 
-    # 5. ชื่อ Section (เว้นระยะห่างด้านบนเพิ่มขึ้นเล็กน้อย)
-    ax.text(0, h/2 + (h*0.12), f"SECTION {int(b)}x{int(h)}", 
-            ha='center', va='bottom', fontweight='black', fontsize=12, color='black')
+    # 5. ชื่อ Section (เพิ่ม Space ด้านบนอย่างมากเพื่อให้ดูโปร่ง)
+    ax.text(0, h/2 + (h * 0.25), f"SECTION {int(b)}x{int(h)}", 
+            ha='center', va='bottom', fontweight='black', fontsize=13)
     
     # --- 6. Viewport Optimization (ดันรูปขึ้นบนสุด) ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # บีบขอบล่าง (ylim min) ให้ชิดคานที่สุด และเผื่อขอบบน (ylim max) ให้ชื่อ Section
-    ax.set_ylim(-h*0.55, h*0.8)
-    
-    # ขยายขอบ X เพื่อรองรับ Space และตัวหนังสือที่ยาวขึ้น
-    ax.set_xlim(-b*0.7, b*1.5)
+    # บีบขอบล่างให้เหลือน้อยที่สุด และเผื่อพื้นที่ด้านบนและด้านขวา
+    ax.set_ylim(-h*0.55, h*1.1)
+    ax.set_xlim(-b*0.8, b*2.0)
     
     f = io.StringIO()
-    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0, transparent=True)
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.01, transparent=True)
     svg_string = f.getvalue()
     plt.close(fig)
     return svg_string
