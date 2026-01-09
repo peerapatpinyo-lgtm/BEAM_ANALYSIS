@@ -6,8 +6,8 @@ import streamlit as st
 
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
-    Creates a Textbook-style structural analysis plot.
-    Includes internal unit conversion (/1000) for display.
+    สร้างกราฟวิเคราะห์โครงสร้าง (Textbook-style)
+    หน่วยแสดงผล: Force (kN), Moment (kN-m), Deflection (mm)
     """
     
     # --- Create Subplots ---
@@ -16,16 +16,16 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         shared_xaxes=True, 
         vertical_spacing=0.08,
         subplot_titles=(
-            "<b>1. Free Body Diagram (FBD)</b>", 
-            "<b>2. Shear Force Diagram (SFD)</b>", 
-            "<b>3. Bending Moment Diagram (BMD)</b>",
-            "<b>4. Elastic Curve (Deflection)</b>"
+            "<b>1. Free Body Diagram (FBD) - [Units: kN, kN/m]</b>", 
+            "<b>2. Shear Force Diagram (SFD) - [Unit: kN]</b>", 
+            "<b>3. Bending Moment Diagram (BMD) - [Unit: kN-m]</b>",
+            "<b>4. Elastic Curve (Deflection) - [Unit: mm]</b>"
         ),
         row_heights=[0.20, 0.25, 0.25, 0.30]
     )
 
     # ==========================================
-    # ROW 1: LOAD MODEL (FREE BODY DIAGRAM)
+    # ROW 1: LOAD MODEL (FBD)
     # ==========================================
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
@@ -59,7 +59,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     for l in load_iter:
         span_idx = int(l['span_index'])
         start_x = cum_dist[span_idx]
-        mag_kN = l['mag'] / 1000.0 # แสดงผลเป็น kN
+        mag_kN = l['mag'] / 1000.0 # แปลงหน่วย N เป็น kN
         
         if l['type'] == 'P':
             x_loc = start_x + float(l['d_start']) 
@@ -69,12 +69,10 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2, arrowcolor="#c0392b",
                 text=f"<b>P={mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
             )
-
         elif l['type'] == 'U':
             x_s = start_x + float(l.get('d_start', 0))
             x_e = x_s + float(l['dist'])
             h_vis = 0.25
-            
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e], y=[h_vis, h_vis],
                 mode='lines', line=dict(color='#2980b9', width=2), hoverinfo='skip'
@@ -89,12 +87,10 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor="#2980b9",
                     row=1, col=1
                 )
-            
             fig.add_annotation(
                 x=(x_s+x_e)/2, y=h_vis,
                 text=f"<b>w={mag_kN:.2f} kN/m</b>",
-                showarrow=False, yshift=10, font=dict(color="#2980b9"),
-                row=1, col=1
+                showarrow=False, yshift=10, font=dict(color="#2980b9"), row=1, col=1
             )
 
     # ==========================================
@@ -107,7 +103,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
     ), row=2, col=1)
     
-    # Label Max/Min Shear
     v_max = res_df['shear'].max() / 1000
     v_min = res_df['shear'].min() / 1000
     for val in [v_max, v_min]:
@@ -125,11 +120,10 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
     fig.add_trace(go.Scatter(
         x=res_df['x'], y=res_df['moment']/1000, 
-        mode='lines', name='Moment (kNm)', line=dict(color='#27ae60', width=2),
+        mode='lines', name='Moment (kN-m)', line=dict(color='#27ae60', width=2),
         fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
     ), row=3, col=1)
 
-    # Label Max/Min Moment
     m_max = res_df['moment'].max() / 1000
     m_min = res_df['moment'].min() / 1000
     for val in [m_max, m_min]:
@@ -169,67 +163,63 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
     fig.update_layout(
-        title="<b>Structural Analysis & Design Forces</b>",
-        height=950, 
-        showlegend=False, 
-        template="plotly_white", 
-        hovermode="x unified",
+        title="<b>Structural Analysis Results (Design Forces)</b>",
+        height=950, showlegend=False, template="plotly_white", hovermode="x unified",
         margin=dict(t=80, b=60, l=60, r=20)
     )
     
     fig.update_yaxes(visible=False, range=[-0.5, 0.8], row=1, col=1)
-    fig.update_yaxes(title_text="V (kN)", showgrid=True, row=2, col=1)
-    # BMD: นิยมวาดโมเมนต์บวกด้านล่าง (autorange='reversed')
-    fig.update_yaxes(title_text="M (kN-m)", autorange="reversed", showgrid=True, row=3, col=1)
-    fig.update_yaxes(title_text="δ (mm)", showgrid=True, zeroline=True, row=4, col=1)
+    fig.update_yaxes(title_text="Shear, V (kN)", showgrid=True, row=2, col=1)
+    fig.update_yaxes(title_text="Moment, M (kN-m)", autorange="reversed", showgrid=True, row=3, col=1)
+    fig.update_yaxes(title_text="Deflection, δ (mm)", showgrid=True, zeroline=True, row=4, col=1)
     fig.update_xaxes(title_text="Beam Length, x (m)", row=4, col=1)
 
     return fig
 
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     """
-    NEW: Dashboard สำหรับเปรียบเทียบค่าดีไซน์ Mu vs PhiMn และ Vu vs PhiVn
-    แบบ Interactive พร้อมหน่วยครบถ้วน
+    Dashboard แสดงการเปรียบเทียบค่าออกแบบ (Demand vs Capacity)
     """
     st.markdown("---")
-    st.subheader("🛠 Interactive RC Design Check")
+    st.subheader("🛠 RC Design Strength Verification")
     
-    # ดึงค่าจาก Span แรกเป็นตัวอย่าง (หรือวน Loop ตามจำนวน Span)
-    # ในที่นี้สมมติค่า Mu_pos, Mu_neg, Vu เป็นค่าสูงสุดที่เกิดในคาน
+    # คำนวณความต้องการเหล็กเสริมขั้นต่ำ
+    col1, col2, col3 = st.columns(3)
     
-    c1, c2, c3 = st.columns(3)
-    
-    with c1:
-        st.markdown("**Flexure Check (Positive)**")
+    with col1:
+        st.markdown("**Positive Moment (+M)**")
         phi_mn_pos = design_res.get('phi_Mn_pos', 0.0)
-        st.write(f"Demand $M_u^+$: `{mu_pos:.2f}` kN-m")
-        st.write(f"Capacity $\phi M_n^+$: `{phi_mn_pos:.2f}` kN-m")
+        st.metric("Demand $M_u^+$", f"{mu_pos:.2f} kN-m")
+        st.metric("Capacity $\phi M_n^+$", f"{phi_mn_pos:.2f} kN-m", 
+                  delta=f"{(phi_mn_pos - mu_pos):.2f}", delta_color="normal")
         if phi_mn_pos >= mu_pos:
-            st.success("✅ PASS")
+            st.success("✅ PASS (Flexure)")
         else:
-            st.error("❌ FAIL")
+            st.error("❌ FAIL (Flexure)")
 
-    with c2:
-        st.markdown("**Flexure Check (Negative)**")
+    with col2:
+        st.markdown("**Negative Moment (-M)**")
         phi_mn_neg = design_res.get('phi_Mn_neg', 0.0)
-        st.write(f"Demand $M_u^-$: `{abs(mu_neg):.2f}` kN-m")
-        st.write(f"Capacity $\phi M_n^-$: `{phi_mn_neg:.2f}` kN-m")
-        if phi_mn_neg >= abs(mu_neg):
-            st.success("✅ PASS")
+        mu_neg_abs = abs(mu_neg)
+        st.metric("Demand $M_u^-$", f"{mu_neg_abs:.2f} kN-m")
+        st.metric("Capacity $\phi M_n^-$", f"{phi_mn_neg:.2f} kN-m",
+                  delta=f"{(phi_mn_neg - mu_neg_abs):.2f}", delta_color="normal")
+        if phi_mn_neg >= mu_neg_abs:
+            st.success("✅ PASS (Flexure)")
         else:
-            st.error("❌ FAIL")
+            st.error("❌ FAIL (Flexure)")
 
-    with c3:
-        st.markdown("**Shear Check**")
+    with col3:
+        st.markdown("**Shear Force (V)**")
         phi_vn = design_res.get('phi_Vn', 0.0)
-        st.write(f"Demand $V_u$: `{vu:.2f}` kN")
-        st.write(f"Capacity $\phi V_n$: `{phi_vn:.2f}` kN")
+        st.metric("Demand $V_u$", f"{vu:.2f} kN")
+        st.metric("Capacity $\phi V_n$", f"{phi_vn:.2f} kN",
+                  delta=f"{(phi_vn - vu):.2f}", delta_color="normal")
         if phi_vn >= vu:
-            st.success("✅ PASS")
+            st.success("✅ PASS (Shear)")
         else:
-            st.error("❌ FAIL")
+            st.error("❌ FAIL (Shear)")
             
-    # รายละเอียดเหล็กเสริม
-    st.info(f"💡 **Rebar Info:** Top {design_res['top_n']}DB{design_res['top_db']} | "
-            f"Bot {design_res['bot_n']}DB{design_res['bot_db']} | "
-            f"Stirrup RB{design_res['stir_db']}@{design_res['stir_spacing']} mm")
+    st.info(f"💡 **Rebar Configuration:** Top: {design_res['top_n']}DB{design_res['top_db']} | "
+            f"Bottom: {design_res['bot_n']}DB{design_res['bot_db']} | "
+            f"Stirrup: RB{design_res['stir_db']} @ {design_res['stir_spacing']} mm")
