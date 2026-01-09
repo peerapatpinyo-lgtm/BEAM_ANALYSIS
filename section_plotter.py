@@ -1,84 +1,97 @@
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import numpy as np
+from matplotlib.path import Path
 
-# --- 📐 Professional Styling ---
-C_BEAM = '#000000'
-C_TOP  = '#D63031'
-C_BOT  = '#27AE60'
-C_STIR = '#636E72'
+# --- 📐 Global Sharpness Settings ---
+plt.rcParams['text.antialiased'] = True
+plt.rcParams['font.family'] = 'sans-serif'
+plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
 
-def _draw_pro_support(ax, x, y_bottom, sup_type, sup_id):
-    """วาดสัญลักษณ์ Support มาตรฐานวิศวกรรมสากล"""
-    s = 180 # Scale size
+def _draw_advanced_support(ax, x, y_bottom, sup_type, sup_id):
+    """วาดสัญลักษณ์ Support ระดับตำราวิศวกรรม (Engineering Textbooks)"""
+    s = 150 # Scale constant
+    
     if sup_type.lower() == 'fixed':
-        # สัญลักษณ์ผนังรับแรง (Hatch pattern)
-        ax.add_patch(patches.Rectangle((x-100, y_bottom-400), 200, 400, fc='#dfe6e9', ec='black', lw=1.5, hatch='///'))
+        # สัญลักษณ์การยึดแน่น (Hatched Boundary)
+        ax.plot([x-120, x+120], [y_bottom, y_bottom], color='black', lw=2.5)
+        for i in range(-120, 130, 30):
+            ax.plot([x+i, x+i-30], [y_bottom, y_bottom-60], color='black', lw=1)
+            
     elif sup_type.lower() == 'roller':
-        # สามเหลี่ยม Roller แบบมีช่องว่างด้านล่าง
-        pts = np.array([[x, y_bottom], [x-s/2, y_bottom-s], [x+s/2, y_bottom-s]])
-        ax.add_patch(patches.Polygon(pts, fc='white', ec='black', lw=1.2, zorder=5))
-        ax.plot([x-s, x+s], [y_bottom-s-30, y_bottom-s-30], color='black', lw=1.5)
-    else: # Pin/Hinge
-        # สามเหลี่ยมมีจุดหมุนและฐานหยัก
-        pts = np.array([[x, y_bottom], [x-s/2, y_bottom-s], [x+s/2, y_bottom-s]])
-        ax.add_patch(patches.Polygon(pts, fc='#ced6e0', ec='black', lw=1.2, zorder=5))
-        ax.plot([x-s, x+s], [y_bottom-s, y_bottom-s], color='black', lw=2)
+        # Roller: สามเหลี่ยม + เส้นฐาน + วงกลมเล็ก
+        poly = plt.Polygon([[x, y_bottom], [x-80, y_bottom-150], [x+80, y_bottom-150]], 
+                           fc='white', ec='black', lw=1.5, zorder=5)
+        ax.add_patch(poly)
+        ax.add_patch(plt.Circle((x, y_bottom-180), 25, fc='black', zorder=6))
+        ax.plot([x-120, x+120], [y_bottom-210, y_bottom-210], color='black', lw=2)
+        
+    else: # Pin / Hinge
+        # Pin: สามเหลี่ยม + เส้นฐานแบบมีรอยขีด (Hatched Base)
+        poly = plt.Polygon([[x, y_bottom], [x-90, y_bottom-180], [x+90, y_bottom-180]], 
+                           fc='#ecf0f1', ec='black', lw=1.5, zorder=5)
+        ax.add_patch(poly)
+        ax.plot([x-130, x+130], [y_bottom-180, y_bottom-180], color='black', lw=2)
+        for i in range(-120, 140, 40):
+            ax.plot([x+i, x+i-20], [y_bottom-180, y_bottom-210], color='black', lw=1)
 
-    ax.text(x, y_bottom - 600, f"S{sup_id}", ha='center', fontweight='bold', fontsize=10, color='blue')
+    # วางชื่อ Support ให้คมชัด
+    ax.text(x, y_bottom - 350, f"S{sup_id}", ha='center', va='top', 
+            fontsize=12, fontweight='bold', color='#2c3e50')
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    รูปตัดตามยาวระดับ High-Resolution (300 DPI) 
-    คานบางยาว (Long-Span) เหล็กชัดเจน ไม่ทับเส้น
+    รูปตัดตามยาวฉบับสมบูรณ์: ตัวหนังสือคมชัด คานผอมยาว และ Support ถูกต้อง
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
-    v_h = 800  # ปรับความสูงคานในรูปให้บางลงอีกเพื่อความสวยงาม
+    v_h = 600 # บังคับความสูงคานให้บาง (Thin Beam Ratio)
     
-    # 1. สร้าง Canvas ความละเอียดสูง
-    fig_w = max(18, total_L / 400)
-    fig, ax = plt.subplots(figsize=(fig_w, 4), dpi=300) # เพิ่ม DPI เป็น 300
+    # ใช้ DPI 300 และขยายขนาด Figure เพื่อเพิ่มพื้นที่ Pixel ให้ตัวหนังสือ
+    fig, ax = plt.subplots(figsize=(20, 5), dpi=300)
     
-    # 2. วาดขอบคอนกรีต (Outline)
-    ax.add_patch(patches.Rectangle((0, 0), total_L, v_h, lw=2, ec=C_BEAM, fc='white', zorder=2))
+    # 1. วาดโครงสร้างคาน (Main Beam Body)
+    ax.add_patch(patches.Rectangle((0, 0), total_L, v_h, lw=2.5, ec='black', fc='#f9f9f9', zorder=2))
     
-    # 3. วาด Support (ใต้ท้องคาน)
+    # 2. วาด Support (Engineering Style)
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
-            _draw_pro_support(ax, row['x']*1000, 0, row.get('type', 'Pin'), row.get('id', ''))
+            _draw_advanced_support(ax, row['x']*1000, 0, row.get('type', 'Pin'), row.get('id', ''))
 
-    # 4. วาดเหล็กเสริม (Reinforcement Layers)
-    y_top = v_h * 0.85
-    y_bot = v_h * 0.15
+    # 3. วาดเหล็กเสริม (Reinforcement)
+    # ใช้ระยะ Offset ที่แน่นอน ไม่ทับเส้นขอบ 100%
+    y_top = v_h * 0.82
+    y_bot = v_h * 0.18
     
     x_curr = 0
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
         mid = x_curr + span_L/2
         
-        # เหล็กบน (Top Main)
-        ax.plot([x_curr, x_curr + span_L], [y_top, y_top], color=C_TOP, lw=3.5, zorder=10, solid_capstyle='round')
+        # เหล็กบน (Main Top)
+        ax.plot([x_curr, x_curr + span_L], [y_top, y_top], color='#e74c3c', lw=3.5, zorder=10)
+        # เหล็กล่าง (Main Bot)
+        ax.plot([x_curr + 50, x_curr + span_L - 50], [y_bot, y_bot], color='#27ae60', lw=3.5, zorder=10)
         
-        # เหล็กล่าง (Bottom Main)
-        ax.plot([x_curr + 40, x_curr + span_L - 40], [y_bot, y_bot], color=C_BOT, lw=3.5, zorder=10, solid_capstyle='round')
+        # --- ✍️ การจัดการตัวหนังสือ (Text) เพื่อความคมชัดสูงสุด ---
+        # ใช้พื้นหลังสีขาวจางๆ (Bbox) ช่วยให้ตัวหนังสือเด่นและไม่แตก
+        txt_style = dict(fontweight='bold', fontsize=12, ha='center', 
+                         bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1))
         
-        # --- 🏷️ Text Annotations (ใช้ semibold เพื่อความคมชัด) ---
-        ax.text(mid, v_h + 100, f"{int(res['neg']['n'])}-DB{int(res['top_db'])} (TOP)", 
-                color=C_TOP, ha='center', va='bottom', fontsize=11, fontweight='semibold')
+        ax.text(mid, v_h + 120, f"{int(res['neg']['n'])}-DB{int(res['top_db'])} (TOP)", color='#c0392b', **txt_style)
+        ax.text(mid, y_bot + 60, f"{int(res['pos']['n'])}-DB{int(res['bot_db'])} (BOT)", color='#1e8449', **txt_style)
         
-        ax.text(mid, y_bot + 50, f"{int(res['pos']['n'])}-DB{int(res['bot_db'])} (BOT)", 
-                color=C_BOT, ha='center', va='bottom', fontsize=10, fontweight='semibold')
-        
-        ax.text(mid, -150, f"RB{int(res['stir_db'])} @ {int(res['shear']['s'])} mm", 
-                color=C_STIR, ha='center', fontsize=9, style='italic')
+        # รายละเอียดเหล็กปลอก (Stirrups)
+        ax.text(mid, -120, f"RB{int(res['stir_db'])} @ {int(res['shear']['s'])} mm", 
+                color='#535c68', fontsize=10, style='italic', ha='center')
 
         x_curr += span_L
 
-    # 5. Final Display Setup
+    # 4. Final Layout ปรับปรุงสัดส่วน
     ax.set_aspect('auto')
     ax.axis('off')
-    ax.set_xlim(-800, total_L + 800)
+    
+    # ปรับ Margin ให้พอดีกับตัวหนังสือ
+    ax.set_xlim(-1000, total_L + 1000)
     ax.set_ylim(-800, v_h + 600)
     
     plt.tight_layout()
