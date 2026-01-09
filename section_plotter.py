@@ -7,8 +7,8 @@ import numpy as np
 COLOR_CONCRETE = '#FFFFFF'
 COLOR_DIM      = '#000000'
 COLOR_STIRRUP  = '#2c3e50'
-COLOR_TOP      = '#c0392b'
-COLOR_BOT      = '#27ae60'
+COLOR_TOP      = '#c0392b' # สีแดงเหล็กบน
+COLOR_BOT      = '#27ae60' # สีเขียวเหล็กล่าง
 FONT_MAIN      = 10
 FONT_DIM       = 9
 
@@ -19,7 +19,7 @@ def _setup_figure(figsize):
     return fig, ax
 
 def _draw_dim_line(ax, p1, p2, text, offset=0, is_vert=False):
-    """วาดเส้น Dimension แบบมาตรฐาน (จาก Code เดิม)"""
+    """วาดเส้น Dimension (จากชุดเดิม)"""
     if is_vert:
         x_pos = p1[0] - offset
         mid_y = (p1[1] + p2[1]) / 2
@@ -27,7 +27,7 @@ def _draw_dim_line(ax, p1, p2, text, offset=0, is_vert=False):
                     arrowprops=dict(arrowstyle='<|-|>', color=COLOR_DIM, lw=0.7))
         ax.plot([p1[0], x_pos], [p1[1], p1[1]], color=COLOR_DIM, lw=0.5)
         ax.plot([p2[0], x_pos], [p2[1], p2[1]], color=COLOR_DIM, lw=0.5)
-        ax.text(x_pos - 10, mid_y, text, ha='right', va='center', rotation=90, fontsize=FONT_DIM,
+        ax.text(x_pos - 15, mid_y, text, ha='right', va='center', rotation=90, fontsize=FONT_DIM,
                 bbox=dict(facecolor='white', edgecolor='none', pad=2))
     else:
         y_pos = p1[1] + offset
@@ -36,91 +36,79 @@ def _draw_dim_line(ax, p1, p2, text, offset=0, is_vert=False):
                     arrowprops=dict(arrowstyle='<|-|>', color=COLOR_DIM, lw=0.7))
         ax.plot([p1[0], p1[0]], [p1[1], y_pos], color=COLOR_DIM, lw=0.5)
         ax.plot([p2[0], p2[0]], [p2[1], y_pos], color=COLOR_DIM, lw=0.5)
-        ax.text(mid_x, y_pos, text, ha='center', va='center', fontsize=FONT_DIM,
+        ax.text(mid_x, y_pos + 5, text, ha='center', va='bottom', fontsize=FONT_DIM,
                 bbox=dict(facecolor='white', edgecolor='none', pad=2))
 
 def _draw_support_symbol(ax, x, y, sup_type, sup_id):
-    """วาดสัญลักษณ์ Support (จาก Code เดิม)"""
-    size = 250 # mm base size
-    ax.text(x, y - size - 100, str(sup_id), ha='center', fontsize=9, fontweight='bold')
+    """วาดสัญลักษณ์ Support ให้ตั้งอยู่ใต้คาน (y=0 ลงไป)"""
+    size = 200 
+    ax.text(x, y - size - 150, f"S{sup_id}", ha='center', fontsize=9, fontweight='bold')
     
     if sup_type == 'Fixed':
-        w, h = 100, 400
+        w, h = 80, 400
         rect = patches.Rectangle((x-w/2, y-h/2), w, h, facecolor='#bdc3c7', edgecolor='black', hatch='///')
         ax.add_patch(rect)
     elif sup_type == 'Pin':
         tri = patches.Polygon([[x, y], [x-size/2, y-size], [x+size/2, y-size]], 
                               closed=True, facecolor='#bdc3c7', edgecolor='black')
         ax.add_patch(tri)
-        ax.add_patch(patches.Circle((x, y), 20, fc='white', ec='black', zorder=10))
         ax.plot([x-size, x+size], [y-size, y-size], color='black', lw=2)
-        for i in range(int(x-size), int(x+size), 50):
-            ax.plot([i, i-30], [y-size, y-size-30], color='black', lw=0.5)
     elif sup_type == 'Roller':
         tri = patches.Polygon([[x, y], [x-size/2, y-size], [x+size/2, y-size]], 
                               closed=True, facecolor='#bdc3c7', edgecolor='black')
         ax.add_patch(tri)
-        ax.add_patch(patches.Circle((x, y), 20, fc='white', ec='black', zorder=10))
         wheel_r = 30
-        ax.add_patch(patches.Circle((x-size/3, y-size-wheel_r), wheel_r, fc='white', ec='black'))
-        ax.add_patch(patches.Circle((x+size/3, y-size-wheel_r), wheel_r, fc='white', ec='black'))
-        g_y = y - size - 2*wheel_r
-        ax.plot([x-size, x+size], [g_y, g_y], color='black', lw=2)
-    else: 
-        rect = patches.Rectangle((x-100, y-300), 200, 300, fc='#eee', ec='black')
+        ax.add_patch(patches.Circle((x, y-size-wheel_r), wheel_r, fc='white', ec='black'))
+        ax.plot([x-size, x+size], [y-size-2*wheel_r, y-size-2*wheel_r], color='black', lw=2)
+    else:
+        rect = patches.Rectangle((x-80, y-300), 160, 300, fc='#eee', ec='black')
         ax.add_patch(rect)
 
 def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_text, fc, fy, title="SECTION A-A"):
-    """ Cross Section - แก้ไขการวางแนวให้ถูกต้อง (b=กว้าง, h=สูง) """
-    b = b_m * 1000.0
-    h = h_m * 1000.0
+    """รูปตัดขวาง: b=แนวนอน, h=แนวตั้ง"""
+    b, h = b_m * 1000.0, h_m * 1000.0
+    fig, ax = _setup_figure((6, 7))
     
-    fig, ax = _setup_figure((7, 6))
-    
-    # Concrete & Stirrup
+    # Concrete Outline
     ax.add_patch(patches.Rectangle((0, 0), b, h, lw=2, ec='black', fc='#FAFAFA', zorder=1))
+    
+    # Stirrup
     st_off = cover_mm
     ax.add_patch(patches.Rectangle((st_off, st_off), b-2*st_off, h-2*st_off, 
-                                   lw=1.5, ec=COLOR_STIRRUP, ls='--', fill=False, zorder=2))
+                                   lw=1.5, ec=COLOR_STIRRUP, fill=False, ls='--', zorder=2))
     
-    # Rebars Logic - วางเหล็กเป็นแถวแนวนอน (Fix: ไม่ให้หมุน 90 องศา)
-    def draw_bars(n, y, db, color):
-        if n < 1: return b/2
-        # คำนวณระยะห่างแนวนอน
-        if n > 1:
-            xs = np.linspace(st_off + db, b - st_off - db, int(n))
-        else:
+    # Rebars Placement
+    def draw_bars(n, y_pos, db, color):
+        if n <= 0: return b/2
+        if n == 1:
             xs = [b/2]
+        else:
+            side_gap = st_off + 10 + db/2
+            xs = np.linspace(side_gap, b - side_gap, int(n))
         for x in xs:
-            ax.add_patch(patches.Circle((x, y), db/2, fc=color, ec='black', lw=0.8, zorder=10))
+            ax.add_patch(patches.Circle((x, y_pos), db/2, fc=color, ec='black', lw=0.8, zorder=10))
         return xs[-1]
 
-    y_top = h - cover_mm - 10 - (db_top_mm/2)
-    y_bot = cover_mm + 10 + (db_bot_mm/2)
+    y_top = h - (cover_mm + 10 + db_top_mm/2)
+    y_bot = cover_mm + 10 + db_bot_mm/2
     
     last_x_top = draw_bars(n_top, y_top, db_top_mm, COLOR_TOP)
     last_x_bot = draw_bars(n_bot, y_bot, db_bot_mm, COLOR_BOT)
     
-    # Labels
-    ax.annotate(f"Stirrup: {stir_text}", xy=(st_off, h/2), xytext=(-100, h/2),
-                arrowprops=dict(arrowstyle='->', color=COLOR_STIRRUP),
-                ha='right', va='center', fontsize=FONT_MAIN, color=COLOR_STIRRUP)
+    # Annotations
+    if n_top > 0:
+        ax.annotate(f"{int(n_top)}-DB{int(db_top_mm)} (Top)", xy=(last_x_top, y_top), 
+                    xytext=(b+60, h-40), arrowprops=dict(arrowstyle='->', color=COLOR_TOP),
+                    ha='left', va='center', fontsize=FONT_MAIN, color=COLOR_TOP, fontweight='bold')
+    if n_bot > 0:
+        ax.annotate(f"{int(n_bot)}-DB{int(db_bot_mm)} (Bot)", xy=(last_x_bot, y_bot), 
+                    xytext=(b+60, 40), arrowprops=dict(arrowstyle='->', color=COLOR_BOT),
+                    ha='left', va='center', fontsize=FONT_MAIN, color=COLOR_BOT, fontweight='bold')
 
-    ax.annotate(f"{int(n_top)}-DB{int(db_top_mm)} (Top)", xy=(last_x_top, y_top), xytext=(b+80, h-30),
-                arrowprops=dict(arrowstyle='->', color=COLOR_TOP, connectionstyle="arc3,rad=0.2"),
-                ha='left', va='center', fontsize=FONT_MAIN, color=COLOR_TOP, fontweight='bold')
-    
-    ax.annotate(f"{int(n_bot)}-DB{int(db_bot_mm)} (Bot)", xy=(last_x_bot, y_bot), xytext=(b+80, 50),
-                arrowprops=dict(arrowstyle='->', color=COLOR_BOT, connectionstyle="arc3,rad=-0.2"),
-                ha='left', va='center', fontsize=FONT_MAIN, color=COLOR_BOT, fontweight='bold')
+    _draw_dim_line(ax, (0, 0), (b, 0), f"b={int(b)}", offset=-70)
+    _draw_dim_line(ax, (0, 0), (0, h), f"h={int(h)}", offset=70, is_vert=True)
 
-    _draw_dim_line(ax, (0, 0), (b, 0), f"{int(b)}", offset=-60)
-    _draw_dim_line(ax, (0, 0), (0, h), f"{int(h)}", offset=60, is_vert=True)
-
-    ax.text(b + 100, h/2, f"Cover: {cover_mm} mm\nfc': {fc} MPa\nfy: {fy} MPa", 
-            fontsize=9, color='#555', bbox=dict(facecolor='#f0f0f0', edgecolor='none', pad=5))
-
-    ax.set_title(title, fontsize=12, fontweight='bold', pad=25)
+    ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
     ax.axis('equal')
     ax.axis('off')
     ax.set_xlim(-150, b + 250)
@@ -128,67 +116,64 @@ def plot_section(b_m, h_m, cover_mm, db_top_mm, db_bot_mm, n_top, n_bot, stir_te
     return fig
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
-    """ Longitudinal Section - (จาก Code เดิม พร้อมแก้ตำแหน่งเหล็ก) """
+    """หน้าตัดตามยาว: แนวนอน(X) คือความยาวรวม, แนวตั้ง(Y) คือความหนาคาน"""
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     h_mm = h_m * 1000
-    fig, ax = _setup_figure((12, 6)) 
+    fig, ax = _setup_figure((14, 5)) 
     
-    # 1. Beam Body
-    ax.add_patch(patches.Rectangle((0, 0), total_L, h_mm, lw=2, ec='black', fc='#FFFFFF', zorder=1))
+    # 1. โครงคาน (วาดตามแนวนอน)
+    ax.add_patch(patches.Rectangle((0, 0), total_L, h_mm, lw=2, ec='black', fc='none', zorder=10))
     
     # 2. Supports
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
-            x = row['x'] * 1000
-            _draw_support_symbol(ax, x, 0, row.get('type', 'Pin'), row.get('id', ''))
+            x_pos = row['x'] * 1000
+            _draw_support_symbol(ax, x_pos, 0, row.get('type', 'Pin'), row.get('id', ''))
 
-    # 3. Reinforcement
+    # 3. Reinforcement Logic
     x_cursor = 0
+    y_top_rebar = h_mm - cover_mm - 15
+    y_bot_rebar = cover_mm + 15
+
     for i, span_L in enumerate(spans_mm):
-        if i >= len(design_res): break
         res = design_res[i]
-        end_cursor = x_cursor + span_L
         mid_span = x_cursor + span_L/2
         
-        # Top Bars
-        top_y = h_mm - cover_mm - 25
-        L_neg = span_L * 0.25
-        ax.plot([x_cursor, x_cursor + L_neg], [top_y, top_y], color=COLOR_TOP, lw=3, solid_capstyle='round')
-        ax.plot([end_cursor - L_neg, end_cursor], [top_y, top_y], color=COLOR_TOP, lw=3, solid_capstyle='round')
-        ax.plot([x_cursor + L_neg, end_cursor - L_neg], [top_y, top_y], color=COLOR_TOP, lw=0.8, ls=':') 
-        
-        text_y_top = top_y + 120 
-        target_x = end_cursor - L_neg/2
-        ax.annotate(f"{res['neg']['n']}-DB{int(res['top_db'])}", 
-                    xy=(target_x, top_y), xytext=(target_x, text_y_top),
-                    arrowprops=dict(arrowstyle='->', color=COLOR_TOP, lw=1),
-                    ha='center', va='center', color=COLOR_TOP, fontweight='bold', fontsize=9,
-                    bbox=dict(fc='white', ec='none', pad=1))
+        # วาดเหล็กปลอก (เส้นแนวตั้ง)
+        s_spacing = res['shear']['s']
+        num_stirrups = max(2, int(span_L / s_spacing))
+        stir_x = np.linspace(x_cursor + 50, x_cursor + span_L - 50, num_stirrups)
+        for sx in stir_x:
+            ax.plot([sx, sx], [cover_mm, h_mm-cover_mm], color=COLOR_STIRRUP, lw=0.6, alpha=0.3)
 
-        # Bottom Bars
-        bot_y = cover_mm + 25
-        ax.plot([x_cursor + 100, end_cursor - 100], [bot_y, bot_y], color=COLOR_BOT, lw=3)
-        ax.text(mid_span, bot_y + 50, f"{res['pos']['n']}-DB{int(res['bot_db'])}", 
-                color=COLOR_BOT, ha='center', fontweight='bold', fontsize=9)
+        # วาดเหล็กเสริมพิเศษบน (Negative)
+        L_neg = span_L * 0.30
+        ax.plot([x_cursor, x_cursor + L_neg], [y_top_rebar, y_top_rebar], color=COLOR_TOP, lw=2.5, zorder=15)
+        ax.plot([x_cursor + span_L - L_neg, x_cursor + span_L], [y_top_rebar, y_top_rebar], color=COLOR_TOP, lw=2.5, zorder=15)
+        # Hanger Bar (เส้นบางประคองช่วงกลาง)
+        ax.plot([x_cursor + L_neg, x_cursor + span_L - L_neg], [y_top_rebar, y_top_rebar], color=COLOR_TOP, lw=0.8, ls=':', alpha=0.5)
 
-        # Stirrup
-        stir_text = f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}"
-        ax.text(mid_span, -180, f"Stir: {stir_text}", color=COLOR_STIRRUP, ha='center', va='top', fontsize=9)
-        ax.annotate("", xy=(mid_span, cover_mm), xytext=(mid_span, -170), 
-                    arrowprops=dict(arrowstyle='-', color=COLOR_STIRRUP, lw=0.5, linestyle=':'))
+        # วาดเหล็กเสริมล่าง (Positive)
+        ax.plot([x_cursor + 50, x_cursor + span_L - 50], [y_bot_rebar, y_bot_rebar], color=COLOR_BOT, lw=2.5, zorder=15)
 
-        # Section Cuts
-        ax.vlines(mid_span, -100, h_mm+100, colors='purple', linestyles='dashdot', lw=1)
-        ax.text(mid_span, h_mm+120, f"Sec {i+1}", color='purple', ha='center', fontsize=8)
+        # Labels
+        ax.text(mid_span, h_mm + 60, f"{res['neg']['n']}-DB{int(res['top_db'])}", color=COLOR_TOP, ha='center', fontsize=8, fontweight='bold')
+        ax.text(mid_span, -100, f"RB{int(res['stir_db'])}@{int(s_spacing)}", color=COLOR_STIRRUP, ha='center', fontsize=8)
+        ax.text(mid_span, y_bot_rebar + 30, f"{res['pos']['n']}-DB{int(res['bot_db'])}", color=COLOR_BOT, ha='center', fontsize=8)
+
+        # Section Marker
+        ax.vlines(mid_span, -50, h_mm + 120, colors='purple', linestyles='dashdot', lw=0.7)
+        ax.text(mid_span, h_mm + 180, f"SEC {i+1}", color='purple', ha='center', fontsize=8, fontweight='bold')
         
         x_cursor += span_L
 
-    _draw_dim_line(ax, (0, h_mm), (total_L, h_mm), f"Total L = {total_L/1000:.2f} m", offset=400)
-
-    ax.axis('equal')
+    # Total Dimension
+    _draw_dim_line(ax, (0, h_mm), (total_L, h_mm), f"Total L = {total_L/1000:.2f} m", offset=350)
+    
+    # บังคับการแสดงผลให้เป็นแนวนอนคาน
+    ax.set_aspect('auto') # ปรับเพื่อให้ความยาวคานไม่โดนบีบจนเป็นแนวตั้ง
     ax.axis('off')
     ax.set_xlim(-500, total_L + 500)
-    ax.set_ylim(-600, h_mm + 800)
-    
+    ax.set_ylim(-600, h_mm + 600)
     return fig
