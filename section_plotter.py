@@ -5,10 +5,6 @@ import io
 import numpy as np
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm):
-    """
-    วาดรูปตัดยาวคาน พร้อม Logic การหยุดเหล็ก (Bar Curtailment)
-    และปรับปรุงตำแหน่ง Support รวมถึงลำดับชั้นเหล็กล่าง
-    """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
     v_h = 400  
@@ -16,16 +12,14 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     fig_w = max(16, total_L / 300)
     fig, ax = plt.subplots(figsize=(fig_w, 5))
     
-    # 1. วาดตัวคาน (Beam Outline)
+    # 1. วาดตัวคาน
     beam = patches.Rectangle((0, 0), total_L, v_h, lw=2, ec='black', fc='#fdfdfd', zorder=5)
     ax.add_patch(beam)
     
-    # 2. วาด Grid Line และระยะ Span
+    # 2. วาด Grid Line
     x_curr = 0
     for i, s_mm in enumerate(spans_mm + [0]):
-        # เส้น Center Line
         ax.plot([x_curr, x_curr], [-650, v_h + 450], color='#bdc3c7', ls='--', lw=1, zorder=1)
-        # สัญลักษณ์ Grid
         ax.annotate(chr(65+i), xy=(x_curr, v_h + 500), ha='center', va='center',
                     bbox=dict(boxstyle='circle', fc='white', ec='black', lw=1.5), 
                     fontsize=14, fontweight='bold')
@@ -35,28 +29,36 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
             ax.text(x_curr + s_mm/2, v_h + 300, f"{s_mm/1000:.2f} m", ha='center', fontweight='bold')
             x_curr += s_mm
 
-    # 3. วาดจุดรองรับ (Improved Supports) - วาดเป็นเสาประคองใต้คาน
+    # 3. วาดจุดรองรับตามประเภท (Improved Support Shapes)
     if not sup_df.empty:
         for _, row in sup_df.iterrows():
             sx = row['x'] * 1000
-            # วาดเสาขนาด 200mm รองรับใต้คานพอดี
-            ax.add_patch(patches.Rectangle((sx-100, -300), 200, 300, fc='#dfe6e9', ec='black', lw=1.5, zorder=4))
-            ax.text(sx, -450, f"S{row['id']}", ha='center', fontweight='bold', fontsize=11)
+            stype = str(row.get('type', 'PIN')).upper()
+            if stype == 'FIXED':
+                ax.add_patch(patches.Rectangle((sx-120, -300), 240, 300, fc='#dfe6e9', ec='black', lw=1.5, hatch='///', zorder=4))
+            elif stype == 'ROLLER':
+                ax.add_patch(patches.Polygon([[sx, 0], [sx-100, -180], [sx+100, -180]], fc='white', ec='black', lw=1.5, zorder=4))
+                ax.add_patch(patches.Circle((sx, -220), 40, fc='black', zorder=4))
+            else: # PIN
+                ax.add_patch(patches.Polygon([[sx, 0], [sx-100, -200], [sx+100, -200]], fc='#2c3e50', ec='black', lw=1.5, zorder=4))
+            ax.text(sx, -450, f"S{row['id']}\n({stype})", ha='center', fontweight='bold', fontsize=9)
 
-    # 4. วาดเหล็กเสริมแยกตาม Layer พร้อม Curtailment
+    # 4. วาดเหล็กเสริมและ Label
     x_curr = 0
-    v_spacing = 30.0 
+    v_spacing = 35.0 
     
     for i, span_L in enumerate(spans_mm):
         res = design_res[i]
         stir_db = res.get('stir_db', 9)
         
         # --- TOP REINFORCEMENT ---
-        # วาด L1 อยู่บนสุด แล้วไล่ L2, L3 ลงมา
         top_layers = res.get('top', {}).get('all_layers', [])
         curr_y_top = v_h - (cover_mm + stir_db)
+        # วาดเส้นและเก็บข้อมูล Label (เรียง L1 บนสุดไปหาล่าง)
+        t_labels = []
         for l_idx, layer in enumerate(top_layers):
             if layer['n'] > 0:
+                t_labels.append(f"L{l_idx+1}: {int(layer['n'])}DB{int(layer['db'])}")
                 if l_idx == 0:
                     x_s, x_e = x_curr, x_curr + span_L
                 else:
@@ -64,43 +66,39 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
                     ax.plot([x_curr, x_curr + cut_off], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                     ax.plot([x_curr + span_L - cut_off, x_curr + span_L], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                     x_s, x_e = None, None
-                
                 if x_s is not None:
                     ax.plot([x_s, x_e], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                 curr_y_top -= v_spacing
         
-        # --- BOTTOM REINFORCEMENT (สลับลำดับ L1 อยู่ล่างสุด) ---
+        # --- BOTTOM REINFORCEMENT ---
         bot_layers = res.get('bot', {}).get('all_layers', [])
         curr_y_bot = cover_mm + stir_db
+        b_labels = [] # เราจะเก็บ Label เพื่อเรียงใหม่
         for l_idx, layer in enumerate(bot_layers):
             if layer['n'] > 0:
+                b_labels.append(f"L{l_idx+1}: {int(layer['n'])}DB{int(layer['db'])}")
                 if l_idx == 0:
-                    # L1: เหล็กเมน อยู่ล่างสุด ลากเกือบเต็ม Span
                     x_s, x_e = x_curr + 50, x_curr + span_L - 50
                 else:
-                    # L2, L3: เหล็กเสริมพิเศษ ซ้อนขึ้นข้างบน และหยุดเหล็ก (Curtailment)
                     offset = span_L * 0.125
                     x_s, x_e = x_curr + offset, x_curr + span_L - offset
-                
                 ax.plot([x_s, x_e], [curr_y_bot, curr_y_bot], color='#008c00', lw=2.5, zorder=10)
-                # เลื่อนระดับขึ้นสำหรับชั้นถัดไป (L2 อยู่เหนือ L1)
                 curr_y_bot += v_spacing
         
-        # 5. วาดเหล็กปลอก (Stirrups)
+        # 5. วาดเหล็กปลอก
         s_spacing = res['shear'].get('s', 150)
         num_stirrups = int(span_L / s_spacing)
         for j in range(num_stirrups + 1):
             stir_x = x_curr + (j * s_spacing)
             if stir_x <= x_curr + span_L:
-                ax.plot([stir_x, stir_x], [cover_mm, v_h - cover_mm], color='#bdc3c7', lw=0.8, alpha=0.5, zorder=6)
+                ax.plot([stir_x, stir_x], [cover_mm, v_h - cover_mm], color='#bdc3c7', lw=0.7, alpha=0.5, zorder=6)
 
-        # 6. Label รายละเอียด
+        # 6. Label เรียงลำดับ (Top: L1 บน | Bot: L1 ล่าง)
         mid = x_curr + span_L/2
-        t_label = "\n".join([f"L{idx+1}: {int(l['n'])}DB{int(l['db'])}" for idx, l in enumerate(top_layers) if l['n'] > 0])
-        b_label = "\n".join([f"L{idx+1}: {int(l['n'])}DB{int(l['db'])}" for idx, l in enumerate(bot_layers) if l['n'] > 0])
-        
-        ax.text(mid, v_h + 80, t_label, color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
-        ax.text(mid, -120, b_label, color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
+        # Top Label เรียง L1 ไว้บนสุด
+        ax.text(mid, v_h + 80, "\n".join(t_labels), color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
+        # Bot Label เรียง L1 ไว้ล่างสุด (ใช้ reversed เพื่อให้ L2, L3 อยู่บรรทัดบน L1)
+        ax.text(mid, -120, "\n".join(reversed(b_labels)), color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
         
         x_curr += span_L
 
@@ -117,7 +115,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) - ห้ามตัดทิ้งเด็ดขาด
+    วาดรูปตัดขวางคาน (Cross Section) - ไม่มีการย่อหรือตัดทิ้ง
     """
     b, h = float(res.get('b', 200)), float(res.get('h', 400))
     cover = float(res.get('cover', 25))
@@ -129,14 +127,11 @@ def plot_cross_section(res):
     fig, ax = plt.subplots(figsize=(6.0, 5.0))
     x0, y0 = -b/2, -h/2
     
-    # 1. วาดคอนกรีต
     ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
-    
-    # 2. วาดเหล็กปลอก
     s_x, s_y, s_w, s_h = x0+cover, y0+cover, b-2*cover, h-2*cover
     ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, edgecolor='#34495e', lw=1.5, zorder=2))
     
-    # 3. วาดเหล็กบน
+    # วาดเหล็กบน
     v_spacing = 25.0 
     curr_y_top = (h/2) - cover - stir_db
     for l in top_layers:
@@ -144,22 +139,20 @@ def plot_cross_section(res):
         if n <= 0: continue
         y_p = curr_y_top - (db/2)
         x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p:
-            ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
+        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
         curr_y_top -= (db + v_spacing)
 
-    # 4. วาดเหล็กล่าง (L1 อยู่ล่างสุด)
+    # วาดเหล็กล่าง (L1 อยู่ล่างสุด)
     curr_y_bot = (-h/2) + cover + stir_db
     for l in bot_layers:
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n <= 0: continue
         y_p = curr_y_bot + (db/2)
         x_p = np.linspace(s_x + stir_db + db/2, s_x + s_w - stir_db - db/2, n) if n > 1 else [0]
-        for x in x_p:
-            ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
+        for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
         curr_y_bot += (db + v_spacing)
 
-    # 5. ใส่รายละเอียด
+    # Label รายละเอียด
     text_x = b/2 + (b * 0.2)
     top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
     bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
@@ -176,6 +169,4 @@ def plot_cross_section(res):
     
     f = io.StringIO()
     fig.savefig(f, format="svg", bbox_inches='tight', transparent=True)
-    svg_string = f.getvalue()
-    plt.close(fig)
-    return svg_string
+    return f.getvalue()
