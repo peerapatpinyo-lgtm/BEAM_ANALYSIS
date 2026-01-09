@@ -41,16 +41,19 @@ def calculate_layer_properties(layers, b, h, cover, stir_db, is_top=False):
     layers = [{'n': 2, 'db': 16}, {'n': 2, 'db': 20}] (Ordered from Outer to Inner)
     """
     if not layers:
-        return 0.0, h, h # No steel
+        return 0.0, h - cover, h - cover # Fallback case (No steel)
 
     Ast_total = 0.0
     moment_area_sum = 0.0
     
-    # ระยะจากผิวคอนกรีตถึงจุดศูนย์กลางเหล็กแต่ละชั้น
-    # Layer 0 คือชั้นนอกสุด (ติดผิว), Layer 1 คือชั้นถัดเข้าไป
-    current_y = cover + stir_db # Start at inside of stirrup
+    # ระยะจากผิวคอนกรีต (ฝั่งรับแรงดึง) ถึงผิวในของเหล็กปลอก
+    current_y_base = cover + stir_db 
     
-    extreme_center = 0.0 # Keep track of outer-most layer center for dt
+    extreme_center = 0.0 # เก็บตำแหน่งแกนเหล็กชั้นนอกสุด (สำหรับหา dt)
+    
+    # Loop คำนวณทีละชั้น (สมมติเรียงจาก นอก -> ใน)
+    prev_db = 0.0
+    current_y_center = 0.0
     
     for i, lay in enumerate(layers):
         n = lay['n']
@@ -60,47 +63,26 @@ def calculate_layer_properties(layers, b, h, cover, stir_db, is_top=False):
         
         area = n * (np.pi * (db/2)**2)
         
-        # Calculate center of this layer
         if i == 0:
-            center_dist = current_y + db/2
-            extreme_center = center_dist
+            # ชั้นนอกสุด: Cover + Stirrup + db/2
+            current_y_center = current_y_base + db/2
+            extreme_center = current_y_center
         else:
-            # Previous layer center + prev_db/2 + spacing + current_db/2
+            # ชั้นถัดไป: Center เดิม + db_prev/2 + spacing(25) + db_curr/2
+            spacing = 25.0 # Min clear spacing
             prev_db = layers[i-1]['db']
-            spacing = 25.0 # Standard min clear spacing
-            # Distance from previous center to this center
-            step = (prev_db / 2) + spacing + (db / 2)
-            center_dist = extreme_center + step # This logic assumes stacking linear relative to 1st layer, simplistic but robust
-            # Update explicit calculation for stacking:
-            # Better: Calculate Y from surface cumulatively
-            # But simpler: Just add spacing to previous Y
-             
-        # Re-calc strictly:
-        # Layer 0 center: cover + stir + db/2
-        # Layer 1 center: Layer 0 center + db0/2 + 25 + db1/2
-        
-        if i == 0:
-            y_loc = cover + stir_db + db/2
-            extreme_y = y_loc
-        else:
-            prev_db = layers[i-1]['db']
-            y_loc = extreme_y + (prev_db/2) + 25.0 + (db/2) # Add spacing
-            extreme_y = y_loc # Update for next loop (Wait, this is moving inwards)
+            current_y_center = extreme_center + (prev_db/2) + spacing + (db/2)
+            # Update extreme_center? No, extreme_center is meant to be strictly the 'current' 
+            # outer reference for stacking, let's update it to current to stack sequentially
+            extreme_center = current_y_center 
             
-            # Correct Logic: 
-            # We need absolute distance from the compression face? 
-            # No, let's calculate distance from Tension Face first (y_bottom), then convert to d.
-        
         Ast_total += area
-        moment_area_sum += area * y_loc
-        
-        # Store for next iteration reference if needed
-        # (In this simple loop, re-calculating y_loc based on previous is fine)
+        moment_area_sum += area * current_y_center
 
     if Ast_total == 0:
         return 0.0, 0.0, 0.0
 
-    # Centroid from Tension Face
+    # Centroid (y_bar) วัดจากผิวรับแรงดึง
     y_bar = moment_area_sum / Ast_total
     
     # Effective Depth (d) = h - y_bar
@@ -111,18 +93,13 @@ def calculate_layer_properties(layers, b, h, cover, stir_db, is_top=False):
     first_layer_db = layers[0]['db']
     dist_to_first_center = cover + stir_db + first_layer_db/2
     dt = h - dist_to_first_center
-    
-    if is_top:
-        # Check logic for Top bars? Same math, just flipped reference.
-        # d is distance from Bottom face (Compression) to Centroid of Top Steel
-        pass 
         
-    return Ast_total, d, dt
+    return float(Ast_total), float(d), float(dt)
 
 def get_phi_Mn_details(layers, b, h, fc, fy, cover, stir_db):
     """
     Calculate Moment Capacity (Phi Mn) for Multi-Layer Steel
-    layers: list of dict [{'n':.., 'db':..}, ...]
+    **IMPORTANT**: Requires stir_db to calculate precise d
     MUST RETURN EXACTLY 6 VALUES: (phi_Mn, Ast, a, Mn, c, strain_t)
     """
     # 1. Calculate Group Properties
@@ -186,7 +163,7 @@ def check_shear_details(Vu_kN, b, d, fc, fy, stir_db, spacing):
     
     # สร้าง Status พร้อมระบุหน่วยเปรียบเทียบ
     if not is_ok:
-        status = f"FAIL (Mu={abs(Vu_kN):.1f} > φVn={phi_Vn:.1f} kN)"
+        status = f"FAIL (Vu={abs(Vu_kN):.1f} > φVn={phi_Vn:.1f})"
     else:
         status = "OK"
 
