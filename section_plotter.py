@@ -82,71 +82,74 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) จัดกลุ่มตัวหนังสือไว้ด้านขวาทั้งหมด
-    และเว้นระยะห่างระหว่างรูปกับตัวหนังสือให้ชัดเจน
+    วาดรูปตัดขวางคาน (Cross Section) แบบ High-Detail
+    เน้นเหล็กปลอกสวยงาม และจัดกลุ่ม Text ด้านขวาแบบเว้นระยะห่างพิเศษ
     """
     b, h = float(res['b']), float(res['h'])
     cover = float(res['cover'])
     
-    # กำหนดขนาด Figure (เพิ่มความกว้างเพื่อรองรับ Space ด้านขวา)
-    fig, ax = plt.subplots(figsize=(5.5, 3.2))
+    fig, ax = plt.subplots(figsize=(6.0, 3.5))
     x0, y0 = -b/2, -h/2
     
     # 1. วาดหน้าตัดคอนกรีต
-    ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
+    ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=3, zorder=1))
     
-    # 2. วาดเหล็กปลอก
-    ax.add_patch(patches.Rectangle((x0 + cover, y0 + cover), b - 2*cover, h - 2*cover, 
-                                   fill=False, edgecolor='#34495e', lw=1.2, zorder=2))
+    # 2. วาดเหล็กปลอก (Detailed Stirrup with Hooks)
+    s_x, s_y = x0 + cover, y0 + cover
+    s_w, s_h = b - 2*cover, h - 2*cover
+    # ตัวเหล็กปลอกหลัก
+    ax.add_patch(patches.Rectangle((s_x, s_y), s_w, s_h, fill=False, edgecolor='#2c3e50', lw=2, zorder=2))
+    # วาด Hook (มุมบนซ้าย) เพื่อความสวยงามแบบ Engineering Drawing
+    hook_len = 15
+    ax.plot([s_x, s_x + hook_len], [s_y + s_h, s_y + s_h - hook_len], color='#2c3e50', lw=2, zorder=2)
+    ax.plot([s_x + hook_len, s_x], [s_y + s_h, s_y + s_h - hook_len], color='#2c3e50', lw=2, zorder=2)
     
     # 3. เหล็กบน (Top Bars)
-    n_top = int(res['top']['n'])
-    db_top = float(res['top_db'])
-    y_pos_top = (h/2) - cover - (db_top/2) - 1.5
-    x_top = np.linspace(x0 + cover + 10, x0 + b - cover - 10, n_top) if n_top > 1 else [0]
+    n_top, db_top = int(res['top']['n']), float(res['top_db'])
+    y_pos_top = (h/2) - cover - (db_top/2) - 2
+    x_top = np.linspace(s_x + 12, s_x + s_w - 12, n_top) if n_top > 1 else [0]
     for x in x_top:
-        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1.2, color='#d30000', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1.5, color='#d30000', zorder=10))
 
     # 4. เหล็กเมนล่าง (Bottom Bars)
-    n_bot = int(res['bot']['n'])
-    db_bot = float(res['bot_db'])
-    y_pos_bot = (-h/2) + cover + (db_bot/2) + 1.5
-    x_bot = np.linspace(x0 + cover + 10, x0 + b - cover - 10, n_bot) if n_bot > 1 else [0]
+    n_bot, db_bot = int(res['bot']['n']), float(res['bot_db'])
+    y_pos_bot = (-h/2) + cover + (db_bot/2) + 2
+    x_bot = np.linspace(s_x + 12, s_x + s_w - 12, n_bot) if n_bot > 1 else [0]
     for x in x_bot:
-        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1.2, color='#008c00', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1.5, color='#008c00', zorder=10))
 
     # --- ส่วนการจัดวางตัวหนังสือด้านขวา (Right Side Annotation) ---
-    # เว้น Space จากขอบคานด้านขวาออกไป (b*0.15)
-    text_x_start = b/2 + (b * 0.15)
+    # เว้นระยะห่าง (Space) จากคานออกไป 30% ของความกว้างคาน
+    text_x_start = b/2 + (b * 0.3)
     
-    # ระบุเหล็กบน
-    ax.text(text_x_start, y_pos_top, f"{n_top}-DB{int(db_top)} (TOP)", 
-            color='#d30000', va='center', ha='left', fontsize=10, fontweight='bold')
+    # ข้อมูลเหล็กบน
+    ax.text(text_x_start, y_pos_top, f"{n_top}-DB{int(db_top)} (Main Top)", 
+            color='#d30000', va='center', ha='left', fontsize=11, fontweight='bold')
     
-    # ระบุเหล็กปลอก (Stirrup) - วางไว้ตรงกลางความสูงคาน
-    ax.text(text_x_start, 0, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])} (STIR.)", 
-            color='#34495e', va='center', ha='left', fontsize=9, fontweight='bold')
+    # ข้อมูลเหล็กปลอก (ตรงกลางคาน)
+    ax.text(text_x_start, 0, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])} (Stirrups)", 
+            color='#34495e', va='center', ha='left', fontsize=10, fontweight='bold')
     
-    # ระบุเหล็กล่าง
-    ax.text(text_x_start, y_pos_bot, f"{n_bot}-DB{int(db_bot)} (BOT)", 
-            color='#008c00', va='center', ha='left', fontsize=10, fontweight='bold')
+    # ข้อมูลเหล็กล่าง
+    ax.text(text_x_start, y_pos_bot, f"{n_bot}-DB{int(db_bot)} (Main Bot)", 
+            color='#008c00', va='center', ha='left', fontsize=11, fontweight='bold')
 
-    # 5. ชื่อ Section (วางไว้กึ่งกลางคานด้านบน)
-    ax.text(0, h/2 + (h*0.05), f"SECTION {int(b)}x{int(h)}", 
-            ha='center', va='bottom', fontweight='black', fontsize=11)
+    # 5. ชื่อ Section (เว้นระยะห่างด้านบนเพิ่มขึ้นเล็กน้อย)
+    ax.text(0, h/2 + (h*0.12), f"SECTION {int(b)}x{int(h)}", 
+            ha='center', va='bottom', fontweight='black', fontsize=12, color='black')
     
-    # --- 6. Viewport Optimization ---
+    # --- 6. Viewport Optimization (ดันรูปขึ้นบนสุด) ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # บีบแนว Y ให้รูปขยับขึ้น (ylim ด้านล่างน้อย ด้านบนเผื่อชื่อ Section)
-    ax.set_ylim(-h/2 - (h*0.1), h/2 + (h*0.25))
+    # บีบขอบล่าง (ylim min) ให้ชิดคานที่สุด และเผื่อขอบบน (ylim max) ให้ชื่อ Section
+    ax.set_ylim(-h*0.55, h*0.8)
     
-    # ขยายแนว X ด้านขวาให้กว้างกว่าด้านซ้ายเพื่อให้เห็นตัวหนังสือครบและมี Space
-    ax.set_xlim(-b/2 - (b*0.1), b/2 + (b*0.8))
+    # ขยายขอบ X เพื่อรองรับ Space และตัวหนังสือที่ยาวขึ้น
+    ax.set_xlim(-b*0.7, b*1.5)
     
     f = io.StringIO()
-    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.01, transparent=True)
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0, transparent=True)
     svg_string = f.getvalue()
     plt.close(fig)
     return svg_string
