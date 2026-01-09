@@ -5,7 +5,7 @@ from rc_utils import normalize_section_units
 def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
     """
     Helper function to prepare load dataframe for solver.
-    Scalals loads by Load Factors (f_dl, f_ll).
+    Scales loads by Load Factors (f_dl, f_ll).
     Also handles Unit Normalization for Self-Weight calculation.
     """
     # Normalize inputs for self-weight calculation
