@@ -5,7 +5,7 @@ import numpy as np
 
 def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm):
     """
-    (คงเดิม 100% ตามต้นฉบับที่คุณส่งมา) วาดรูปตัดยาวคาน
+    วาดรูปตัดยาวคาน (Longitudinal Section) พร้อมรายละเอียดเหล็กเสริมและระยะห่าง
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
@@ -83,12 +83,6 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
     plt.close(fig)
     return svg_string, png_bytes
 
-# --- 💎 แก้ไขฟังก์ชัน Cross Section ให้แสดงผลครบและระบุเหล็กกำกับ ---
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import io
-import numpy as np
-
 def plot_cross_section(res):
     """
     วาดรูปตัดขวางคาน (Cross Section) แก้ไขปัญหารูปโดนตัดครึ่งและจัดตำแหน่งใหม่ให้สมดุล
@@ -97,10 +91,10 @@ def plot_cross_section(res):
     h = float(res['h'])
     cover = float(res['cover'])
     
-    # 1. ตั้งค่า Figure ให้เป็นสี่เหลี่ยมจัตุรัสเพื่อให้สัดส่วนคานไม่เพี้ยน
+    # 1. ตั้งค่า Figure ให้สมดุล
     fig, ax = plt.subplots(figsize=(5, 5))
     
-    # คำนวณจุดเริ่มเพื่อให้คานอยู่กึ่งกลางที่พิกัด 0,0 (กึ่งกลางคานพอดี)
+    # ใช้ระบบพิกัดที่ให้ 0,0 อยู่ตรงกลางคานเพื่อให้การกระจาย Text รอบข้างทำได้ง่าย
     x0, y0 = -b/2, -h/2
     
     # 2. วาดหน้าตัดคอนกรีต
@@ -115,7 +109,11 @@ def plot_cross_section(res):
     n_top = int(res['top']['n'])
     db_top = float(res['top_db'])
     y_pos_top = (h/2) - stir_off - (db_top/2) - 2
-    x_top = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_top) if n_top > 1 else [0]
+    # กระจายเหล็กบน
+    if n_top > 1:
+        x_top = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_top)
+    else:
+        x_top = [0]
     
     for x in x_top:
         ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1, color='#d30000', zorder=10))
@@ -128,50 +126,38 @@ def plot_cross_section(res):
     n_bot = int(res['bot']['n'])
     db_bot = float(res['bot_db'])
     y_pos_bot = (-h/2) + stir_off + (db_bot/2) + 2
-    x_bot = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_bot) if n_bot > 1 else [0]
+    # กระจายเหล็กล่าง
+    if n_bot > 1:
+        x_bot = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_bot)
+    else:
+        x_bot = [0]
     
     for x in x_bot:
         ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1, color='#008c00', zorder=10))
         
-    # Label เหล็กล่าง (วางใต้คาน - จุดนี้คือจุดที่เคยหายไป)
+    # Label เหล็กล่าง (วางใต้คาน)
     ax.text(0, -h/2 - (h*0.1), f"{n_bot}-DB{int(db_bot)}", color='#008c00', 
             ha='center', va='top', fontweight='bold', fontsize=11)
 
     # 6. ข้อความหัวข้อ (Section Name) และเหล็กปลอก
-    ax.text(0, h/2 + (h*0.25), f"SECTION {int(b)}x{int(h)} mm", ha='center', fontweight='black', fontsize=13)
-    ax.text(0, -h/2 - (h*0.25), f"Stirrup: RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
+    ax.text(0, h/2 + (h*0.3), f"SECTION {int(b)}x{int(h)} mm", ha='center', fontweight='black', fontsize=13)
+    ax.text(0, -h/2 - (h*0.3), f"Stirrup: RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
             ha='center', color='#34495e', fontsize=10, fontweight='bold')
     
-    # --- 7. ปรับ Viewport ให้สมดุล ---
+    # --- 7. ปรับ Viewport ให้สมดุลและไม่โดนตัดขอบ ---
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # ตั้งค่า Margin ให้เหลือพื้นที่รอบคานประมาณ 40% ของความสูงคาน เพื่อให้เห็น Text ครบ
-    margin = h * 0.4
-    ax.set_ylim(-h/2 - margin, h/2 + margin)
-    ax.set_xlim(-b/2 - (b*0.2), b/2 + (b*0.2)) # บีบด้านข้างให้คานดูใหญ่ขึ้น
+    # กำหนดขอบเขตการแสดงผล (Margin) ให้พอดีกับข้อความทั้งบนและล่าง
+    # เพิ่มระยะแนวตั้ง (ylim) ให้มากขึ้นเพื่อไม่ให้ตัวหนังสือ Stirrup หาย
+    v_margin = h * 0.5
+    h_margin = b * 0.3
+    ax.set_ylim(-h/2 - v_margin, h/2 + v_margin)
+    ax.set_xlim(-b/2 - h_margin, b/2 + h_margin)
     
     f = io.StringIO()
-    # ใช้ pad_inches=0 เพื่อให้ Streamlit คุมพื้นที่เองได้แม่นยำ
-    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.1, transparent=True)
+    # ใช้ bbox_inches='tight' และเพิ่ม pad_inches เล็กน้อยเพื่อป้องกันขอบตัวหนังสือขาด
+    fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.15, transparent=True)
     svg_string = f.getvalue()
-    plt.close(fig)
-    return svg_string
-💡 คำแนะนำเพิ่มเติมสำหรับ app.py
-เพื่อให้รูปที่แก้ใหม่นี้ไม่โดนตัดในหน้าเว็บ Streamlit ให้ปรับตรงส่วนการแสดงผลดังนี้ครับ:
-
-Python
-
-# ใน app.py ตรงส่วนที่แสดงผล Cross Section
-with col_draw:
-    st.markdown("<p style='text-align:center; font-weight:bold;'>Section Preview</p>", unsafe_allow_html=True)
-    # ... (เตรียมข้อมูล cs_data) ...
-    cs_svg = section_plotter.plot_cross_section(cs_data)
-    
-    # ปรับ height ให้กว้างขึ้นเป็น 400 เพื่อความปลอดภัย
-    st.components.v1.html(
-        f'<div style="background-color: white; border-radius: 8px; display: flex; justify-content: center; align-items: center; padding: 20px;">{cs_svg}</div>',
-        height=400
-    )
     plt.close(fig)
     return svg_string
