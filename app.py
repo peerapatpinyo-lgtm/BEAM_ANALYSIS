@@ -75,15 +75,23 @@ else:
 
                         # --- 1. TOP STEEL (Support) ---
                         st.markdown("#### 🔼 Top Reinforcement (Negative Moment)")
-                        ct1, ct2, ct3 = st.columns([2, 2, 1])
-                        with ct1: t_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}")
-                        with ct2: t_qty = st.number_input("Qty", 2, 20, 2, key=f"tn_{i}")
-                        with ct3: t_lay = st.selectbox("Layers", [1, 2, 3], index=0, key=f"tl_{i}")
+                        num_t_layers = st.selectbox("Number of Top Layers", [1, 2, 3], index=0, key=f"tl_qty_{i}")
+                        top_layers = []
+                        for l_idx in range(num_t_layers):
+                            ct1, ct2 = st.columns([1, 1])
+                            with ct1: t_db = st.selectbox(f"L{l_idx+1} Size", [12, 16, 20, 25, 28], index=1, key=f"tdb_{i}_{l_idx}")
+                            with ct2: t_qty = st.number_input(f"L{l_idx+1} Qty", 0, 20, 2 if l_idx==0 else 0, key=f"tn_{i}_{l_idx}")
+                            top_layers.append({'n': t_qty, 'db': t_db})
                         
-                        d_t = h_mm - (cover_mm + 9 + t_db/2 + (t_lay-1)*(25 + t_db)/2)
+                        # Calculate effective d_t based on centroid of top layers
+                        # For top steel, d is from Bottom face to Centroid of top steel
+                        d_t_val, as_prov_t, y_centroid_t = rc_design_engine.get_centroid_and_d(top_layers, h_mm, cover_mm, 9)
+                        # Correction for Top Steel: d = Centroid from top edge
+                        d_t = h_mm - y_centroid_t if y_centroid_t > 0 else h_mm - (cover_mm + 9 + 16/2)
+                        
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
                         as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
-                        phi_Mn_t, as_prov_t, _, _, _, _ = rc_design_engine.get_phi_Mn_details(t_qty, t_db, d_t, b_mm, fc, fy)
+                        phi_Mn_t, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(top_layers, d_t, b_mm, h_mm, fc, fy)
 
                         st.markdown(f"""
 | **Top Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
@@ -94,14 +102,21 @@ else:
 
                         # --- 2. BOTTOM STEEL (Mid-Span) ---
                         st.markdown("#### 🔽 Bottom Reinforcement (Positive Moment)")
-                        cb1, cb2, cb3 = st.columns([2, 2, 1])
-                        with cb1: b_db = st.selectbox("Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}")
-                        with cb2: b_qty = st.number_input("Qty", 2, 20, 3, key=f"bn_{i}")
-                        with cb3: b_lay = st.selectbox("Layers", [1, 2, 3], index=0, key=f"bl_{i}")
+                        num_b_layers = st.selectbox("Number of Bottom Layers", [1, 2, 3], index=0, key=f"bl_qty_{i}")
+                        bot_layers = []
+                        for l_idx in range(num_b_layers):
+                            cb1, cb2 = st.columns([1, 1])
+                            with cb1: b_db = st.selectbox(f"L{l_idx+1} Size", [12, 16, 20, 25, 28], index=1, key=f"bdb_{i}_{l_idx}")
+                            with cb2: b_qty = st.number_input(f"L{l_idx+1} Qty", 0, 20, 3 if l_idx==0 else 0, key=f"bn_{i}_{l_idx}")
+                            bot_layers.append({'n': b_qty, 'db': b_db})
                         
-                        d_b = h_mm - (cover_mm + 9 + b_db/2 + (b_lay-1)*(25 + b_db)/2)
+                        # Calculate effective d_b based on centroid of bottom layers
+                        d_b, as_prov_b, _ = rc_design_engine.get_centroid_and_d(bot_layers, h_mm, cover_mm, 9)
+                        # Fallback if no steel
+                        if d_b <= 0: d_b = h_mm - (cover_mm + 9 + 16/2)
+                        
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
-                        phi_Mn_b, as_prov_b, _, _, _, _ = rc_design_engine.get_phi_Mn_details(b_qty, b_db, d_b, b_mm, fc, fy)
+                        phi_Mn_b, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(bot_layers, d_b, b_mm, h_mm, fc, fy)
 
                         st.markdown(f"""
 | **Bottom Steel Analysis** | **Required** | **Minimum** | **Provided** | **Status** |
@@ -123,23 +138,26 @@ else:
                     with col_draw:
                         cs_data = {
                             'b': b_mm, 'h': h_mm, 'cover': cover_mm, 
-                            'top': {'n': t_qty, 'layers': t_lay, 'db': t_db}, 
-                            'bot': {'n': b_qty, 'layers': b_lay, 'db': b_db}, 
-                            'top_db': t_db, 'bot_db': b_db, 'stir_db': stir_db, 
+                            'top_layers': top_layers, 
+                            'bot_layers': bot_layers,
+                            'top_db': top_layers[0]['db'], 
+                            'bot_db': bot_layers[0]['db'], 
+                            'stir_db': stir_db, 
                             'shear': {'s': stir_s}
                         }
+                        # Note: section_plotter needs to be updated to handle 'top_layers' and 'bot_layers'
                         st.components.v1.html(f'<div style="background:white; padding:10px; border-radius:10px; border:1px solid #ddd;">{section_plotter.plot_cross_section(cs_data)}</div>', height=420)
 
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
                         'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': delta_svc_mm, 
-                        'top_db': t_db, 'bot_db': b_db, 'stir_db': stir_db, 
-                        'pos': {'n': b_qty, 'area': as_prov_b, 'layers': b_lay, 'db': b_db, 'status': (phi_Mn_b >= mu_pos)},
-                        'neg': {'n': t_qty, 'area': as_prov_t, 'layers': t_lay, 'db': t_db, 'status': (phi_Mn_t >= mu_neg)},
+                        'top_db': top_layers[0]['db'], 'bot_db': bot_layers[0]['db'], 'stir_db': stir_db, 
+                        'pos': {'n': sum(l['n'] for l in bot_layers), 'area': as_prov_b, 'layers': bot_layers, 'status': (phi_Mn_b >= mu_pos)},
+                        'neg': {'n': sum(l['n'] for l in top_layers), 'area': as_prov_t, 'layers': top_layers, 'status': (phi_Mn_t >= mu_neg)},
                         'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
-                        'top': {'n': t_qty, 'db': t_db, 'layers': t_lay},
-                        'bot': {'n': b_qty, 'db': b_db, 'layers': b_lay}
+                        'top': {'n': top_layers[0]['n'], 'db': top_layers[0]['db'], 'layers': num_t_layers, 'all_layers': top_layers},
+                        'bot': {'n': bot_layers[0]['n'], 'db': bot_layers[0]['db'], 'layers': num_b_layers, 'all_layers': bot_layers}
                     })
 
             st.markdown("---")
@@ -171,3 +189,7 @@ else:
 
     except Exception as e:
         st.error(f"❌ **System Error:** {e}")
+        st.info("รายละเอียด Error สำหรับการ Debug:")
+        st.exception(e)
+
+#app.py
