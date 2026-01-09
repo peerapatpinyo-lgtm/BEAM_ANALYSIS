@@ -85,62 +85,63 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_m, cover_mm)
 
 def plot_cross_section(res):
     """
-    วาดรูปตัดขวางคาน (Cross Section) แบบ Compact ขั้นสุด ลดพื้นที่ขาวทุกด้าน
+    วาดรูปตัดขวางคาน (Cross Section) แบบใช้เส้นชี้ด้านข้าง 
+    เพื่อบีบพื้นที่แนวตั้งให้เหลือน้อยที่สุด และให้ตัวคานขยายใหญ่ที่สุด
     """
     b = float(res['b'])
     h = float(res['h'])
     cover = float(res['cover'])
     
-    # 1. ตั้งค่า Figure ให้เตี้ยลง (figsize กว้างกว่าสูง)
-    fig, ax = plt.subplots(figsize=(4.2, 4.2))
+    fig, ax = plt.subplots(figsize=(4.5, 4.5))
     x0, y0 = -b/2, -h/2
     
-    # 2. วาดหน้าตัดคอนกรีต
-    ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=2.5, zorder=1))
+    # 1. วาดคอนกรีต
+    ax.add_patch(patches.Rectangle((x0, y0), b, h, facecolor='#ffffff', edgecolor='black', lw=3, zorder=1))
     
-    # 3. วาดเหล็กปลอก (Stirrup)
+    # 2. วาดเหล็กปลอก
     stir_off = cover
     ax.add_patch(patches.Rectangle((x0 + stir_off, y0 + stir_off), b - 2*stir_off, h - 2*stir_off, 
                                    fill=False, edgecolor='#2c3e50', lw=1.5, zorder=2))
     
-    # 4. เหล็กเมนบน (Top Bars)
+    # 3. เหล็กบน (Top Bars) และเส้นชี้ด้านข้าง
     n_top = int(res['top']['n'])
     db_top = float(res['top_db'])
     y_pos_top = (h/2) - stir_off - (db_top/2) - 2
     x_top = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_top) if n_top > 1 else [0]
     for x in x_top:
-        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 1, color='#d30000', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_top), db_top/2 + 2, color='#d30000', zorder=10))
     
-    # Label บน - บีบชิดขอบคอนกรีตที่สุด
-    ax.text(0, h/2 + 5, f"{n_top}-DB{int(db_top)}", color='#d30000', 
-            ha='center', va='bottom', fontweight='bold', fontsize=10)
+    # เส้นชี้เหล็กบน (ชี้ออกซ้าย)
+    ax.annotate(f"{n_top}-DB{int(db_top)}", xy=(x_top[0], y_pos_top), xytext=(x0 - b*0.3, h/2),
+                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.2", color='#d30000', lw=1.5),
+                fontsize=11, fontweight='bold', color='#d30000', ha='right')
 
-    # 5. เหล็กเมนล่าง (Bottom Bars)
+    # 4. เหล็กเมนล่าง (Bottom Bars) และเส้นชี้ด้านข้าง
     n_bot = int(res['bot']['n'])
     db_bot = float(res['bot_db'])
     y_pos_bot = (-h/2) + stir_off + (db_bot/2) + 2
     x_bot = np.linspace(x0 + stir_off + 12, x0 + b - stir_off - 12, n_bot) if n_bot > 1 else [0]
     for x in x_bot:
-        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 1, color='#008c00', zorder=10))
+        ax.add_patch(patches.Circle((x, y_pos_bot), db_bot/2 + 2, color='#008c00', zorder=10))
         
-    # Label ล่าง - บีบชิดขอบคอนกรีตที่สุด
-    ax.text(0, -h/2 - 5, f"{n_bot}-DB{int(db_bot)}", color='#008c00', 
-            ha='center', va='top', fontweight='bold', fontsize=10)
+    # เส้นชี้เหล็กล่าง (ชี้ออกขวา)
+    ax.annotate(f"{n_bot}-DB{int(db_bot)}", xy=(x_bot[-1], y_pos_bot), xytext=(b/2 + b*0.3, -h/2),
+                arrowprops=dict(arrowstyle='->', connectionstyle="arc3,rad=0.2", color='#008c00', lw=1.5),
+                fontsize=11, fontweight='bold', color='#008c00', ha='left')
 
-    # 6. ย้าย "เหล็กปลอก" และ "ชื่อ Section" ไปไว้ด้านข้างคาน (เพื่อลดพื้นที่ขาวบน-ล่าง)
-    # ชื่อ Section ไว้ด้านซ้าย, รายละเอียดปลอกไว้ด้านขวา
-    ax.text(x0 - 15, 0, f"SEC\n{int(b)}x{int(h)}", ha='right', va='center', fontweight='black', fontsize=9, rotation=90)
-    ax.text(b/2 + 15, 0, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
-            ha='left', va='center', color='#34495e', fontsize=9, fontweight='bold', rotation=270)
+    # 5. ข้อมูลหน้าตัดและเหล็กปลอก (วางชิดขอบบน-ล่างมากที่สุด)
+    ax.text(0, h/2 + 2, f"SECTION {int(b)}x{int(h)}", ha='center', va='bottom', fontweight='black', fontsize=12)
+    ax.text(0, -h/2 - 2, f"RB{int(res['stir_db'])}@{int(res['shear']['s'])}", 
+            ha='center', va='top', color='#34495e', fontsize=10, fontweight='bold')
     
-    # --- 7. ปรับ Viewport (บีบพิกัดขั้นสุด) ---
+    # 6. ปรับ Viewport ขั้นสุด
     ax.set_aspect('equal')
     ax.axis('off')
     
-    # กำหนดขอบเขต Y ให้ห่างจากตัวหนังสือบน-ล่างเพียงเล็กน้อย
-    # กำหนดขอบเขต X ให้เผื่อข้อความด้านข้าง
-    ax.set_ylim(-h/2 - (h*0.2), h/2 + (h*0.2)) 
-    ax.set_xlim(-b/2 - (b*0.4), b/2 + (b*0.4))
+    # บีบแกน Y ให้แทบจะเท่ากับความสูงคอนกรีต (เพื่อให้รูปขยายใหญ่)
+    # เผื่อ X ไว้สำหรับเส้นชี้ที่ย้ายไปด้านข้าง
+    ax.set_ylim(-h/2 - (h*0.15), h/2 + (h*0.15)) 
+    ax.set_xlim(x0 - (b*0.7), b/2 + (b*0.7))
     
     f = io.StringIO()
     fig.savefig(f, format="svg", bbox_inches='tight', pad_inches=0.01, transparent=True)
