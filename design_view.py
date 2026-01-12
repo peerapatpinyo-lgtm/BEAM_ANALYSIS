@@ -7,7 +7,7 @@ from section_plotter import plot_longitudinal_section_detailed, plot_cross_secti
 from reporter import render_calculation_report
 
 # ==========================================
-# 1. BOQ CALCULATION (คงเดิม)
+# 1. BOQ CALCULATION
 # ==========================================
 def calculate_boq_summary(design_res, spans):
     total_concrete_vol = 0.0
@@ -16,7 +16,7 @@ def calculate_boq_summary(design_res, spans):
     
     for i, res in enumerate(design_res):
         L = spans[i]
-        # Safety Check: ถ้าค่าเป็น 0 ให้ใช้ Default
+        # Safety Check
         b_mm = res.get('b', 0)
         if b_mm == 0: b_mm = 300
         
@@ -84,7 +84,7 @@ def calculate_boq_summary(design_res, spans):
     return pd.DataFrame(data)
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH (แก้กลับเป็น Original Style)
+# 2. PLOTLY ANALYSIS GRAPH (Standard Style)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
@@ -140,17 +140,16 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         start_x_span = cum_dist[span_idx]
         mag_kN = l['mag'] / 1000.0  # N -> kN
         
-        # สี: ถ้าเป็น LL สีแดง, ถ้า DL/SW สีน้ำเงิน (แบบเดิม)
         case_type = l.get('case', 'DL')
+        # Color Coding
         if case_type == 'LL':
             color = '#c0392b' # Red
         else:
-            color = '#2980b9' # Blue
+            color = '#2980b9' # Blue (DL, SW)
 
         # --- POINT LOAD ---
         if l['type'] == 'P':
             x_loc = start_x_span + float(l['d_start']) 
-            # Arrow
             fig.add_annotation(
                 x=x_loc, y=0, ax=0, ay=-50,
                 xref="x1", yref="y1",
@@ -163,9 +162,9 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             x_s = start_x_span + float(l.get('d_start', 0))
             dist_val = float(l['dist'])
             x_e = x_s + dist_val
-            h_vis = 0.25 # ความสูงกราฟฟิก load
+            h_vis = 0.25
             
-            # 1. Shaded Area (ระบายสีจางๆ)
+            # 1. Shaded Area
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e, x_e, x_s],
                 y=[0, 0, h_vis, h_vis],
@@ -173,27 +172,27 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 line=dict(width=0), hoverinfo='skip', showlegend=False
             ), row=1, col=1)
             
-            # 2. Top Line (เส้นปิดด้านบน)
+            # 2. Top Line
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e], y=[h_vis, h_vis],
                 mode='lines', line=dict(color=color, width=2), hoverinfo='skip'
             ), row=1, col=1)
             
-            # 3. Arrows (ลูกศรวิ่งลง)
-            n_arrows = max(2, int(dist_val * 1.5)) # จำนวนลูกศรตามความยาว
-            arrow_x_points = np.linspace(x_s, x_e, n_arrows + 2)[1:-1] # ตัดหัวท้าย
+            # 3. Arrows
+            n_arrows = max(2, int(dist_val * 1.5)) 
+            arrow_x_points = np.linspace(x_s, x_e, n_arrows + 2)[1:-1]
             for ax_x in arrow_x_points:
                 fig.add_annotation(
-                    x=ax_x, y=0, ax=0, ay=-25, # ความยาวลูกศร
+                    x=ax_x, y=0, ax=0, ay=-25,
                     xref="x1", yref="y1",
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
                     row=1, col=1
                 )
             
-            # 4. Label (Text ตรงกลาง)
+            # 4. Label
             label_text = f"<b>w={mag_kN:.2f} kN/m</b>"
             if case_type == 'SW':
-                label_text = f"<b>SW={mag_kN:.2f} kN/m</b>" # ถ้าเป็น SW เขียนบอกหน่อย
+                label_text = f"<b>SW={mag_kN:.2f} kN/m</b>"
                 
             fig.add_annotation(
                 x=(x_s+x_e)/2, y=h_vis,
@@ -209,7 +208,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
     ), row=2, col=1)
     
-    # Label Peak Shear
     v_max = res_df['shear'].max() / 1000
     v_min = res_df['shear'].min() / 1000
     for val in [v_max, v_min]:
@@ -229,7 +227,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
     ), row=3, col=1)
 
-    # Label Peak Moment
     m_max = res_df['moment'].max() / 1000
     m_min = res_df['moment'].min() / 1000
     for val in [m_max, m_min]:
@@ -259,7 +256,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         font=dict(color='#8e44ad', size=11), row=4, col=1
     )
 
-    # LAYOUT
     for x_pos in cum_dist:
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
@@ -278,7 +274,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     return fig
 
 # ==========================================
-# 3. DESIGN CHECK DISPLAY (คงเดิม)
+# 3. DESIGN CHECK DISPLAY
 # ==========================================
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     st.markdown("---")
@@ -358,7 +354,7 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     st.info(f"📝 **Detail:** Top {top_n}DB{top_db} | Bot {bot_n}DB{bot_db} | Stirrup RB{stir_db}@{stir_sp}mm")
 
 # ==========================================
-# 4. MAIN RENDER CONTROLLER (แก้ไข Logic 0.00 ตรงนี้)
+# 4. MAIN RENDER CONTROLLER
 # ==========================================
 def render_design_view(res_package):
     if not res_package:
@@ -376,25 +372,23 @@ def render_design_view(res_package):
     sup_df = res_package['supports']
     params = res_package['params']
     
-    # 1. เตรียม Load (Original)
+    # 1. เตรียม Load Data
     raw_loads = res_package.get('loads', [])
     if isinstance(raw_loads, pd.DataFrame):
         display_loads = raw_loads.to_dict('records')
     else:
         display_loads = list(raw_loads) if raw_loads else []
 
-    # 2. เพิ่ม Self-weight (ถ้าติ๊กเลือก)
-    # ------------------------------------------------------------------------
+    # 2. จัดการ Self-weight (Fix 0.00 & Fallback logic)
     include_sw = params.get('include_sw', True)
 
     if include_sw: 
         for i, res in enumerate(design_res):
-            # FIX 0.00: ใช้ .get() แล้ว "or" เพื่อดักค่า 0 หรือ None
-            # ลำดับการหา: 1.หาในผลลัพธ์(res) -> 2.ถ้าไม่มี หาใน input(params) -> 3.ถ้าไม่มี ใช้ Default
+            # หาขนาด b, h ถ้าไม่มีใน res ให้ไปเอาจาก params
             val_b = res.get('b') or params.get('b') or 300
             val_h = res.get('h') or params.get('h') or 500
 
-            # แปลงหน่วย mm -> m
+            # แปลงหน่วย
             b_m = float(val_b) / 1000.0
             h_m = float(val_h) / 1000.0
             L = spans[i]
@@ -402,17 +396,15 @@ def render_design_view(res_package):
             # คำนวณ N/m
             sw_mag = 24000 * b_m * h_m 
             
-            # สร้าง Load แบบ UDL
             sw_load = {
                 'type': 'U',
-                'mag': sw_mag, # หน่วย N/m
+                'mag': sw_mag,
                 'span_index': i,
                 'd_start': 0,
                 'dist': L,
-                'case': 'SW'   # ใส่ Tag ไว้ (Graph จะโชว์สีน้ำเงินเหมือน DL)
+                'case': 'SW'
             }
             display_loads.append(sw_load)
-    # ------------------------------------------------------------------------
 
     st.markdown("## 🏗️ Design Dashboard")
     
@@ -420,10 +412,42 @@ def render_design_view(res_package):
     
     # --- TAB 1: Analysis ---
     with t1:
-        st.subheader("Analysis Diagrams")
+        # ======================================================
+        #  ADD: TABLE DISPLAY FOR LOAD COMBINATIONS
+        # ======================================================
+        st.subheader("📋 Load Combination & Parameters")
+        
+        col_tbl, col_empty = st.columns([2, 1])
+        with col_tbl:
+            dl_factor = params.get('dl_factor', 1.4)
+            ll_factor = params.get('ll_factor', 1.7)
+            
+            combo_data = [
+                {"Load Type": "Dead Load (DL)", "Factor": f"{dl_factor:.2f}", "Description": "Superimposed Dead Load"},
+                {"Load Type": "Live Load (LL)", "Factor": f"{ll_factor:.2f}", "Description": "Occupancy / Usage Load"},
+            ]
+            
+            if include_sw:
+                combo_data.insert(0, {
+                    "Load Type": "Self-Weight (SW)", 
+                    "Factor": f"{dl_factor:.2f}", 
+                    "Description": "Calculated from Beam Size (2400 kg/m³)"
+                })
+            else:
+                combo_data.append({
+                    "Load Type": "Self-Weight (SW)", 
+                    "Factor": "-", 
+                    "Description": "Excluded / Not Calculated"
+                })
+                
+            st.table(pd.DataFrame(combo_data))
+            st.caption(f"*Design Equation: U = {dl_factor}DL + {ll_factor}LL*")
+
+        # ======================================================
+        
+        st.subheader("Analysis Diagrams (Envelopes)")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
         
-        # ส่ง load ที่มี SW ที่ถูกต้องแล้วไปวาด
         fig = plot_analysis_results(df_plot, spans, sup_df, display_loads, react)
         
         st.plotly_chart(fig, use_container_width=True)
