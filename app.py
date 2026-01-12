@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 # --- 1. IMPORT CUSTOM MODULES ---
+# ตรวจสอบว่าไฟล์เหล่านี้อยู่ใน Folder เดียวกัน: input_handler.py, solver.py, design_view.py, etc.
 import input_handler, solver, design_view, section_plotter, reporter
 import rc_utils, rc_design_engine, rc_load_processor, app_styles
 
@@ -118,18 +119,21 @@ else:
 
     try:
         # --- ANALYSIS ENGINE ---
-        # 1. Ultimate Run
+        # 1. Ultimate Run (Design Forces)
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
-        # 2. Service Run
+        # 2. Service Run (Deflection & Cracking)
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
+        # Select data for plotting
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
         # --- TABS START ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
+        
+        # List to store design results for Report (Tab 3) and BOQ (Bottom)
         final_design_res = []
 
         # ================= TAB 2: CONCRETE DESIGN =================
@@ -142,13 +146,13 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
-                # Analysis Data
+                # Analysis Data Extraction
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
-                # Service Data
+                # Service Data Extraction
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
                 ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
                 delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0
@@ -210,7 +214,7 @@ else:
                         )
                         limit_240 = (s_len * 1000) / 240
                         
-                        # Crack
+                        # Crack Check
                         total_n_bars_bot = sum(l['n'] for l in bot_layers)
                         w_crack, fs_actual = rc_design_engine.check_crack_width(
                             Ma_svc=ma_pos_svc, b=b_mm, h=h_mm, d=d_b, As=as_prov_b, n_bars=total_n_bars_bot, fc=fc
@@ -234,8 +238,8 @@ else:
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # --- GATHER FULL DATA FOR REPORT & BOQ ---
-                    # **IMPORTANT**: This dictionary must be complete for Tab 3 (Report) to work.
+                    # --- IMPORTANT: COLLECT ALL DATA FOR REPORT & BOQ ---
+                    # เก็บข้อมูลให้ละเอียดที่สุดเพื่อส่งต่อให้ Tab 3 (Report) และ BOQ Section ด้านล่างทำงานได้
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -271,15 +275,18 @@ else:
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
+            
+            # Note: No BOQ here.
 
-        # ================= TAB 3: REPORT (RESTORED FULL LOGIC) =================
+        # ================= TAB 3: REPORT =================
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
                 st.warning("⚠️ Please complete design in Tab 2.")
             else:
                 for res in final_design_res:
-                    # Using the full dictionary to render report
+                    # เรียกใช้ฟังก์ชัน Report โดยส่ง Data ก้อนใหญ่ (res) เข้าไป
+                    # ต้องแน่ใจว่า reporter.py รองรับ key เหล่านี้ (ซึ่งปกติรองรับอยู่แล้ว)
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
 
@@ -288,7 +295,7 @@ else:
 
     # =========================================================================
     # $$$ BOTTOM SECTION: COST ESTIMATION (BOQ) $$$
-    # Logic inlined here to guarantee it works without external file dependencies
+    # ส่วนนี้จะทำงานหลังสุด และอยู่นอก Tabs ทั้งหมด
     # =========================================================================
     st.markdown("---")
     st.header("💵 Bill of Quantities (BOQ)")
@@ -312,19 +319,18 @@ else:
             total_form_area += area
 
             # 3. Steel
-            # Main Bars (approx length = L + development length factor ~1.1)
-            # Accessing 'all_layers' to handle multiple layers correctly
+            # Main Bars: ใช้ all_layers เพื่อรวมเหล็กทุกชั้น
             w_top = sum(get_rebar_weight(l['db']) * l['n'] for l in res['top']['all_layers'])
             w_bot = sum(get_rebar_weight(l['db']) * l['n'] for l in res['bot']['all_layers'])
-            total_steel_weight += (w_top + w_bot) * L * 1.05 # 5% lap/waste
+            total_steel_weight += (w_top + w_bot) * L * 1.05 # เผื่อทาบ 5%
 
             # Stirrups
-            stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) # Perimeter approx
+            stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) # เส้นรอบรูปโดยประมาณ
             num_stir = (L * 1000.0) / res['shear']['s'] + 1
             w_stir = get_rebar_weight(res['shear']['db']) * stir_len_m * num_stir
             total_steel_weight += w_stir
 
-        # Create Table
+        # สร้างตารางสรุป
         boq_data = [
             {"Item": "Concrete Structure (240 ksc)", "Quantity": total_conc_vol, "Unit": "m³", "Unit Price": price_conc},
             {"Item": "Deformed Bars (DB) + Stirrups", "Quantity": total_steel_weight, "Unit": "kg", "Unit Price": price_steel},
@@ -334,7 +340,7 @@ else:
         df_boq = pd.DataFrame(boq_data)
         df_boq["Amount (THB)"] = df_boq["Quantity"] * df_boq["Unit Price"]
         
-        # Display
+        # แสดงผล Metrics และตาราง
         c_boq1, c_boq2, c_boq3, c_boq4 = st.columns(4)
         c_boq1.metric("Concrete", f"{total_conc_vol:.2f} m³")
         c_boq2.metric("Steel", f"{total_steel_weight:.2f} kg")
