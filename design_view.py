@@ -140,7 +140,9 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         start_x_span = cum_dist[span_idx]
         mag_kN = l['mag'] / 1000.0
         
-        color = '#c0392b' if l.get('case') == 'LL' else '#2980b9'
+        # สีแยกตาม Case (SW/DL = น้ำเงิน, LL = แดง)
+        case_type = l.get('case', 'DL')
+        color = '#c0392b' if case_type == 'LL' else '#2980b9'
 
         # POINT LOAD
         if l['type'] == 'P':
@@ -165,7 +167,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 y=[0, 0, h_vis, h_vis],
                 fill='toself', fillcolor=color, opacity=0.3,
                 line=dict(width=0), hoverinfo='text',
-                text=f"UDL: {mag_kN:.2f} kN/m", showlegend=False
+                text=f"UDL ({case_type}): {mag_kN:.2f} kN/m", showlegend=False
             ), row=1, col=1)
             
             # Top Line
@@ -348,7 +350,7 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     st.info(f"💡 **Final Detailing:** Top {top_n}DB{top_db} | Bottom {bot_n}DB{bot_db} | Stirrup RB{stir_db}@{stir_sp} mm")
 
 # ==========================================
-# 4. MAIN RENDER CONTROLLER (แก้ไขตรงนี้ให้เช็คเงื่อนไขก่อนวาด)
+# 4. MAIN RENDER CONTROLLER
 # ==========================================
 def render_design_view(res_package):
     """
@@ -377,27 +379,37 @@ def render_design_view(res_package):
         display_loads = list(raw_loads) if raw_loads else []
 
     # ========================================================
-    # แก้ไข: เช็คก่อนว่า User ติ๊ก 'include_sw' มาหรือไม่?
+    # LOGIC FIX: เพิ่ม SW โดยมี Fallback ป้องกันค่า b,h เป็น 0
     # ========================================================
-    # ปกติค่านี้จะอยู่ใน params ถ้าไม่มี key นี้ให้ Default เป็น True หรือตามที่ App ส่งมา
     include_sw = params.get('include_sw', True)
 
-    if include_sw: # <<< เช็คตรงนี้ครับ ถ้า True ค่อยทำ
+    if include_sw: 
         for i, res in enumerate(design_res):
-            b_m = res.get('b', 300) / 1000.0
-            h_m = res.get('h', 500) / 1000.0
+            # STEP 1: พยายามดึง b, h จากผลลัพธ์แต่ละช่วง (res) ก่อน
+            val_b = res.get('b', 0)
+            val_h = res.get('h', 0)
+
+            # STEP 2: ถ้าใน res เป็น 0 หรือ None ให้ไปดึงจาก params (ค่าที่กรอกหน้าแรก)
+            if not val_b: 
+                val_b = params.get('b', 300) 
+            if not val_h: 
+                val_h = params.get('h', 500) 
+
+            # STEP 3: แปลงหน่วย (mm -> m) และคำนวณ
+            b_m = float(val_b) / 1000.0
+            h_m = float(val_h) / 1000.0
             L = spans[i]
             
-            # คำนวณ SW
+            # คำนวณ SW (N/m) -> สูตร: 24000 N/m3 * b * h
             sw_mag = 24000 * b_m * h_m 
             
             sw_load = {
                 'type': 'U',
-                'mag': sw_mag,
+                'mag': sw_mag, # หน่วย N/m
                 'span_index': i,
                 'd_start': 0,
                 'dist': L,
-                'case': 'DL'
+                'case': 'SW'   # ตั้งชื่อ Case ว่า SW
             }
             display_loads.append(sw_load)
     # ========================================================
@@ -411,7 +423,7 @@ def render_design_view(res_package):
         st.subheader("Analysis Results (Interactive)")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
         
-        # ส่ง display_loads (ที่กรองแล้วว่าเอา SW หรือไม่) ไปวาด
+        # ส่ง display_loads (ที่รวม SW ถูกต้องแล้ว) ไปวาด
         fig = plot_analysis_results(df_plot, spans, sup_df, display_loads, react)
         
         st.plotly_chart(fig, use_container_width=True)
