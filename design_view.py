@@ -16,7 +16,7 @@ def calculate_boq_summary(design_res, spans):
     
     for i, res in enumerate(design_res):
         L = spans[i]
-        # Safety Check: ป้องกันค่า b, h เป็น 0
+        # Safety Check
         b_mm = res.get('b') or 300
         h_mm = res.get('h') or 500
 
@@ -81,7 +81,7 @@ def calculate_boq_summary(design_res, spans):
     return pd.DataFrame(data)
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH
+# 2. PLOTLY ANALYSIS GRAPH (Standard Style - No Y-Lock)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
@@ -132,13 +132,15 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     else:
         load_iter = []
 
+    # Calculate max height for auto-scaling visual
+    max_h_vis = 0.5 
+
     for l in load_iter:
         span_idx = int(l['span_index'])
         start_x_span = cum_dist[span_idx]
         mag_kN = l['mag'] / 1000.0  # N -> kN
         
         case_type = l.get('case', 'DL')
-        # Color Coding
         if case_type == 'LL':
             color = '#c0392b' # Red
         else:
@@ -159,6 +161,8 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             x_s = start_x_span + float(l.get('d_start', 0))
             dist_val = float(l['dist'])
             x_e = x_s + dist_val
+            
+            # ปรับความสูงกราฟฟิกตามสัดส่วน (แต่ไม่เกินค่าหนึ่งเพื่อความสวยงาม)
             h_vis = 0.25
             
             # 1. Shaded Area
@@ -207,6 +211,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     
     v_max = res_df['shear'].max() / 1000
     v_min = res_df['shear'].min() / 1000
+    # Annotate Max/Min
     for val in [v_max, v_min]:
         if abs(val) > 0.01:
             idx = (res_df['shear']/1000 - val).abs().idxmin()
@@ -253,6 +258,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         font=dict(color='#8e44ad', size=11), row=4, col=1
     )
 
+    # Grid & Layout
     for x_pos in cum_dist:
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
@@ -262,7 +268,10 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         margin=dict(t=60, b=40, l=60, r=20)
     )
     
-    fig.update_yaxes(visible=False, range=[-0.5, 0.8], row=1, col=1)
+    # --- FIX GRAPH DISTORTION ---
+    # ลบการ Lock Range ออก (Visible=False เพื่อซ่อนแกน แต่ไม่ Lock ค่า)
+    fig.update_yaxes(visible=False, showgrid=False, row=1, col=1) 
+    
     fig.update_yaxes(title_text="Shear (kN)", showgrid=True, row=2, col=1)
     fig.update_yaxes(title_text="Moment (kN-m)", autorange="reversed", showgrid=True, row=3, col=1)
     fig.update_yaxes(title_text="Deflection (mm)", showgrid=True, zeroline=True, row=4, col=1)
@@ -376,21 +385,18 @@ def render_design_view(res_package):
     else:
         display_loads = list(raw_loads) if raw_loads else []
 
-    # 2. จัดการ Self-weight (Fix 0.00 & Fallback logic)
+    # 2. จัดการ Self-weight
     include_sw = params.get('include_sw', True)
 
     if include_sw: 
         for i, res in enumerate(design_res):
-            # หาขนาด b, h ถ้าไม่มีใน res ให้ไปเอาจาก params
             val_b = res.get('b') or params.get('b') or 300
             val_h = res.get('h') or params.get('h') or 500
 
-            # แปลงหน่วย
             b_m = float(val_b) / 1000.0
             h_m = float(val_h) / 1000.0
             L = spans[i]
             
-            # คำนวณ N/m
             sw_mag = 24000 * b_m * h_m 
             
             sw_load = {
@@ -405,15 +411,11 @@ def render_design_view(res_package):
 
     st.markdown("## 🏗️ Design Dashboard")
     
-    t1, t2, t3 = st.tabs(["📊 Analysis Results", "📐 Section Details", "📝 Report"])
-    
-    # --- TAB 1: Analysis ---
-    with t1:
-        # ======================================================
-        #  TABLE DISPLAY (ย้ายมาไว้ตรงนี้ เต็มๆ ชัดๆ)
-        # ======================================================
-        st.subheader("📋 Load Combinations")
-        
+    # ======================================================
+    #  TABLE DISPLAY (ย้ายมาไว้ข้างบนสุด อยู่นอก Tabs)
+    #  เพื่อให้เห็นชัดเจนก่อนดูผล Analysis
+    # ======================================================
+    with st.expander("📋 Click to view Load Combinations & Parameters", expanded=True):
         dl_factor = params.get('dl_factor', 1.4)
         ll_factor = params.get('ll_factor', 1.7)
         
@@ -435,13 +437,14 @@ def render_design_view(res_package):
                 "Description": "-"
             })
             
-        # ใช้ dataframe แทน table เพื่อความชัวร์ในการแสดงผล
         st.dataframe(pd.DataFrame(combo_data), use_container_width=True, hide_index=True)
-        st.caption(f"*Design Equation: U = {dl_factor}DL + {ll_factor}LL*")
+        st.caption(f"*Ultimate Load Equation: U = {dl_factor}DL + {ll_factor}LL*")
+    # ======================================================
 
-        # ======================================================
-        
-        st.divider()
+    t1, t2, t3 = st.tabs(["📊 Analysis Results", "📐 Section Details", "📝 Report"])
+    
+    # --- TAB 1: Analysis ---
+    with t1:
         st.subheader("Analysis Diagrams")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
         
