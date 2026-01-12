@@ -18,7 +18,7 @@ def get_rebar_weight(d_mm):
     """Calculate rebar weight kg/m from diameter"""
     return (d_mm ** 2) / 162.0
 
-# --- 3. INTERNAL HELPER: PLOT CROSS SECTION (FIXED) ---
+# --- 3. INTERNAL HELPER: PLOT CROSS SECTION ---
 def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     fig, ax = plt.subplots(figsize=(5, 6))
     rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='black', facecolor='white')
@@ -77,15 +77,15 @@ with st.sidebar:
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
 else:
-    # --- ANALYSIS SETTINGS & SELF WEIGHT OPTION ---
+    # --- ANALYSIS SETTINGS ---
     col_set1, col_set2 = st.columns([1, 2])
     with col_set1:
         st.markdown("### ⚙️ Analysis Settings")
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
         
-        # [CHECKBOX] Include Self-weight
         st.markdown("---")
-        include_sw = st.checkbox("➕ Include Beam Self-weight", value=True, help="คิดน้ำหนักคาน (b x h x 2400) เป็น Dead Load")
+        # Checkbox
+        include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
     
     with col_set2:
         st.markdown("### 🔢 Load Factors")
@@ -100,34 +100,44 @@ else:
 
     try:
         # ==========================================
-        # ⚡ LOGIC: SELF-WEIGHT CALCULATION (FIXED)
+        # ⚡ LOGIC: ROBUST LOAD HANDLING (CLEAN SLATE)
         # ==========================================
-        final_loads_df = loads_df.copy()
+        
+        # 1. Start with a FRESH copy of user loads (to avoid reference issues)
+        user_loads_base = loads_df.copy()
+        
+        # 2. Prepare Self-Weight DataFrame (Empty by default)
+        sw_list = []
         
         if include_sw:
-            # 1. แปลงหน่วยเป็นเมตร
+            # Calculate logic only if checked
             b_m = params.get('b', 300) / 1000.0
             h_m = params.get('h', 500) / 1000.0
-            
-            # 2. คำนวณ Uniform Load (N/m)
-            # Density 2400 kg/m^3 * 9.81 m/s^2 approx 23544 N/m3
             w_sw = b_m * h_m * 2400 * 9.81 # N/m
             
-            # 3. สร้าง Load List สำหรับทุก Span
-            sw_data = []
             for i in range(n_spans):
-                sw_data.append({
+                sw_list.append({
                     'span_index': i,
-                    'type': 'U',     # Uniform
-                    'mag': w_sw,     # Magnitude
-                    'dist': spans[i],# Full Distance
+                    'type': 'U',
+                    'mag': w_sw,
+                    'dist': spans[i],
                     'd_start': 0,
-                    'case': 'DL'     # <--- [FIXED] ระบุเป็น Dead Load เพื่อให้คูณ Factor ได้ถูกต้อง
+                    'case': 'DL'  # Important for Factor
                 })
             
-            # 4. รวมเข้ากับ Load เดิม
-            sw_df = pd.DataFrame(sw_data)
-            final_loads_df = pd.concat([final_loads_df, sw_df], ignore_index=True)
+            # Show status
+            st.caption(f"ℹ️ **System:** Added Self-weight {w_sw/1000:.2f} kN/m to analysis.")
+        else:
+            st.caption("ℹ️ **System:** Self-weight EXCLUDED from analysis.")
+
+        # 3. Create SW DataFrame and Concat
+        if sw_list:
+            sw_df = pd.DataFrame(sw_list)
+            # Combine strictly: User Loads + SW
+            final_loads_df = pd.concat([user_loads_base, sw_df], ignore_index=True)
+        else:
+            # If no SW, use strictly User Loads
+            final_loads_df = user_loads_base
 
         # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
@@ -144,11 +154,11 @@ else:
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report & BOQ"])
         final_design_res = []
 
-        # ================= TAB 1: ANALYSIS RESULTS (CLEAN) =================
+        # ================= TAB 1: ANALYSIS RESULTS =================
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # Graph Only
+            # Graph
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
             fig = design_view.plot_analysis_results(
                 res_df=df_for_plot, spans=spans, supports=sup_df, 
@@ -156,7 +166,7 @@ else:
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # Key Metrics Only
+            # Metrics
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
@@ -172,8 +182,11 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
-                # Analysis Data
+                # Analysis Data Extraction
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
+                # Handle edge case where mask is empty (rare)
+                if not mask_u.any(): continue
+
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
@@ -282,11 +295,10 @@ else:
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
 
-            # ================= BOQ SECTION (BOTTOM ONLY) =================
+            # ================= BOQ SECTION =================
             st.markdown("---")
             st.header("💵 Bill of Quantities (BOQ)")
 
-            # Input Price (Inside Tab 3)
             c_price1, c_price2, c_price3 = st.columns(3)
             price_conc = c_price1.number_input("Concrete (Baht/m³)", value=2200, step=50)
             price_steel = c_price2.number_input("Rebar (Baht/kg)", value=28.0, step=0.5)
