@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from section_plotter import plot_longitudinal_section_detailed, plot_cross_section
 from reporter import render_calculation_report
 
@@ -9,17 +10,18 @@ def calculate_boq_summary(design_res, spans):
     """
     คำนวณปริมาณงาน (BOQ) โดยประมาณจากผลการออกแบบ
     """
-    boq_data = []
-    
     total_concrete_vol = 0.0
     total_formwork_area = 0.0
     total_steel_weight = 0.0
     
     for i, res in enumerate(design_res):
-        span_id = f"Span {i+1}"
         L = spans[i] # meters
-        b_m = res['b'] / 1000.0
-        h_m = res['h'] / 1000.0
+        # ตรวจสอบค่า b, h ว่ามีค่าหรือไม่ ถ้าไม่มีให้ใช้ค่า default
+        b_mm = res.get('b', 300)
+        h_mm = res.get('h', 500)
+        
+        b_m = b_mm / 1000.0
+        h_m = h_mm / 1000.0
         
         # 1. Concrete (m3)
         vol = b_m * h_m * L
@@ -31,8 +33,7 @@ def calculate_boq_summary(design_res, spans):
         total_formwork_area += form_area
         
         # 3. Steel Weight (kg) - Estimation
-        # Main Bars weight
-        # Weight (kg/m) = d^2 / 162
+        # Main Bars weight -> Weight (kg/m) = d^2 / 162
         w_main = 0.0
         
         # Top Bars
@@ -53,8 +54,10 @@ def calculate_boq_summary(design_res, spans):
         # Stirrups
         # Length per stirrup approx = 2*(b+h) (ignoring cover for quick calc)
         # Number = L / s
-        stir_db = res.get('shear', {}).get('db', 6)
-        stir_s = res.get('shear', {}).get('s', 200) / 1000.0 # m
+        shear_data = res.get('shear', {})
+        stir_db = shear_data.get('db', 6)
+        stir_s = shear_data.get('s', 200) / 1000.0 # convert mm to m
+        
         if stir_s > 0:
             n_stir = int(L / stir_s) + 1
             len_stir = 2 * (b_m + h_m) 
@@ -65,9 +68,6 @@ def calculate_boq_summary(design_res, spans):
             
         span_steel = w_main + w_stir_total
         total_steel_weight += span_steel
-        
-        # Append to detailed list (Optional)
-        # boq_data.append(...)
 
     # Create Summary Data
     data = [
@@ -78,9 +78,60 @@ def calculate_boq_summary(design_res, spans):
     
     return pd.DataFrame(data)
 
+def plot_analysis_results(df, spans, sup_df, loads, reactions):
+    """
+    ฟังก์ชันสำหรับวาดกราฟ SFD, BMD, Deflection โดยใช้ Matplotlib
+    (ฟังก์ชันนี้จำเป็นต้องมีเพื่อให้ app.py เดิมทำงานได้)
+    """
+    # Create Figure
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12), sharex=True, constrained_layout=True)
+    
+    x = df.iloc[:, 0] # Column 0: x
+    M = df.iloc[:, 1] # Column 1: Moment
+    V = df.iloc[:, 2] # Column 2: Shear
+    D = df.iloc[:, 3] # Column 3: Deflection
+
+    # 1. Bending Moment Diagram (BMD)
+    # Note: RC convention usually plots positive moment (tension bottom) downwards, 
+    # but here we plot standard sign. Fill between for clarity.
+    ax1.plot(x, M/1000.0, color='#e74c3c', linewidth=2, label='Moment')
+    ax1.fill_between(x, M/1000.0, 0, color='#e74c3c', alpha=0.1)
+    ax1.set_ylabel("Moment (kNm)", fontweight='bold')
+    ax1.set_title("Bending Moment Diagram (BMD)", fontweight='bold')
+    ax1.grid(True, linestyle='--', alpha=0.6)
+    ax1.axhline(0, color='black', linewidth=1)
+
+    # 2. Shear Force Diagram (SFD)
+    ax2.plot(x, V/1000.0, color='#2980b9', linewidth=2, label='Shear')
+    ax2.fill_between(x, V/1000.0, 0, color='#2980b9', alpha=0.1)
+    ax2.set_ylabel("Shear (kN)", fontweight='bold')
+    ax2.set_title("Shear Force Diagram (SFD)", fontweight='bold')
+    ax2.grid(True, linestyle='--', alpha=0.6)
+    ax2.axhline(0, color='black', linewidth=1)
+
+    # 3. Deflection
+    ax3.plot(x, D*1000.0, color='#27ae60', linewidth=2, label='Deflection')
+    ax3.fill_between(x, D*1000.0, 0, color='#27ae60', alpha=0.1)
+    ax3.set_ylabel("Deflection (mm)", fontweight='bold')
+    ax3.set_xlabel("Position (m)", fontweight='bold')
+    ax3.set_title("Elastic Deflection", fontweight='bold')
+    ax3.grid(True, linestyle='--', alpha=0.6)
+    ax3.axhline(0, color='black', linewidth=1)
+    
+    # Invert Y for deflection to look natural (downward = negative)
+    # If solver returns negative for downward, we can leave it or invert axis.
+    # Usually structural apps invert Y for deflection.
+    # ax3.invert_yaxis() 
+
+    # Add Support Markers on x-axis
+    for s in spans:
+        pass # Logic handled by x-ticks usually
+        
+    return fig
+
 def render_design_view(res_package):
     """
-    Main View Controller
+    Main View Controller: แสดงผลลัพธ์การออกแบบทั้งหมด
     """
     if not res_package:
         st.error("No design results to display.")
@@ -108,9 +159,9 @@ def render_design_view(res_package):
     with t1:
         st.subheader("1. Internal Forces Diagrams")
         
-        # Plot Logic using Matplotlib (Integrated here for simplicity or use section_plotter)
-        # For brevity, let's use a simple streamlit line chart wrapper or call a plotter
-        # Assuming we passed raw arrays, we can plot them.
+        # Reuse the plotter function or create simple line charts
+        # Since app.py might have already plotted the matplotlib figure, 
+        # here we can use Streamlit native charts for interactivity.
         
         chart_data = pd.DataFrame({
             "Position (m)": x,
@@ -119,14 +170,17 @@ def render_design_view(res_package):
             "Deflection (mm)": d * 1000.0
         })
         
-        st.line_chart(chart_data, x="Position (m)", y=["Moment (kNm)"], color=["#FF4B4B"])
-        st.caption("Bending Moment Diagram (BMD)")
+        # Interactive Charts
+        st.caption("Bending Moment (kNm)")
+        st.line_chart(chart_data, x="Position (m)", y="Moment (kNm)", color="#FF4B4B")
         
-        st.line_chart(chart_data, x="Position (m)", y=["Shear (kN)"], color=["#0068C9"])
-        st.caption("Shear Force Diagram (SFD)")
+        st.caption("Shear Force (kN)")
+        st.line_chart(chart_data, x="Position (m)", y="Shear (kN)", color="#0068C9")
         
-        st.line_chart(chart_data, x="Position (m)", y=["Deflection (mm)"], color=["#29B09D"])
-        st.caption("Elastic Deflection")
+        st.caption("Deflection (mm)")
+        st.line_chart(chart_data, x="Position (m)", y="Deflection (mm)", color="#29B09D")
+        
+        st.divider()
         
         # Longitudinal Section Plot (Interactive SVG)
         st.subheader("2. Longitudinal Reinforcement Profile")
@@ -166,9 +220,14 @@ def render_design_view(res_package):
             st.markdown("**Reinforcement Required:**")
             
             # Formatted Text for Steel
-            top_txt = " + ".join([f"{l['n']}DB{l['db']}" for l in res['top']['all_layers'] if l['n']>0])
-            bot_txt = " + ".join([f"{l['n']}DB{l['db']}" for l in res['bot']['all_layers'] if l['n']>0])
-            stir_txt = f"RB{res['shear']['db']} @ {res['shear']['s']} mm"
+            top_layers = res.get('top', {}).get('all_layers', [])
+            bot_layers = res.get('bot', {}).get('all_layers', [])
+            
+            top_txt = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if l['n']>0])
+            bot_txt = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if l['n']>0])
+            
+            shear_d = res.get('shear', {})
+            stir_txt = f"RB{int(shear_d.get('db', 6))} @ {int(shear_d.get('s', 200))} mm"
             
             st.write(f"**Top:** {top_txt if top_txt else '-'}")
             st.write(f"**Bottom:** {bot_txt if bot_txt else '-'}")
@@ -182,7 +241,6 @@ def render_design_view(res_package):
         
         # 1. Bill of Quantities (BOQ)
         st.subheader("1. Bill of Quantities (Estimated)")
-        
         
         boq_df = calculate_boq_summary(design_res, spans)
         
