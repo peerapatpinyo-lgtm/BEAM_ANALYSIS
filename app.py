@@ -77,13 +77,15 @@ with st.sidebar:
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
 else:
-    # --- ANALYSIS SETTINGS ---
+    # --- ANALYSIS SETTINGS & SELF WEIGHT OPTION ---
     col_set1, col_set2 = st.columns([1, 2])
     with col_set1:
-        st.markdown("### ⚙️ Settings")
+        st.markdown("### ⚙️ Analysis Settings")
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
-        # === NEW BUTTON: INCLUDE SELF WEIGHT ===
-        include_sw = st.checkbox("➕ Include Beam Self-weight", value=True, help="คิดน้ำหนักคอนกรีตเสริมเหล็ก 2400 kg/m³")
+        
+        # [NEW] Checkbox for Self-Weight
+        st.markdown("---")
+        include_sw = st.checkbox("➕ Include Beam Self-weight", value=True, help="คำนวณน้ำหนักคาน (2400 kg/m³) และรวมในการวิเคราะห์โครงสร้าง")
     
     with col_set2:
         st.markdown("### 🔢 Load Factors")
@@ -97,34 +99,37 @@ else:
             tag, is_service = "Ultimate", False
 
     try:
-        # === SELF WEIGHT LOGIC ===
-        # เตรียม Loads สำหรับส่งเข้า Solver
+        # ==========================================
+        # ⚡ LOGIC: SELF-WEIGHT CALCULATION
+        # ==========================================
+        # สร้าง DataFrame สำหรับ Load ที่จะส่งเข้า Solver
         final_loads_df = loads_df.copy()
         
         if include_sw:
-            # คำนวณ Self Weight (N/m)
-            # Density = 2400 kg/m3 * 9.81 m/s2 approx 23544 N/m3
-            # w = b * h * density
+            # 1. ดึงขนาดหน้าตัด
             b_mm, h_mm = rc_utils.normalize_section_units(params.get('b', 300), params.get('h', 500))
-            density = 2400 * 9.81 # N/m^3
-            w_sw = (b_mm / 1000.0) * (h_mm / 1000.0) * density # N/m
             
-            # สร้าง Load สำหรับทุก Span
+            # 2. คำนวณ Uniform Load (N/m)
+            # Density 2400 kg/m^3 * 9.81 m/s^2
+            area_m2 = (b_mm / 1000.0) * (h_mm / 1000.0)
+            w_sw = area_m2 * 2400 * 9.81 # N/m
+            
+            # 3. สร้าง Load List สำหรับทุก Span
             sw_data = []
             for i in range(n_spans):
                 sw_data.append({
                     'span_index': i,
-                    'type': 'U',
+                    'type': 'U', # Uniform Load
                     'mag': w_sw,
                     'dist': spans[i],
                     'd_start': 0
                 })
             
-            # รวมกับ Loads เดิมของผู้ใช้
+            # 4. รวมเข้ากับ Load เดิมของผู้ใช้
             sw_df = pd.DataFrame(sw_data)
             final_loads_df = pd.concat([final_loads_df, sw_df], ignore_index=True)
 
-        # --- ANALYSIS ENGINE ---
+        # --- ANALYSIS ENGINE (ใช้ final_loads_df ที่รวม SW แล้ว) ---
         # 1. Ultimate Run
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
@@ -136,10 +141,10 @@ else:
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
         # --- TABS START ---
-        tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
+        tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report & BOQ"])
         final_design_res = []
 
-        # ================= TAB 1: ANALYSIS RESULTS =================
+        # ================= TAB 1: ANALYSIS RESULTS (CLEAN) =================
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
@@ -245,7 +250,7 @@ else:
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # Gather Data for Tab 3
+                    # Store Data for Report
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
