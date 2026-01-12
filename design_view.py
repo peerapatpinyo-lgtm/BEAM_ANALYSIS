@@ -1,4 +1,3 @@
-# design_view.py
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
@@ -93,7 +92,7 @@ def calculate_boq_summary(design_res, spans):
     return pd.DataFrame(data)
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH (ตามโค้ดที่คุณส่งมา)
+# 2. PLOTLY ANALYSIS GRAPH (แก้ไข Load Diagram แล้ว)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
@@ -141,47 +140,80 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             hoverinfo='name', name=f"Support"
         ), row=1, col=1)
 
-    # Loads
+    # Loads Processing
+    # แปลง DataFrame เป็น List of Dicts เพื่อให้ง่ายต่อการวนลูป
     if isinstance(loads, pd.DataFrame):
         load_iter = loads.to_dict('records')
-    else:
+    elif isinstance(loads, list):
         load_iter = loads
+    else:
+        load_iter = []
 
+    # Logic การวาด Load
+    # เราจะหา Max Load เพื่อใช้ Scale ลูกศรให้สวยงาม (ถ้าจำเป็น)
+    
     for l in load_iter:
         span_idx = int(l['span_index'])
-        start_x = cum_dist[span_idx]
+        start_x_span = cum_dist[span_idx]
         mag_kN = l['mag'] / 1000.0 # แปลงหน่วย N เป็น kN
         
+        # สีแยกตาม Case (ถ้ามีข้อมูล Case)
+        color = '#c0392b' if l.get('case') == 'LL' else '#2980b9' # แดง=LL, น้ำเงิน=DL (รวม Self-weight)
+
+        # --- POINT LOAD ---
         if l['type'] == 'P':
-            x_loc = start_x + float(l['d_start']) 
+            x_loc = start_x_span + float(l['d_start']) 
             fig.add_annotation(
                 x=x_loc, y=0, ax=0, ay=-50,
                 xref="x1", yref="y1",
-                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2, arrowcolor="#c0392b",
+                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2, arrowcolor=color,
                 text=f"<b>P={mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
             )
+            
+        # --- UNIFORM LOAD (รวมถึง Self-weight ที่เข้ามาด้วย) ---
         elif l['type'] == 'U':
-            x_s = start_x + float(l.get('d_start', 0))
-            x_e = x_s + float(l['dist'])
-            h_vis = 0.25
+            x_s = start_x_span + float(l.get('d_start', 0))
+            # ถ้าเป็น Self weight หรือ UDL เต็มคาน dist อาจจะเป็นระยะทั้งหมด
+            dist_val = float(l['dist'])
+            x_e = x_s + dist_val
+            
+            h_vis = 0.25 # ความสูงกราฟิกของ Load
+            
+            # วาดกล่องพื้นที่แรง (Shaded Area)
             fig.add_trace(go.Scatter(
-                x=[x_s, x_e], y=[h_vis, h_vis],
-                mode='lines', line=dict(color='#2980b9', width=2), hoverinfo='skip'
+                x=[x_s, x_e, x_e, x_s],
+                y=[0, 0, h_vis, h_vis],
+                fill='toself',
+                fillcolor=color,
+                opacity=0.3, # โปร่งแสงเพื่อให้เห็นซ้อนกันได้
+                line=dict(width=0),
+                hoverinfo='text',
+                text=f"UDL: {mag_kN:.2f} kN/m",
+                showlegend=False
             ), row=1, col=1)
             
-            n_arrows = max(3, int(float(l['dist']) * 3)) 
+            # วาดเส้นขอบบน
+            fig.add_trace(go.Scatter(
+                x=[x_s, x_e], y=[h_vis, h_vis],
+                mode='lines', line=dict(color=color, width=2), hoverinfo='skip'
+            ), row=1, col=1)
+            
+            # วาดลูกศรชี้ลง (สุ่มจำนวนตามความยาว)
+            n_arrows = max(3, int(dist_val * 2)) 
             arrow_x = np.linspace(x_s, x_e, n_arrows)
             for ax_x in arrow_x:
                 fig.add_annotation(
-                    x=ax_x, y=0, ax=0, ay=-30,
+                    x=ax_x, y=0, ax=0, ay=-20, # ลูกศรจากบนลงล่าง
                     xref="x1", yref="y1",
-                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor="#2980b9",
+                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
                     row=1, col=1
                 )
+            
+            # Label ตรงกลาง
             fig.add_annotation(
                 x=(x_s+x_e)/2, y=h_vis,
                 text=f"<b>w={mag_kN:.2f} kN/m</b>",
-                showarrow=False, yshift=10, font=dict(color="#2980b9"), row=1, col=1
+                showarrow=False, yshift=10, font=dict(color=color), row=1, col=1
             )
 
     # ==========================================
@@ -196,6 +228,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     
     v_max = res_df['shear'].max() / 1000
     v_min = res_df['shear'].min() / 1000
+    # Annotate Max/Min V
     for val in [v_max, v_min]:
         if abs(val) > 0.01:
             idx = (res_df['shear']/1000 - val).abs().idxmin()
@@ -217,6 +250,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
     m_max = res_df['moment'].max() / 1000
     m_min = res_df['moment'].min() / 1000
+    # Annotate Max/Min M
     for val in [m_max, m_min]:
         if abs(val) > 0.01:
             idx = (res_df['moment']/1000 - val).abs().idxmin()
@@ -268,7 +302,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     return fig
 
 # ==========================================
-# 3. DESIGN CHECK DISPLAY (ตามโค้ดที่คุณส่งมา)
+# 3. DESIGN CHECK DISPLAY (Logic แสดงผลการออกแบบ)
 # ==========================================
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     st.markdown("---")
@@ -391,7 +425,7 @@ def render_design_view(res_package):
     with t1:
         st.subheader("Analysis Results (Interactive)")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
-        # เรียกใช้ฟังก์ชันกราฟเดิมของคุณ
+        # เรียกใช้ฟังก์ชันกราฟที่แก้ไขแล้ว
         fig = plot_analysis_results(df_plot, spans, sup_df, loads, react)
         st.plotly_chart(fig, use_container_width=True)
         
@@ -416,7 +450,7 @@ def render_design_view(res_package):
              st.image(svg_cross, use_container_width=True)
         
         with col2:
-             # เรียกใช้ฟังก์ชันแสดงผลดีไซน์เดิมของคุณ
+             # เรียกใช้ฟังก์ชันแสดงผลดีไซน์
              display_design_comparison(
                  current_res['Mu_pos'], 
                  current_res['Mu_neg'], 
@@ -429,11 +463,11 @@ def render_design_view(res_package):
         svg_long, _ = plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'], params.get('cover', 25))
         st.image(svg_long, use_container_width=True)
 
-    # --- TAB 3: Report & BOQ (ส่วนที่คุณต้องการ) ---
+    # --- TAB 3: Report & BOQ ---
     with t3:
         st.header("📝 Project Summary & Estimation")
         
-        # 1. Bill of Quantities (BOQ) - อยู่ที่นี่ที่เดียว
+        # 1. Bill of Quantities (BOQ)
         st.subheader("1. Bill of Quantities (Estimated)")
         
         boq_df = calculate_boq_summary(design_res, spans)
