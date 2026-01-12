@@ -7,7 +7,7 @@ from section_plotter import plot_longitudinal_section_detailed, plot_cross_secti
 from reporter import render_calculation_report
 
 # ==========================================
-# 1. BOQ CALCULATION (ฟังก์ชันคำนวณ BOQ)
+# 1. BOQ CALCULATION
 # ==========================================
 def calculate_boq_summary(design_res, spans):
     """
@@ -17,13 +17,10 @@ def calculate_boq_summary(design_res, spans):
     total_formwork_area = 0.0
     total_steel_weight = 0.0
     
-    # วนลูปตามจำนวนช่วงคาน
     for i, res in enumerate(design_res):
-        L = spans[i] # meters
-        # ตรวจสอบค่า b, h (รองรับทั้งแบบ dict keys ตรงๆ และแบบ nested)
+        L = spans[i]
         b_mm = res.get('b', 300)
         h_mm = res.get('h', 500)
-        
         b_m = b_mm / 1000.0
         h_m = h_mm / 1000.0
         
@@ -31,37 +28,33 @@ def calculate_boq_summary(design_res, spans):
         vol = b_m * h_m * L
         total_concrete_vol += vol
         
-        # 2. Formwork (m2) - Sides + Bottom
+        # 2. Formwork (m2)
         form_area = (2 * h_m + b_m) * L
         total_formwork_area += form_area
         
-        # 3. Steel Weight (kg) - Estimation
+        # 3. Steel Weight (kg)
         w_main = 0.0
         
-        # Helper function to get steel area/weight safely
         def get_steel_weight(n, db, length):
             if n > 0:
                 unit_w = (db**2 / 162)
                 return n * unit_w * length
             return 0
 
-        # Top Bars (Support)
-        # พยายามดึงค่าจากหลายรูปแบบ structure เพื่อกัน Error
+        # Top Bars
         if 'top' in res and isinstance(res['top'], dict) and 'all_layers' in res['top']:
              for layer in res['top']['all_layers']:
                  w_main += get_steel_weight(layer['n'], layer['db'], L * 1.1)
         else:
-            # Fallback for simple structure
             n = res.get('top_n', 0)
             db = res.get('top_db', 12)
             w_main += get_steel_weight(n, db, L * 1.1)
 
-        # Bottom Bars (Mid-span)
+        # Bottom Bars
         if 'bot' in res and isinstance(res['bot'], dict) and 'all_layers' in res['bot']:
              for layer in res['bot']['all_layers']:
                  w_main += get_steel_weight(layer['n'], layer['db'], L * 1.1)
         else:
-            # Fallback
             n = res.get('bot_n', 0)
             db = res.get('bot_db', 12)
             w_main += get_steel_weight(n, db, L * 1.1)
@@ -69,7 +62,7 @@ def calculate_boq_summary(design_res, spans):
         # Stirrups
         stir_db = res.get('shear', {}).get('db', res.get('stir_db', 6))
         stir_s_mm = res.get('shear', {}).get('s', res.get('stir_spacing', 200))
-        stir_s = stir_s_mm / 1000.0 # m
+        stir_s = stir_s_mm / 1000.0
         
         if stir_s > 0:
             n_stir = int(L / stir_s) + 1
@@ -82,7 +75,6 @@ def calculate_boq_summary(design_res, spans):
         span_steel = w_main + w_stir_total
         total_steel_weight += span_steel
 
-    # Create Summary Data
     data = [
         {"Item": "Concrete Structure (240 ksc)", "Unit": "m3", "Quantity": float(f"{total_concrete_vol:.2f}")},
         {"Item": "Formwork (Beam sides & bottom)", "Unit": "m2", "Quantity": float(f"{total_formwork_area:.2f}")},
@@ -92,15 +84,12 @@ def calculate_boq_summary(design_res, spans):
     return pd.DataFrame(data)
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH (แก้ไข Load Diagram แล้ว)
+# 2. PLOTLY ANALYSIS GRAPH
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
     สร้างกราฟวิเคราะห์โครงสร้าง (Textbook-style)
-    หน่วยแสดงผล: Force (kN), Moment (kN-m), Deflection (mm)
     """
-    
-    # --- Create Subplots ---
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
@@ -114,9 +103,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         row_heights=[0.20, 0.25, 0.25, 0.30]
     )
 
-    # ==========================================
     # ROW 1: LOAD MODEL (FBD)
-    # ==========================================
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
     
@@ -141,7 +128,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         ), row=1, col=1)
 
     # Loads Processing
-    # แปลง DataFrame เป็น List of Dicts เพื่อให้ง่ายต่อการวนลูป
     if isinstance(loads, pd.DataFrame):
         load_iter = loads.to_dict('records')
     elif isinstance(loads, list):
@@ -149,18 +135,14 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     else:
         load_iter = []
 
-    # Logic การวาด Load
-    # เราจะหา Max Load เพื่อใช้ Scale ลูกศรให้สวยงาม (ถ้าจำเป็น)
-    
     for l in load_iter:
         span_idx = int(l['span_index'])
         start_x_span = cum_dist[span_idx]
-        mag_kN = l['mag'] / 1000.0 # แปลงหน่วย N เป็น kN
+        mag_kN = l['mag'] / 1000.0
         
-        # สีแยกตาม Case (ถ้ามีข้อมูล Case)
-        color = '#c0392b' if l.get('case') == 'LL' else '#2980b9' # แดง=LL, น้ำเงิน=DL (รวม Self-weight)
+        color = '#c0392b' if l.get('case') == 'LL' else '#2980b9'
 
-        # --- POINT LOAD ---
+        # POINT LOAD
         if l['type'] == 'P':
             x_loc = start_x_span + float(l['d_start']) 
             fig.add_annotation(
@@ -170,55 +152,47 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 text=f"<b>P={mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
             )
             
-        # --- UNIFORM LOAD (รวมถึง Self-weight ที่เข้ามาด้วย) ---
+        # UNIFORM LOAD
         elif l['type'] == 'U':
             x_s = start_x_span + float(l.get('d_start', 0))
-            # ถ้าเป็น Self weight หรือ UDL เต็มคาน dist อาจจะเป็นระยะทั้งหมด
             dist_val = float(l['dist'])
             x_e = x_s + dist_val
+            h_vis = 0.25
             
-            h_vis = 0.25 # ความสูงกราฟิกของ Load
-            
-            # วาดกล่องพื้นที่แรง (Shaded Area)
+            # Shaded Area
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e, x_e, x_s],
                 y=[0, 0, h_vis, h_vis],
-                fill='toself',
-                fillcolor=color,
-                opacity=0.3, # โปร่งแสงเพื่อให้เห็นซ้อนกันได้
-                line=dict(width=0),
-                hoverinfo='text',
-                text=f"UDL: {mag_kN:.2f} kN/m",
-                showlegend=False
+                fill='toself', fillcolor=color, opacity=0.3,
+                line=dict(width=0), hoverinfo='text',
+                text=f"UDL: {mag_kN:.2f} kN/m", showlegend=False
             ), row=1, col=1)
             
-            # วาดเส้นขอบบน
+            # Top Line
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e], y=[h_vis, h_vis],
                 mode='lines', line=dict(color=color, width=2), hoverinfo='skip'
             ), row=1, col=1)
             
-            # วาดลูกศรชี้ลง (สุ่มจำนวนตามความยาว)
+            # Arrows
             n_arrows = max(3, int(dist_val * 2)) 
             arrow_x = np.linspace(x_s, x_e, n_arrows)
             for ax_x in arrow_x:
                 fig.add_annotation(
-                    x=ax_x, y=0, ax=0, ay=-20, # ลูกศรจากบนลงล่าง
+                    x=ax_x, y=0, ax=0, ay=-20,
                     xref="x1", yref="y1",
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
                     row=1, col=1
                 )
             
-            # Label ตรงกลาง
+            # Label
             fig.add_annotation(
                 x=(x_s+x_e)/2, y=h_vis,
                 text=f"<b>w={mag_kN:.2f} kN/m</b>",
                 showarrow=False, yshift=10, font=dict(color=color), row=1, col=1
             )
 
-    # ==========================================
-    # ROW 2: SHEAR FORCE (SFD)
-    # ==========================================
+    # ROW 2: SHEAR FORCE
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
     fig.add_trace(go.Scatter(
         x=res_df['x'], y=res_df['shear']/1000, 
@@ -228,7 +202,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     
     v_max = res_df['shear'].max() / 1000
     v_min = res_df['shear'].min() / 1000
-    # Annotate Max/Min V
     for val in [v_max, v_min]:
         if abs(val) > 0.01:
             idx = (res_df['shear']/1000 - val).abs().idxmin()
@@ -238,9 +211,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 font=dict(color='#e74c3c', size=11), row=2, col=1
             )
 
-    # ==========================================
-    # ROW 3: BENDING MOMENT (BMD)
-    # ==========================================
+    # ROW 3: BENDING MOMENT
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
     fig.add_trace(go.Scatter(
         x=res_df['x'], y=res_df['moment']/1000, 
@@ -250,7 +221,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
     m_max = res_df['moment'].max() / 1000
     m_min = res_df['moment'].min() / 1000
-    # Annotate Max/Min M
     for val in [m_max, m_min]:
         if abs(val) > 0.01:
             idx = (res_df['moment']/1000 - val).abs().idxmin()
@@ -261,9 +231,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 font=dict(color='#27ae60', size=11), row=3, col=1
             )
 
-    # ==========================================
-    # ROW 4: DEFLECTION (Elastic Curve)
-    # ==========================================
+    # ROW 4: DEFLECTION
     fig.add_hline(y=0, line_color="black", line_width=1, row=4, col=1)
     fig.add_trace(go.Scatter(
         x=res_df['x'], y=res_df['deflection'], 
@@ -281,9 +249,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         font=dict(color='#8e44ad', size=11), row=4, col=1
     )
 
-    # ==========================================
-    # LAYOUT & STYLING
-    # ==========================================
+    # LAYOUT
     for x_pos in cum_dist:
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
@@ -302,7 +268,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     return fig
 
 # ==========================================
-# 3. DESIGN CHECK DISPLAY (Logic แสดงผลการออกแบบ)
+# 3. DESIGN CHECK DISPLAY
 # ==========================================
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     st.markdown("---")
@@ -313,7 +279,6 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     b = design_res.get('b', 200)
     h = design_res.get('h', 400)
     d = h - 50
-    
     as_min = max((0.25 * np.sqrt(fc) / fy) * b * d, (1.4 / fy) * b * d)
 
     st.markdown("#### 📏 Reinforcement Area Check ($A_s$)")
@@ -323,10 +288,8 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         as_req_calc = design_res.get('as_req_bot', 0.0)
         as_req_final = max(as_req_calc, as_min)
         as_prov = design_res.get('as_prov_bot', 0.0)
-        
         st.write("**Bottom Steel (Mid-span)**")
         st.write(f"Required (min): `{as_req_final:.0f}` $mm^2$ | Provided: `{as_prov:.0f}` $mm^2$")
-        
         if as_req_final > 0:
             ratio = min(as_prov / as_req_final, 1.0)
             st.progress(ratio)
@@ -339,10 +302,8 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         as_req_calc_t = design_res.get('as_req_top', 0.0)
         as_req_final_t = max(as_req_calc_t, as_min)
         as_prov_t = design_res.get('as_prov_top', 0.0)
-        
         st.write("**Top Steel (Support)**")
         st.write(f"Required (min): `{as_req_final_t:.0f}` $mm^2$ | Provided: `{as_prov_t:.0f}` $mm^2$")
-        
         if as_req_final_t > 0:
             ratio_t = min(as_prov_t / as_req_final_t, 1.0)
             st.progress(ratio_t)
@@ -353,9 +314,7 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
 
     st.markdown("---")
     st.markdown("#### ⚡ Section Strength ($\phi M_n, \phi V_n$)")
-
     col1, col2, col3 = st.columns(3)
-    
     with col1:
         st.markdown("**Positive Moment (+M)**")
         phi_mn_pos = design_res.get('phi_Mn_pos', 0.0)
@@ -363,7 +322,6 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Capacity $\phi M_n^+$", f"{phi_mn_pos:.2f} kN-m", 
                   delta=f"{(phi_mn_pos - mu_pos):.2f}", delta_color="normal")
         st.success("✅ Strength PASS") if phi_mn_pos >= mu_pos else st.error("❌ Strength FAIL")
-
     with col2:
         st.markdown("**Negative Moment (-M)**")
         phi_mn_neg = design_res.get('phi_Mn_neg', 0.0)
@@ -372,7 +330,6 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
         st.metric("Capacity $\phi M_n^-$", f"{phi_mn_neg:.2f} kN-m",
                   delta=f"{(phi_mn_neg - mu_neg_abs):.2f}", delta_color="normal")
         st.success("✅ Strength PASS") if phi_mn_neg >= mu_neg_abs else st.error("❌ Strength FAIL")
-
     with col3:
         st.markdown("**Shear Force (V)**")
         phi_vn = design_res.get('phi_Vn', 0.0)
@@ -381,7 +338,6 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
                   delta=f"{(phi_vn - vu):.2f}", delta_color="normal")
         st.success("✅ Shear PASS") if phi_vn >= vu else st.error("❌ Shear FAIL")
             
-    # Safely get keys with defaults to avoid errors
     top_n = design_res.get('top_n', 0)
     top_db = design_res.get('top_db', 0)
     bot_n = design_res.get('bot_n', 0)
@@ -389,12 +345,10 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     stir_db = design_res.get('stir_db', 0)
     stir_sp = design_res.get('stir_spacing', 0)
 
-    st.info(f"💡 **Final Detailing:** Top {top_n}DB{top_db} | "
-            f"Bottom {bot_n}DB{bot_db} | "
-            f"Stirrup RB{stir_db}@{stir_sp} mm")
+    st.info(f"💡 **Final Detailing:** Top {top_n}DB{top_db} | Bottom {bot_n}DB{bot_db} | Stirrup RB{stir_db}@{stir_sp} mm")
 
 # ==========================================
-# 4. MAIN RENDER CONTROLLER (ส่วนสำคัญที่รวม Tab และ BOQ)
+# 4. MAIN RENDER CONTROLLER (แก้ไขตรงนี้ให้เช็คเงื่อนไขก่อนวาด)
 # ==========================================
 def render_design_view(res_package):
     """
@@ -414,22 +368,53 @@ def render_design_view(res_package):
     spans = res_package['spans']
     sup_df = res_package['supports']
     params = res_package['params']
-    loads = res_package.get('loads', []) # ถ้าไม่มีให้เป็น list ว่าง
+    
+    # ดึง Load ของ User มาเก็บไว้ก่อน
+    raw_loads = res_package.get('loads', [])
+    if isinstance(raw_loads, pd.DataFrame):
+        display_loads = raw_loads.to_dict('records')
+    else:
+        display_loads = list(raw_loads) if raw_loads else []
+
+    # ========================================================
+    # แก้ไข: เช็คก่อนว่า User ติ๊ก 'include_sw' มาหรือไม่?
+    # ========================================================
+    # ปกติค่านี้จะอยู่ใน params ถ้าไม่มี key นี้ให้ Default เป็น True หรือตามที่ App ส่งมา
+    include_sw = params.get('include_sw', True)
+
+    if include_sw: # <<< เช็คตรงนี้ครับ ถ้า True ค่อยทำ
+        for i, res in enumerate(design_res):
+            b_m = res.get('b', 300) / 1000.0
+            h_m = res.get('h', 500) / 1000.0
+            L = spans[i]
+            
+            # คำนวณ SW
+            sw_mag = 24000 * b_m * h_m 
+            
+            sw_load = {
+                'type': 'U',
+                'mag': sw_mag,
+                'span_index': i,
+                'd_start': 0,
+                'dist': L,
+                'case': 'DL'
+            }
+            display_loads.append(sw_load)
+    # ========================================================
 
     st.markdown("## 🏗️ Design Results Dashboard")
     
-    # Create Tabs
     t1, t2, t3 = st.tabs(["📊 Analysis & Diagrams", "📐 Section Details", "📝 Report & BOQ"])
     
     # --- TAB 1: Analysis ---
     with t1:
         st.subheader("Analysis Results (Interactive)")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
-        # เรียกใช้ฟังก์ชันกราฟที่แก้ไขแล้ว
-        fig = plot_analysis_results(df_plot, spans, sup_df, loads, react)
-        st.plotly_chart(fig, use_container_width=True)
         
-        # Reactions Table
+        # ส่ง display_loads (ที่กรองแล้วว่าเอา SW หรือไม่) ไปวาด
+        fig = plot_analysis_results(df_plot, spans, sup_df, display_loads, react)
+        
+        st.plotly_chart(fig, use_container_width=True)
         st.subheader("Support Reactions")
         r_data = [{"Support": k, "Vertical Reaction (kN)": f"{val/1000:.2f}"} for k, val in react.items()]
         st.dataframe(pd.DataFrame(r_data), use_container_width=True)
@@ -439,25 +424,14 @@ def render_design_view(res_package):
         st.subheader("Detailed Section Design")
         span_opts = [f"Span {i+1}" for i in range(len(spans))]
         selected_span_idx = st.selectbox("Select Span to View:", range(len(spans)), format_func=lambda x: span_opts[x])
-        
-        # ดึงผลลัพธ์ของ Span ที่เลือก
         current_res = design_res[selected_span_idx]
-        
         col1, col2 = st.columns([1, 2])
         with col1:
              st.markdown("#### Cross Section")
              svg_cross = plot_cross_section(current_res)
              st.image(svg_cross, use_container_width=True)
-        
         with col2:
-             # เรียกใช้ฟังก์ชันแสดงผลดีไซน์
-             display_design_comparison(
-                 current_res['Mu_pos'], 
-                 current_res['Mu_neg'], 
-                 current_res['Vu_max'], 
-                 current_res
-             )
-
+             display_design_comparison(current_res['Mu_pos'], current_res['Mu_neg'], current_res['Vu_max'], current_res)
         st.divider()
         st.subheader("Longitudinal Profile")
         svg_long, _ = plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'], params.get('cover', 25))
@@ -466,30 +440,12 @@ def render_design_view(res_package):
     # --- TAB 3: Report & BOQ ---
     with t3:
         st.header("📝 Project Summary & Estimation")
-        
-        # 1. Bill of Quantities (BOQ)
         st.subheader("1. Bill of Quantities (Estimated)")
-        
         boq_df = calculate_boq_summary(design_res, spans)
-        
-        st.dataframe(
-            boq_df.style.format({"Quantity": "{:.2f}"}), 
-            use_container_width=True,
-            hide_index=True
-        )
-        
-        # CSV Download
+        st.dataframe(boq_df.style.format({"Quantity": "{:.2f}"}), use_container_width=True, hide_index=True)
         csv = boq_df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download BOQ (CSV)",
-            data=csv,
-            file_name='beam_boq_estimate.csv',
-            mime='text/csv',
-        )
-        
+        st.download_button(label="📥 Download BOQ (CSV)", data=csv, file_name='beam_boq_estimate.csv', mime='text/csv')
         st.divider()
-        
-        # 2. Detailed Report
         st.subheader("2. Detailed Calculation Report")
         for i, res in enumerate(design_res):
             with st.expander(f"📄 View Calculation Note: Span {i+1}", expanded=False):
