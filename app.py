@@ -109,7 +109,7 @@ st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div
 with st.sidebar:
     params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
     
-    # --- ADDED: UNIT COST INPUTS ---
+    # --- COST ESTIMATION INPUTS (Keep here for global settings) ---
     st.markdown("---")
     st.markdown("### 💰 Cost Estimation (BOQ)")
     price_conc = st.number_input("Concrete (Baht/m³)", value=2200, step=50)
@@ -252,7 +252,7 @@ else:
                         """)
                         st.caption(f"*Calculated using ACI 318-19, $I_e$={Ie/1e4:.0f}cm⁴, $\lambda_\Delta$={lambda_d:.2f}")
 
-                        # --- 5. CRACK WIDTH CONTROL (NEW FEATURE) ---
+                        # --- 5. CRACK WIDTH CONTROL ---
                         st.markdown("#### ⚡ Crack Width Control")
                         
                         # รวมจำนวนเหล็กล่างทั้งหมด
@@ -341,13 +341,13 @@ else:
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
         
-        # ================= BOQ SECTION (CORRECTED & LINKED) =================
+        # ================= BOQ SECTION (CORRECTLY PLACED AT BOTTOM) =================
         st.markdown("---")
         st.header("💵 Bill of Quantities (BOQ)")
         
         if final_design_res:
             try:
-                # 1. ดึงปริมาณงานจากฟังก์ชัน design_view.calculate_boq_summary ที่แก้ไขใหม่
+                # 1. ดึงปริมาณงานจากฟังก์ชัน design_view.calculate_boq_summary
                 boq_df = design_view.calculate_boq_summary(final_design_res, spans)
                 
                 # 2. ใส่ราคาต่อหน่วยจาก Sidebar (Mapping)
@@ -399,7 +399,7 @@ else:
 
             except AttributeError:
                 st.error("⚠️ ไม่พบฟังก์ชัน 'calculate_boq_summary' ใน design_view.py")
-                st.info("กรุณาอัปเดตไฟล์ design_view.py ตามโค้ดที่ให้ไปในข้อความก่อนหน้านี้ครับ")
+                st.info("กรุณาอัปเดตไฟล์ design_view.py ให้ถูกต้องตามคำแนะนำก่อนหน้านี้")
             except Exception as e:
                 st.error(f"เกิดข้อผิดพลาดในการคำนวณ BOQ: {e}")
 
