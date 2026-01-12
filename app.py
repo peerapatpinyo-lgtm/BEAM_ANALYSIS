@@ -216,6 +216,7 @@ else:
                             Ma_svc=ma_pos_svc, b=b_mm, h=h_mm, d=d_b, As=as_prov_b, n_bars=total_n_bars_bot, fc=fc
                         )
                         limit_crack = 0.30
+                        status_crack = "✅ Pass" if w_crack <= limit_crack else "⚠️ Warning"
 
                         col_chk1, col_chk2 = st.columns(2)
                         with col_chk1:
@@ -233,11 +234,22 @@ else:
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # Store Data for BOQ
+                    # --- GATHER FULL DATA FOR REPORT & BOQ ---
+                    # **IMPORTANT**: This dictionary must be complete for Tab 3 (Report) to work.
                     final_design_res.append({
-                        'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm,
-                        'top': top_layers, 'bot': bot_layers,
-                        'stir_db': stir_db, 'stir_s': stir_s
+                        'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
+                        'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
+                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': d_long, 
+                        'top_db': top_layers[0]['db'] if top_layers else 12, 
+                        'bot_db': bot_layers[0]['db'] if bot_layers else 12,
+                        'stir_db': stir_db, 'stir_s': stir_s,
+                        'pos': {'n': sum(l['n'] for l in bot_layers), 'area': as_prov_b, 'layers': bot_layers, 'status': (phi_Mn_b >= mu_pos)},
+                        'neg': {'n': sum(l['n'] for l in top_layers), 'area': as_prov_t, 'layers': top_layers, 'status': (phi_Mn_t >= mu_neg)},
+                        'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
+                        'service': {'delta_long': d_long, 'limit_240': limit_240, 'ok': d_long <= limit_240},
+                        'crack': {'w': w_crack, 'limit': limit_crack, 'status': status_crack},
+                        'top': {'n': top_layers[0]['n'] if top_layers else 0, 'db': top_layers[0]['db'] if top_layers else 12, 'layers': num_t_layers, 'all_layers': top_layers},
+                        'bot': {'n': bot_layers[0]['n'] if bot_layers else 0, 'db': bot_layers[0]['db'] if bot_layers else 12, 'layers': num_b_layers, 'all_layers': bot_layers}
                     })
 
             st.markdown("---")
@@ -260,15 +272,16 @@ else:
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
 
-        # ================= TAB 3: REPORT =================
+        # ================= TAB 3: REPORT (RESTORED FULL LOGIC) =================
         with tab3:
-            st.header("📝 Design Report")
-            if final_design_res:
-                st.info("Generation logic for report (Refer to detailed calculation output above).")
-                # Simple placeholder as full reporter logic is complex, but required imports are there.
-                # Assuming reporter.render_calculation_report handles data correctly.
+            st.header("📝 Calculation Reports")
+            if not final_design_res:
+                st.warning("⚠️ Please complete design in Tab 2.")
             else:
-                st.warning("Please complete design in Tab 2.")
+                for res in final_design_res:
+                    # Using the full dictionary to render report
+                    with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
+                        reporter.render_calculation_report(res)
 
     except Exception as e:
         st.error(f"Error: {e}")
@@ -300,14 +313,15 @@ else:
 
             # 3. Steel
             # Main Bars (approx length = L + development length factor ~1.1)
-            w_top = sum(get_rebar_weight(l['db']) * l['n'] for l in res['top'])
-            w_bot = sum(get_rebar_weight(l['db']) * l['n'] for l in res['bot'])
+            # Accessing 'all_layers' to handle multiple layers correctly
+            w_top = sum(get_rebar_weight(l['db']) * l['n'] for l in res['top']['all_layers'])
+            w_bot = sum(get_rebar_weight(l['db']) * l['n'] for l in res['bot']['all_layers'])
             total_steel_weight += (w_top + w_bot) * L * 1.05 # 5% lap/waste
 
             # Stirrups
             stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) # Perimeter approx
-            num_stir = (L * 1000.0) / res['stir_s'] + 1
-            w_stir = get_rebar_weight(res['stir_db']) * stir_len_m * num_stir
+            num_stir = (L * 1000.0) / res['shear']['s'] + 1
+            w_stir = get_rebar_weight(res['shear']['db']) * stir_len_m * num_stir
             total_steel_weight += w_stir
 
         # Create Table
