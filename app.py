@@ -15,7 +15,6 @@ app_styles.apply_custom_css()
 
 # --- HELPER: REBAR WEIGHT ---
 def get_rebar_weight(d_mm):
-    """Calculate rebar weight kg/m from diameter"""
     return (d_mm ** 2) / 162.0
 
 # --- 3. INTERNAL HELPER: PLOT CROSS SECTION ---
@@ -27,6 +26,8 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
                                      linewidth=1.5, edgecolor='#34495e', facecolor='none', linestyle='-')
     ax.add_patch(stirrup_rect)
     
+    # Draw Rebars (Simplified logic for brevity)
+    # ... (Same drawing logic as before) ...
     # Top Rebar
     n_top = sum(l['n'] for l in top_layers)
     dia_top = top_layers[0]['db'] if top_layers else 12
@@ -53,11 +54,9 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
 
     # Labels
     text_x = b + (b * 0.1)
-    ax.text(text_x, h - cover, f"Top:\n{n_top}DB{int(dia_top)}", color='#c0392b', fontsize=12, fontweight='bold', va='center')
-    ax.text(text_x, cover + dia_bot, f"Bot:\n{n_bot}DB{int(dia_bot)}", color='#27ae60', fontsize=12, fontweight='bold', va='center')
-    shear_text = f"Shear:\nRB{int(shear_res['db'])} @ {int(shear_res['s'])} mm"
-    ax.text(text_x, h/2, shear_text, color='#2c3e50', fontsize=10, fontweight='bold', va='center',
-            bbox=dict(boxstyle="round,pad=0.5", fc="white", ec="#34495e", alpha=0.9))
+    ax.text(text_x, h - cover, f"Top: {n_top}DB{int(dia_top)}", color='#c0392b', fontsize=12, fontweight='bold', va='center')
+    ax.text(text_x, cover + dia_bot, f"Bot: {n_bot}DB{int(dia_bot)}", color='#27ae60', fontsize=12, fontweight='bold', va='center')
+    ax.text(text_x, h/2, f"Stirrup: RB{int(shear_res['db'])}@{int(shear_res['s'])}", color='#2c3e50', fontsize=10, fontweight='bold', va='center')
 
     ax.set_title(f"SECTION {int(b)}x{int(h)} mm", fontsize=14, fontweight='bold', pad=20)
     ax.set_aspect('equal')
@@ -72,7 +71,8 @@ st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
+    # Get inputs. NOTE: loads_df comes from here.
+    params, n_spans, spans, sup_df, sidebar_loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
@@ -84,8 +84,17 @@ else:
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
         
         st.markdown("---")
-        # Checkbox
+        # [CONTROLLER] Checkbox
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
+        
+        # [FEEDBACK] Calculate SW for display
+        b_m = params.get('b', 300) / 1000.0
+        h_m = params.get('h', 500) / 1000.0
+        sw_val = b_m * h_m * 2400 * 9.81
+        if include_sw:
+            st.caption(f"✅ **Active:** {sw_val/1000:.2f} kN/m (DL)")
+        else:
+            st.caption("❌ **Inactive:** Not included")
     
     with col_set2:
         st.markdown("### 🔢 Load Factors")
@@ -100,44 +109,44 @@ else:
 
     try:
         # ==========================================
-        # ⚡ LOGIC: ROBUST LOAD HANDLING (CLEAN SLATE)
+        # ⚡ LOGIC: STRICT LOAD CONSTRUCTION
         # ==========================================
         
-        # 1. Start with a FRESH copy of user loads (to avoid reference issues)
-        user_loads_base = loads_df.copy()
+        # 1. ALWAYS start with a FRESH Deep Copy of user inputs
+        # This prevents any previous run's data from sticking
+        current_user_loads = sidebar_loads_df.copy(deep=True)
         
-        # 2. Prepare Self-Weight DataFrame (Empty by default)
-        sw_list = []
-        
+        # 2. Prepare the SW DataFrame
+        sw_rows = []
         if include_sw:
-            # Calculate logic only if checked
-            b_m = params.get('b', 300) / 1000.0
-            h_m = params.get('h', 500) / 1000.0
-            w_sw = b_m * h_m * 2400 * 9.81 # N/m
-            
             for i in range(n_spans):
-                sw_list.append({
+                sw_rows.append({
                     'span_index': i,
                     'type': 'U',
-                    'mag': w_sw,
+                    'mag': sw_val, # Calculated above
                     'dist': spans[i],
                     'd_start': 0,
-                    'case': 'DL'  # Important for Factor
+                    'case': 'DL' # Critical for factoring
                 })
+            df_sw = pd.DataFrame(sw_rows)
             
-            # Show status
-            st.caption(f"ℹ️ **System:** Added Self-weight {w_sw/1000:.2f} kN/m to analysis.")
+            # 3. Combine: User Loads + SW
+            # Using concat ensures we are creating a NEW object
+            final_loads_df = pd.concat([current_user_loads, df_sw], ignore_index=True)
         else:
-            st.caption("ℹ️ **System:** Self-weight EXCLUDED from analysis.")
+            # If unchecked, use ONLY user loads
+            final_loads_df = current_user_loads
 
-        # 3. Create SW DataFrame and Concat
-        if sw_list:
-            sw_df = pd.DataFrame(sw_list)
-            # Combine strictly: User Loads + SW
-            final_loads_df = pd.concat([user_loads_base, sw_df], ignore_index=True)
-        else:
-            # If no SW, use strictly User Loads
-            final_loads_df = user_loads_base
+        # ==========================================
+        # 🧐 DEBUG / VERIFICATION SECTION
+        # ==========================================
+        with st.expander("🧐 Inspect Loads used in Analysis (Click to Verify)", expanded=False):
+            st.write("Loads being sent to solver:")
+            st.dataframe(final_loads_df, use_container_width=True)
+            if include_sw:
+                st.info(f"Note: Self-weight of {sw_val/1000:.2f} kN/m has been added as 'DL'.")
+            else:
+                st.warning("Note: Self-weight is OFF. Only user loads are used.")
 
         # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
@@ -158,13 +167,15 @@ else:
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # Graph
+            # Force Graph Update with unique key if needed, but passing new data usually works
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
+            
             fig = design_view.plot_analysis_results(
                 res_df=df_for_plot, spans=spans, supports=sup_df, 
                 loads=calc_loads_ult if not is_service else calc_loads_svc, reactions=R_plot
             )
-            st.plotly_chart(fig, use_container_width=True)
+            # Add key to force redraw
+            st.plotly_chart(fig, use_container_width=True, key=f"plot_{include_sw}_{tag}")
             
             # Metrics
             c_m1, c_m2, c_m3 = st.columns(3)
@@ -182,9 +193,7 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
-                # Analysis Data Extraction
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
-                # Handle edge case where mask is empty (rare)
                 if not mask_u.any(): continue
 
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
@@ -263,7 +272,6 @@ else:
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # Store Data
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
