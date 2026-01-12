@@ -26,9 +26,6 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
                                      linewidth=1.5, edgecolor='#34495e', facecolor='none', linestyle='-')
     ax.add_patch(stirrup_rect)
     
-    # Draw Rebars (Simplified logic for brevity)
-    # ... (Same drawing logic as before) ...
-    # Top Rebar
     n_top = sum(l['n'] for l in top_layers)
     dia_top = top_layers[0]['db'] if top_layers else 12
     start_x = cover + dia_top/2
@@ -40,7 +37,6 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_top == 1:
         ax.add_patch(patches.Circle((b/2, h - cover - dia_top/2), radius=dia_top/2, color='#c0392b'))
 
-    # Bot Rebar
     n_bot = sum(l['n'] for l in bot_layers)
     dia_bot = bot_layers[0]['db'] if bot_layers else 12
     start_x = cover + dia_bot/2
@@ -52,7 +48,6 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_bot == 1:
         ax.add_patch(patches.Circle((b/2, cover + dia_bot/2), radius=dia_bot/2, color='#27ae60'))
 
-    # Labels
     text_x = b + (b * 0.1)
     ax.text(text_x, h - cover, f"Top: {n_top}DB{int(dia_top)}", color='#c0392b', fontsize=12, fontweight='bold', va='center')
     ax.text(text_x, cover + dia_bot, f"Bot: {n_bot}DB{int(dia_bot)}", color='#27ae60', fontsize=12, fontweight='bold', va='center')
@@ -71,8 +66,8 @@ st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    # Get inputs. NOTE: loads_df comes from here.
-    params, n_spans, spans, sup_df, sidebar_loads_df, stable = input_handler.render_all_sidebar_inputs()
+    # Get raw user inputs
+    params, n_spans, spans, sup_df, raw_user_loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
@@ -84,17 +79,17 @@ else:
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
         
         st.markdown("---")
-        # [CONTROLLER] Checkbox
+        # [CRITICAL CHECKBOX]
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
         
-        # [FEEDBACK] Calculate SW for display
+        # Display SW Value for confidence
         b_m = params.get('b', 300) / 1000.0
         h_m = params.get('h', 500) / 1000.0
         sw_val = b_m * h_m * 2400 * 9.81
         if include_sw:
-            st.caption(f"✅ **Active:** {sw_val/1000:.2f} kN/m (DL)")
+            st.caption(f"ℹ️ **Added:** {sw_val/1000:.2f} kN/m")
         else:
-            st.caption("❌ **Inactive:** Not included")
+            st.caption("ℹ️ **Excluded:** 0.00 kN/m")
     
     with col_set2:
         st.markdown("### 🔢 Load Factors")
@@ -109,52 +104,41 @@ else:
 
     try:
         # ==========================================
-        # ⚡ LOGIC: STRICT LOAD CONSTRUCTION
+        # ⚡ FORCE CLEAN LOAD GENERATION (The Fix)
         # ==========================================
         
-        # 1. ALWAYS start with a FRESH Deep Copy of user inputs
-        # This prevents any previous run's data from sticking
-        current_user_loads = sidebar_loads_df.copy(deep=True)
+        # 1. Use a strictly local variable, copied deeply from user input
+        # This ensures we never accidentally reuse a dirty dataframe
+        clean_user_loads = raw_user_loads_df.copy(deep=True)
         
-        # 2. Prepare the SW DataFrame
+        # 2. Prepare the ADD-ON dataframe (Self Weight)
         sw_rows = []
         if include_sw:
             for i in range(n_spans):
                 sw_rows.append({
-                    'span_index': i,
-                    'type': 'U',
-                    'mag': sw_val, # Calculated above
-                    'dist': spans[i],
-                    'd_start': 0,
-                    'case': 'DL' # Critical for factoring
+                    'span_index': i, 
+                    'type': 'U', 
+                    'mag': sw_val, 
+                    'dist': spans[i], 
+                    'd_start': 0, 
+                    'case': 'DL'
                 })
-            df_sw = pd.DataFrame(sw_rows)
-            
-            # 3. Combine: User Loads + SW
-            # Using concat ensures we are creating a NEW object
-            final_loads_df = pd.concat([current_user_loads, df_sw], ignore_index=True)
+            df_sw_only = pd.DataFrame(sw_rows)
+            # Combine: User Inputs + SW
+            final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
+            status_msg = "✅ **Self-Weight Included**"
         else:
-            # If unchecked, use ONLY user loads
-            final_loads_df = current_user_loads
-
-        # ==========================================
-        # 🧐 DEBUG / VERIFICATION SECTION
-        # ==========================================
-        with st.expander("🧐 Inspect Loads used in Analysis (Click to Verify)", expanded=False):
-            st.write("Loads being sent to solver:")
-            st.dataframe(final_loads_df, use_container_width=True)
-            if include_sw:
-                st.info(f"Note: Self-weight of {sw_val/1000:.2f} kN/m has been added as 'DL'.")
-            else:
-                st.warning("Note: Self-weight is OFF. Only user loads are used.")
+            # Strictly User Inputs ONLY
+            final_calc_loads = clean_user_loads
+            status_msg = "❌ **Self-Weight Excluded (Pure User Loads)**"
 
         # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
-        calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_loads_df, n_spans, spans, params, f_dl, f_ll)
+        calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
         # 2. Service Run
-        calc_loads_svc = rc_load_processor.prepare_load_dataframe(final_loads_df, n_spans, spans, params, 1.0, 1.0)
+        calc_loads_svc = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
@@ -167,15 +151,27 @@ else:
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # Force Graph Update with unique key if needed, but passing new data usually works
+            # --- DEBUGGER / CONFIRMATION BOX ---
+            with st.container():
+                cols_chk = st.columns([1, 4])
+                with cols_chk[0]:
+                    st.info(status_msg)
+                with cols_chk[1]:
+                    # Calculate total vertical load for verification
+                    total_v_load = final_calc_loads['mag'].sum() if not final_calc_loads.empty else 0
+                    st.caption(f"🔍 **System Check:** Total Vertical Load Magnitude entering solver: **{total_v_load/1000:.2f} kN** (Check this value changes when you toggle SW)")
+
+            # Graph
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
+            
+            # Create a unique key based on SW state to force re-render
+            unique_chart_key = f"chart_{include_sw}_{tag}_{np.random.randint(0,100)}"
             
             fig = design_view.plot_analysis_results(
                 res_df=df_for_plot, spans=spans, supports=sup_df, 
                 loads=calc_loads_ult if not is_service else calc_loads_svc, reactions=R_plot
             )
-            # Add key to force redraw
-            st.plotly_chart(fig, use_container_width=True, key=f"plot_{include_sw}_{tag}")
+            st.plotly_chart(fig, use_container_width=True, key=unique_chart_key)
             
             # Metrics
             c_m1, c_m2, c_m3 = st.columns(3)
@@ -183,6 +179,9 @@ else:
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
             
+            with st.expander("🧐 View Raw Load Data Used (Click to Verify)"):
+                st.dataframe(final_calc_loads)
+
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
             st.header("🏗️ Reinforcement Detailing")
