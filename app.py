@@ -72,7 +72,6 @@ st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    # Removed Cost Inputs from here (Moved to Tab 3 Bottom)
     params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
@@ -81,11 +80,13 @@ else:
     # --- ANALYSIS SETTINGS ---
     col_set1, col_set2 = st.columns([1, 2])
     with col_set1:
-        st.markdown("### ⚙️ Load Factors")
+        st.markdown("### ⚙️ Settings")
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
+        # === NEW BUTTON: INCLUDE SELF WEIGHT ===
+        include_sw = st.checkbox("➕ Include Beam Self-weight", value=True, help="คิดน้ำหนักคอนกรีตเสริมเหล็ก 2400 kg/m³")
     
     with col_set2:
-        st.markdown("### 🔢 Factors")
+        st.markdown("### 🔢 Load Factors")
         c1, c2 = st.columns(2)
         if "Service" in mode_select:
             f_dl, f_ll = 1.0, 1.0
@@ -96,22 +97,49 @@ else:
             tag, is_service = "Ultimate", False
 
     try:
+        # === SELF WEIGHT LOGIC ===
+        # เตรียม Loads สำหรับส่งเข้า Solver
+        final_loads_df = loads_df.copy()
+        
+        if include_sw:
+            # คำนวณ Self Weight (N/m)
+            # Density = 2400 kg/m3 * 9.81 m/s2 approx 23544 N/m3
+            # w = b * h * density
+            b_mm, h_mm = rc_utils.normalize_section_units(params.get('b', 300), params.get('h', 500))
+            density = 2400 * 9.81 # N/m^3
+            w_sw = (b_mm / 1000.0) * (h_mm / 1000.0) * density # N/m
+            
+            # สร้าง Load สำหรับทุก Span
+            sw_data = []
+            for i in range(n_spans):
+                sw_data.append({
+                    'span_index': i,
+                    'type': 'U',
+                    'mag': w_sw,
+                    'dist': spans[i],
+                    'd_start': 0
+                })
+            
+            # รวมกับ Loads เดิมของผู้ใช้
+            sw_df = pd.DataFrame(sw_data)
+            final_loads_df = pd.concat([final_loads_df, sw_df], ignore_index=True)
+
         # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
-        calc_loads_ult = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
+        calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
         # 2. Service Run
-        calc_loads_svc = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
+        calc_loads_svc = rc_load_processor.prepare_load_dataframe(final_loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
         # --- TABS START ---
-        tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report & BOQ"])
+        tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
         final_design_res = []
 
-        # ================= TAB 1: ANALYSIS RESULTS (CLEANED) =================
+        # ================= TAB 1: ANALYSIS RESULTS =================
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
@@ -123,7 +151,7 @@ else:
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # Key Metrics Only (NO BOQ)
+            # Key Metrics Only
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
@@ -145,7 +173,6 @@ else:
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
-                # Service Data
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
                 ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
                 delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0
@@ -168,7 +195,6 @@ else:
                         d_t_val, as_prov_t, y_centroid_t = rc_design_engine.get_centroid_and_d(top_layers, h_mm, cover_mm, 9)
                         d_t = h_mm - y_centroid_t if y_centroid_t > 0 else h_mm - (cover_mm + 9 + 16/2)
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
-                        as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
                         phi_Mn_t, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(top_layers, d_t, b_mm, h_mm, fc, fy)
                         st.markdown(f"**Status (Top):** Prov: {as_prov_t:.0f} mm² | Cap: {phi_Mn_t:.1f} kNm {'✅' if phi_Mn_t >= mu_neg else '❌'}")
 
@@ -241,7 +267,7 @@ else:
                 svg_long, _ = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, cover_mm)
                 st.components.v1.html(f'<div style="background:white; overflow-x:auto; border:1px solid #ddd; padding:10px;">{svg_long}</div>', height=500)
 
-        # ================= TAB 3: REPORT & BOQ (ONLY HERE) =================
+        # ================= TAB 3: REPORT =================
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
