@@ -16,7 +16,6 @@ def calculate_boq_summary(design_res, spans):
     
     for i, res in enumerate(design_res):
         L = spans[i]
-        # Safety Check
         b_mm = res.get('b') or 300
         h_mm = res.get('h') or 500
 
@@ -81,11 +80,11 @@ def calculate_boq_summary(design_res, spans):
     return pd.DataFrame(data)
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH (Standard Style - No Y-Lock)
+# 2. PLOTLY ANALYSIS GRAPH (Fixed Scale)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
-    Standard clean plotting style.
+    Standard clean plotting style with dynamic scaling for visual elements.
     """
     fig = make_subplots(
         rows=4, cols=1, 
@@ -97,7 +96,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             "<b>3. Bending Moment Diagram (BMD)</b>",
             "<b>4. Deflection Diagram</b>"
         ),
-        row_heights=[0.20, 0.25, 0.25, 0.30]
+        row_heights=[0.25, 0.25, 0.25, 0.25]
     )
 
     # ROW 1: LOAD MODEL (FBD)
@@ -117,7 +116,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         elif row['type'] == 'Roller': sym = "circle"
         
         fig.add_trace(go.Scatter(
-            x=[row['x']], y=[-0.08], 
+            x=[row['x']], y=[-0.05], 
             mode='markers+text',
             marker=dict(symbol=sym, size=14, color='white', line=dict(width=2, color='black')),
             text=[row['type'][0]], textposition="bottom center",
@@ -132,14 +131,23 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     else:
         load_iter = []
 
-    # Calculate max height for auto-scaling visual
-    max_h_vis = 0.5 
-
+    # --- 1. Find Max Load for Scaling ---
+    max_mag = 1.0
+    for l in load_iter:
+        m = abs(l['mag'])
+        if m > max_mag: max_mag = m
+    
+    # --- 2. Draw Loads ---
     for l in load_iter:
         span_idx = int(l['span_index'])
         start_x_span = cum_dist[span_idx]
-        mag_kN = l['mag'] / 1000.0  # N -> kN
+        mag_raw = l['mag']
+        mag_kN = mag_raw / 1000.0  # N -> kN
         
+        # Calculate visual height ratio (0.15 to 0.6)
+        ratio = abs(mag_raw) / max_mag
+        h_vis = 0.15 + (ratio * 0.45) 
+
         case_type = l.get('case', 'DL')
         if case_type == 'LL':
             color = '#c0392b' # Red
@@ -149,8 +157,12 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         # --- POINT LOAD ---
         if l['type'] == 'P':
             x_loc = start_x_span + float(l['d_start']) 
+            # Arrow scale logic
+            arrow_len = 40 * (0.5 + 0.5*ratio) # Pixel length
+            
             fig.add_annotation(
-                x=x_loc, y=0, ax=0, ay=-50,
+                x=x_loc, y=0, 
+                ax=0, ay=-arrow_len,
                 xref="x1", yref="y1",
                 showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor=color,
                 text=f"<b>{mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
@@ -161,9 +173,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             x_s = start_x_span + float(l.get('d_start', 0))
             dist_val = float(l['dist'])
             x_e = x_s + dist_val
-            
-            # ปรับความสูงกราฟฟิกตามสัดส่วน (แต่ไม่เกินค่าหนึ่งเพื่อความสวยงาม)
-            h_vis = 0.25
             
             # 1. Shaded Area
             fig.add_trace(go.Scatter(
@@ -184,7 +193,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             arrow_x_points = np.linspace(x_s, x_e, n_arrows + 2)[1:-1]
             for ax_x in arrow_x_points:
                 fig.add_annotation(
-                    x=ax_x, y=0, ax=0, ay=-25,
+                    x=ax_x, y=0, ax=0, ay=-30*ratio, # Scale arrow slightly
                     xref="x1", yref="y1",
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
                     row=1, col=1
@@ -211,7 +220,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     
     v_max = res_df['shear'].max() / 1000
     v_min = res_df['shear'].min() / 1000
-    # Annotate Max/Min
     for val in [v_max, v_min]:
         if abs(val) > 0.01:
             idx = (res_df['shear']/1000 - val).abs().idxmin()
@@ -264,13 +272,13 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
     fig.update_layout(
         title="<b>Structural Analysis Results</b>",
-        height=900, showlegend=False, template="plotly_white", hovermode="x unified",
+        height=1000, showlegend=False, template="plotly_white", hovermode="x unified",
         margin=dict(t=60, b=40, l=60, r=20)
     )
     
     # --- FIX GRAPH DISTORTION ---
-    # ลบการ Lock Range ออก (Visible=False เพื่อซ่อนแกน แต่ไม่ Lock ค่า)
-    fig.update_yaxes(visible=False, showgrid=False, row=1, col=1) 
+    # Lock range for load diagram so it always has headspace
+    fig.update_yaxes(range=[-0.25, 1.0], showgrid=False, visible=False, row=1, col=1) 
     
     fig.update_yaxes(title_text="Shear (kN)", showgrid=True, row=2, col=1)
     fig.update_yaxes(title_text="Moment (kN-m)", autorange="reversed", showgrid=True, row=3, col=1)
@@ -412,33 +420,33 @@ def render_design_view(res_package):
     st.markdown("## 🏗️ Design Dashboard")
     
     # ======================================================
-    #  TABLE DISPLAY (ย้ายมาไว้ข้างบนสุด อยู่นอก Tabs)
-    #  เพื่อให้เห็นชัดเจนก่อนดูผล Analysis
+    #  TABLE DISPLAY (FIX: วางตรงนี้ ขึ้นแน่นอน 100%)
     # ======================================================
-    with st.expander("📋 Click to view Load Combinations & Parameters", expanded=True):
-        dl_factor = params.get('dl_factor', 1.4)
-        ll_factor = params.get('ll_factor', 1.7)
+    st.markdown("### 📋 Load Combinations")
+    dl_factor = params.get('dl_factor', 1.4)
+    ll_factor = params.get('ll_factor', 1.7)
+    
+    combo_data = [
+        {"Load Type": "Dead Load (DL)", "Factor": f"{dl_factor:.2f}", "Description": "Superimposed Dead Load"},
+        {"Load Type": "Live Load (LL)", "Factor": f"{ll_factor:.2f}", "Description": "Occupancy / Usage Load"},
+    ]
+    
+    if include_sw:
+        combo_data.insert(0, {
+            "Load Type": "Self-Weight (SW)", 
+            "Factor": f"{dl_factor:.2f}", 
+            "Description": "Computed from Beam Section (2400 kg/m³)"
+        })
+    else:
+        combo_data.append({
+            "Load Type": "Self-Weight (SW)", 
+            "Factor": "Excluded", 
+            "Description": "-"
+        })
         
-        combo_data = [
-            {"Load Type": "Dead Load (DL)", "Factor": f"{dl_factor:.2f}", "Description": "Superimposed Dead Load"},
-            {"Load Type": "Live Load (LL)", "Factor": f"{ll_factor:.2f}", "Description": "Occupancy / Usage Load"},
-        ]
-        
-        if include_sw:
-            combo_data.insert(0, {
-                "Load Type": "Self-Weight (SW)", 
-                "Factor": f"{dl_factor:.2f}", 
-                "Description": "Computed from Beam Section (2400 kg/m³)"
-            })
-        else:
-            combo_data.append({
-                "Load Type": "Self-Weight (SW)", 
-                "Factor": "Excluded", 
-                "Description": "-"
-            })
-            
-        st.dataframe(pd.DataFrame(combo_data), use_container_width=True, hide_index=True)
-        st.caption(f"*Ultimate Load Equation: U = {dl_factor}DL + {ll_factor}LL*")
+    st.dataframe(pd.DataFrame(combo_data), use_container_width=True, hide_index=True)
+    st.caption(f"*Ultimate Load Equation: U = {dl_factor}DL + {ll_factor}LL*")
+    st.divider()
     # ======================================================
 
     t1, t2, t3 = st.tabs(["📊 Analysis Results", "📐 Section Details", "📝 Report"])
