@@ -72,14 +72,8 @@ st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
+    # Analysis Inputs Only (No Cost/BOQ inputs here)
     params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
-    
-    # Cost Inputs
-    st.markdown("---")
-    st.markdown("### 💰 Cost Estimation (BOQ)")
-    price_conc = st.number_input("Concrete (Baht/m³)", value=2200, step=50)
-    price_steel = st.number_input("Rebar (Baht/kg)", value=28.0, step=0.5)
-    price_form = st.number_input("Formwork (Baht/m²)", value=300, step=10)
 
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
@@ -117,7 +111,7 @@ else:
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
         final_design_res = []
 
-        # ================= TAB 1: ANALYSIS RESULTS (CLEANED) =================
+        # ================= TAB 1: ANALYSIS RESULTS (CLEAN) =================
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
@@ -262,9 +256,16 @@ else:
 
     # =========================================================================
     # $$$ BOTTOM SECTION: COST ESTIMATION (BOQ) $$$
+    # MOVED: Inputs and Outputs are NOW both here at the bottom only.
     # =========================================================================
     st.markdown("---")
     st.header("💵 Bill of Quantities (BOQ)")
+
+    # 1. Price Inputs (Moved from Sidebar)
+    c_price1, c_price2, c_price3 = st.columns(3)
+    price_conc = c_price1.number_input("Concrete (Baht/m³)", value=2200, step=50)
+    price_steel = c_price2.number_input("Rebar (Baht/kg)", value=28.0, step=0.5)
+    price_form = c_price3.number_input("Formwork (Baht/m²)", value=300, step=10)
 
     if final_design_res:
         total_conc_vol = 0.0
