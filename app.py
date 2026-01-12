@@ -18,29 +18,18 @@ def get_rebar_weight(d_mm):
     """Calculate rebar weight kg/m from diameter"""
     return (d_mm ** 2) / 162.0
 
-# --- 3. INTERNAL HELPER: PLOT CROSS SECTION (FIXED) ---
+# --- 3. INTERNAL HELPER: PLOT CROSS SECTION ---
 def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
-    """
-    Generate Cross Section Image using Matplotlib.
-    """
-    # Setup Figure
     fig, ax = plt.subplots(figsize=(5, 6))
-    
-    # Draw Concrete
     rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='black', facecolor='white')
     ax.add_patch(rect)
-    
-    # Draw Stirrup
     stirrup_rect = patches.Rectangle((cover, cover), b - 2*cover, h - 2*cover, 
                                      linewidth=1.5, edgecolor='#34495e', facecolor='none', linestyle='-')
     ax.add_patch(stirrup_rect)
     
-    # Draw Rebars - Top
+    # Top Rebar Drawing
     n_top = sum(l['n'] for l in top_layers)
-    if top_layers:
-        dia_top = top_layers[0]['db']
-    else:
-        dia_top = 12
+    dia_top = top_layers[0]['db'] if top_layers else 12
     start_x = cover + dia_top/2
     end_x = b - cover - dia_top/2
     if n_top > 1:
@@ -50,12 +39,9 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_top == 1:
         ax.add_patch(patches.Circle((b/2, h - cover - dia_top/2), radius=dia_top/2, color='#c0392b'))
 
-    # Draw Rebars - Bot
+    # Bot Rebar Drawing
     n_bot = sum(l['n'] for l in bot_layers)
-    if bot_layers:
-        dia_bot = bot_layers[0]['db']
-    else:
-        dia_bot = 12
+    dia_bot = bot_layers[0]['db'] if bot_layers else 12
     start_x = cover + dia_bot/2
     end_x = b - cover - dia_bot/2
     if n_bot > 1:
@@ -65,7 +51,7 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_bot == 1:
         ax.add_patch(patches.Circle((b/2, cover + dia_bot/2), radius=dia_bot/2, color='#27ae60'))
 
-    # Labels
+    # Text Labels
     text_x = b + (b * 0.1)
     ax.text(text_x, h - cover, f"Top:\n{n_top}DB{int(dia_top)}", color='#c0392b', fontsize=12, fontweight='bold', va='center')
     ax.text(text_x, cover + dia_bot, f"Bot:\n{n_bot}DB{int(dia_bot)}", color='#27ae60', fontsize=12, fontweight='bold', va='center')
@@ -117,44 +103,39 @@ else:
 
     try:
         # --- ANALYSIS ENGINE ---
-        # 1. Ultimate Run (Design Forces)
+        # 1. Ultimate Run
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
-        # 2. Service Run (Deflection & Cracking)
+        # 2. Service Run
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(loads_df, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
-        # Select data for plotting
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
         # --- TABS START ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
-        
-        # Variable to store design results for Report (Tab 3) and BOQ (Bottom)
         final_design_res = []
 
         # ================= TAB 1: ANALYSIS RESULTS (CLEANED) =================
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # Prepare DataFrame for plotting
+            # 1. Graph Only
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
-            
-            # Plot Graph
             fig = design_view.plot_analysis_results(
                 res_df=df_for_plot, spans=spans, supports=sup_df, 
                 loads=calc_loads_ult if not is_service else calc_loads_svc, reactions=R_plot
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # Show ONLY Key Metrics (No BOQ here)
+            # 2. Key Metrics Only (No BOQ, No Tables)
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
             
-            # END OF TAB 1 - Absolutely NO other code here
+            # --- END OF TAB 1: ABSOLUTELY NOTHING ELSE HERE ---
 
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
@@ -166,13 +147,12 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
-                # Analysis Data Extraction
+                # Extract Analysis Data
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
-                # Service Data Extraction
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
                 ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
                 delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0
@@ -182,7 +162,7 @@ else:
                     with col_input:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, key=f"cov_{i}")
 
-                        # --- Top Steel ---
+                        # Top Steel
                         st.markdown("#### 🔼 Top Reinforcement")
                         num_t_layers = st.selectbox("Top Layers", [1, 2, 3], index=0, key=f"tl_qty_{i}")
                         top_layers = []
@@ -195,12 +175,10 @@ else:
                         d_t_val, as_prov_t, y_centroid_t = rc_design_engine.get_centroid_and_d(top_layers, h_mm, cover_mm, 9)
                         d_t = h_mm - y_centroid_t if y_centroid_t > 0 else h_mm - (cover_mm + 9 + 16/2)
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
-                        as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
                         phi_Mn_t, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(top_layers, d_t, b_mm, h_mm, fc, fy)
-
                         st.markdown(f"**Status (Top):** Prov: {as_prov_t:.0f} mm² | Cap: {phi_Mn_t:.1f} kNm {'✅' if phi_Mn_t >= mu_neg else '❌'}")
 
-                        # --- Bottom Steel ---
+                        # Bottom Steel
                         st.markdown("#### 🔽 Bottom Reinforcement")
                         num_b_layers = st.selectbox("Bottom Layers", [1, 2, 3], index=0, key=f"bl_qty_{i}")
                         bot_layers = []
@@ -214,27 +192,23 @@ else:
                         if d_b <= 0: d_b = h_mm - (cover_mm + 9 + 16/2)
                         as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
                         phi_Mn_b, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(bot_layers, d_b, b_mm, h_mm, fc, fy)
-
                         st.markdown(f"**Status (Bot):** Prov: {as_prov_b:.0f} mm² | Cap: {phi_Mn_b:.1f} kNm {'✅' if phi_Mn_b >= mu_pos else '❌'}")
 
-                        # --- Shear ---
+                        # Shear
                         st.markdown("#### 🌀 Shear Stirrups")
                         cs1, cs2 = st.columns(2)
                         with cs1: stir_db = st.selectbox("Stirrup Dia", [6, 9, 12], index=1, key=f"sdb_final_{i}")
                         with cs2: stir_s = st.number_input("Spacing @", 50, 300, 150, key=f"ss_{i}")
-                        
                         status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_b, fc, fy, stir_db, stir_s)
                         if phi_Vn < vu_max: st.error(f"❌ Shear Fail: {phi_Vn:.1f} < {vu_max:.1f} kN")
                         else: st.success(f"✅ Shear OK: {phi_Vn:.1f} ≥ {vu_max:.1f} kN")
 
-                        # --- Checks ---
+                        # Checks
                         st.markdown("---")
                         d_inst, d_long, Ie, Icr, lambda_d = rc_design_engine.check_serviceability(
                             ma_pos_svc, delta_elastic_mm, b_mm, h_mm, d_b, as_prov_b, as_prov_t, fc
                         )
                         limit_240 = (s_len * 1000) / 240
-                        
-                        # Crack Check
                         total_n_bars_bot = sum(l['n'] for l in bot_layers)
                         w_crack, fs_actual = rc_design_engine.check_crack_width(
                             Ma_svc=ma_pos_svc, b=b_mm, h=h_mm, d=d_b, As=as_prov_b, n_bars=total_n_bars_bot, fc=fc
@@ -243,22 +217,15 @@ else:
                         status_crack = "✅ Pass" if w_crack <= limit_crack else "⚠️ Warning"
 
                         col_chk1, col_chk2 = st.columns(2)
-                        with col_chk1:
-                            st.metric("Deflection (L/240)", f"{d_long:.2f} mm", f"{'Pass' if d_long <= limit_240 else 'Fail'}")
-                        with col_chk2:
-                            st.metric("Crack Width", f"{w_crack:.3f} mm", f"{'Pass' if w_crack <= limit_crack else 'Warning'}")
+                        with col_chk1: st.metric("Deflection (L/240)", f"{d_long:.2f} mm", f"{'Pass' if d_long <= limit_240 else 'Fail'}")
+                        with col_chk2: st.metric("Crack Width", f"{w_crack:.3f} mm", f"{'Pass' if w_crack <= limit_crack else 'Warning'}")
 
                     with col_draw:
-                        fig_cs = plot_cross_section_fixed(
-                            b=b_mm, h=h_mm, cover=cover_mm,
-                            top_layers=top_layers,
-                            bot_layers=bot_layers,
-                            shear_res={'db': stir_db, 's': stir_s}
-                        )
+                        fig_cs = plot_cross_section_fixed(b=b_mm, h=h_mm, cover=cover_mm, top_layers=top_layers, bot_layers=bot_layers, shear_res={'db': stir_db, 's': stir_s})
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # --- GATHER FULL DATA ---
+                    # Store Data for Report
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -280,7 +247,7 @@ else:
                 svg_long, _ = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, cover_mm)
                 st.components.v1.html(f'<div style="background:white; overflow-x:auto; border:1px solid #ddd; padding:10px;">{svg_long}</div>', height=500)
 
-        # ================= TAB 3: REPORT (FULL DATA) =================
+        # ================= TAB 3: REPORT =================
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
@@ -295,7 +262,6 @@ else:
 
     # =========================================================================
     # $$$ BOTTOM SECTION: COST ESTIMATION (BOQ) $$$
-    # ส่วนนี้จะทำงานหลังสุด และอยู่นอก Tabs ทั้งหมด
     # =========================================================================
     st.markdown("---")
     st.header("💵 Bill of Quantities (BOQ)")
@@ -309,28 +275,20 @@ else:
             L = res['L']
             b_m = res['b'] / 1000.0
             h_m = res['h'] / 1000.0
-            
-            # 1. Concrete
             vol = b_m * h_m * L
             total_conc_vol += vol
-
-            # 2. Formwork (Sides + Bottom)
             area = (2*h_m + b_m) * L
             total_form_area += area
-
-            # 3. Steel
-            # Main Bars: ใช้ all_layers เพื่อรวมเหล็กทุกชั้น
+            
             w_top = sum(get_rebar_weight(l['db']) * l['n'] for l in res['top']['all_layers'])
             w_bot = sum(get_rebar_weight(l['db']) * l['n'] for l in res['bot']['all_layers'])
-            total_steel_weight += (w_top + w_bot) * L * 1.05 # เผื่อทาบ 5%
-
-            # Stirrups
-            stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) # Perimeter approx
+            total_steel_weight += (w_top + w_bot) * L * 1.05 
+            
+            stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) 
             num_stir = (L * 1000.0) / res['shear']['s'] + 1
             w_stir = get_rebar_weight(res['shear']['db']) * stir_len_m * num_stir
             total_steel_weight += w_stir
 
-        # สร้างตารางสรุป
         boq_data = [
             {"Item": "Concrete Structure (240 ksc)", "Quantity": total_conc_vol, "Unit": "m³", "Unit Price": price_conc},
             {"Item": "Deformed Bars (DB) + Stirrups", "Quantity": total_steel_weight, "Unit": "kg", "Unit Price": price_steel},
@@ -340,7 +298,6 @@ else:
         df_boq = pd.DataFrame(boq_data)
         df_boq["Amount (THB)"] = df_boq["Quantity"] * df_boq["Unit Price"]
         
-        # แสดงผล Metrics และตาราง
         c_boq1, c_boq2, c_boq3, c_boq4 = st.columns(4)
         c_boq1.metric("Concrete", f"{total_conc_vol:.2f} m³")
         c_boq2.metric("Steel", f"{total_steel_weight:.2f} kg")
