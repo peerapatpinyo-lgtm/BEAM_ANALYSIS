@@ -16,12 +16,9 @@ def calculate_boq_summary(design_res, spans):
     
     for i, res in enumerate(design_res):
         L = spans[i]
-        # Safety Check
-        b_mm = res.get('b', 0)
-        if b_mm == 0: b_mm = 300
-        
-        h_mm = res.get('h', 0)
-        if h_mm == 0: h_mm = 500
+        # Safety Check: ป้องกันค่า b, h เป็น 0
+        b_mm = res.get('b') or 300
+        h_mm = res.get('h') or 500
 
         b_m = b_mm / 1000.0
         h_m = h_mm / 1000.0
@@ -84,7 +81,7 @@ def calculate_boq_summary(design_res, spans):
     return pd.DataFrame(data)
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH (Standard Style)
+# 2. PLOTLY ANALYSIS GRAPH
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
@@ -157,7 +154,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 text=f"<b>{mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
             )
             
-        # --- UNIFORM LOAD (Original Style) ---
+        # --- UNIFORM LOAD ---
         elif l['type'] == 'U':
             x_s = start_x_span + float(l.get('d_start', 0))
             dist_val = float(l['dist'])
@@ -413,47 +410,48 @@ def render_design_view(res_package):
     # --- TAB 1: Analysis ---
     with t1:
         # ======================================================
-        #  ADD: TABLE DISPLAY FOR LOAD COMBINATIONS
+        #  TABLE DISPLAY (ย้ายมาไว้ตรงนี้ เต็มๆ ชัดๆ)
         # ======================================================
-        st.subheader("📋 Load Combination & Parameters")
+        st.subheader("📋 Load Combinations")
         
-        col_tbl, col_empty = st.columns([2, 1])
-        with col_tbl:
-            dl_factor = params.get('dl_factor', 1.4)
-            ll_factor = params.get('ll_factor', 1.7)
+        dl_factor = params.get('dl_factor', 1.4)
+        ll_factor = params.get('ll_factor', 1.7)
+        
+        combo_data = [
+            {"Load Type": "Dead Load (DL)", "Factor": f"{dl_factor:.2f}", "Description": "Superimposed Dead Load"},
+            {"Load Type": "Live Load (LL)", "Factor": f"{ll_factor:.2f}", "Description": "Occupancy / Usage Load"},
+        ]
+        
+        if include_sw:
+            combo_data.insert(0, {
+                "Load Type": "Self-Weight (SW)", 
+                "Factor": f"{dl_factor:.2f}", 
+                "Description": "Computed from Beam Section (2400 kg/m³)"
+            })
+        else:
+            combo_data.append({
+                "Load Type": "Self-Weight (SW)", 
+                "Factor": "Excluded", 
+                "Description": "-"
+            })
             
-            combo_data = [
-                {"Load Type": "Dead Load (DL)", "Factor": f"{dl_factor:.2f}", "Description": "Superimposed Dead Load"},
-                {"Load Type": "Live Load (LL)", "Factor": f"{ll_factor:.2f}", "Description": "Occupancy / Usage Load"},
-            ]
-            
-            if include_sw:
-                combo_data.insert(0, {
-                    "Load Type": "Self-Weight (SW)", 
-                    "Factor": f"{dl_factor:.2f}", 
-                    "Description": "Calculated from Beam Size (2400 kg/m³)"
-                })
-            else:
-                combo_data.append({
-                    "Load Type": "Self-Weight (SW)", 
-                    "Factor": "-", 
-                    "Description": "Excluded / Not Calculated"
-                })
-                
-            st.table(pd.DataFrame(combo_data))
-            st.caption(f"*Design Equation: U = {dl_factor}DL + {ll_factor}LL*")
+        # ใช้ dataframe แทน table เพื่อความชัวร์ในการแสดงผล
+        st.dataframe(pd.DataFrame(combo_data), use_container_width=True, hide_index=True)
+        st.caption(f"*Design Equation: U = {dl_factor}DL + {ll_factor}LL*")
 
         # ======================================================
         
-        st.subheader("Analysis Diagrams (Envelopes)")
+        st.divider()
+        st.subheader("Analysis Diagrams")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
         
         fig = plot_analysis_results(df_plot, spans, sup_df, display_loads, react)
         
         st.plotly_chart(fig, use_container_width=True)
+        
         st.subheader("Reactions")
         r_data = [{"Support": k, "Reaction (kN)": f"{val/1000:.2f}"} for k, val in react.items()]
-        st.dataframe(pd.DataFrame(r_data), use_container_width=True)
+        st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
 
     # --- TAB 2: Design Details ---
     with t2:
