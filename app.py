@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 # --- 1. IMPORT CUSTOM MODULES ---
-# ตรวจสอบว่าไฟล์เหล่านี้อยู่ใน Folder เดียวกัน: input_handler.py, solver.py, design_view.py, etc.
 import input_handler, solver, design_view, section_plotter, reporter
 import rc_utils, rc_design_engine, rc_load_processor, app_styles
 
@@ -23,7 +22,6 @@ def get_rebar_weight(d_mm):
 def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     """
     Generate Cross Section Image using Matplotlib.
-    Fixed: Aspect ratio and x-limits to prevent text clipping.
     """
     # Setup Figure
     fig, ax = plt.subplots(figsize=(5, 6))
@@ -133,8 +131,30 @@ else:
         # --- TABS START ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
         
-        # List to store design results for Report (Tab 3) and BOQ (Bottom)
+        # Variable to store design results for Report (Tab 3) and BOQ (Bottom)
         final_design_res = []
+
+        # ================= TAB 1: ANALYSIS RESULTS (CLEANED) =================
+        with tab1:
+            st.subheader(f"📈 Analysis Diagrams ({tag})")
+            
+            # Prepare DataFrame for plotting
+            df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
+            
+            # Plot Graph
+            fig = design_view.plot_analysis_results(
+                res_df=df_for_plot, spans=spans, supports=sup_df, 
+                loads=calc_loads_ult if not is_service else calc_loads_svc, reactions=R_plot
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Show ONLY Key Metrics (No BOQ here)
+            c_m1, c_m2, c_m3 = st.columns(3)
+            c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
+            c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
+            c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
+            
+            # END OF TAB 1 - Absolutely NO other code here
 
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
@@ -238,8 +258,7 @@ else:
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # --- IMPORTANT: COLLECT ALL DATA FOR REPORT & BOQ ---
-                    # เก็บข้อมูลให้ละเอียดที่สุดเพื่อส่งต่อให้ Tab 3 (Report) และ BOQ Section ด้านล่างทำงานได้
+                    # --- GATHER FULL DATA ---
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -261,32 +280,13 @@ else:
                 svg_long, _ = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, cover_mm)
                 st.components.v1.html(f'<div style="background:white; overflow-x:auto; border:1px solid #ddd; padding:10px;">{svg_long}</div>', height=500)
 
-        # ================= TAB 1: ANALYSIS RESULTS =================
-        with tab1:
-            st.subheader(f"📈 Analysis Diagrams ({tag})")
-            df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
-            fig = design_view.plot_analysis_results(
-                res_df=df_for_plot, spans=spans, supports=sup_df, 
-                loads=calc_loads_ult if not is_service else calc_loads_svc, reactions=R_plot
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            
-            c_m1, c_m2, c_m3 = st.columns(3)
-            c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
-            c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
-            c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
-            
-            # Note: No BOQ here.
-
-        # ================= TAB 3: REPORT =================
+        # ================= TAB 3: REPORT (FULL DATA) =================
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
                 st.warning("⚠️ Please complete design in Tab 2.")
             else:
                 for res in final_design_res:
-                    # เรียกใช้ฟังก์ชัน Report โดยส่ง Data ก้อนใหญ่ (res) เข้าไป
-                    # ต้องแน่ใจว่า reporter.py รองรับ key เหล่านี้ (ซึ่งปกติรองรับอยู่แล้ว)
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
 
@@ -325,7 +325,7 @@ else:
             total_steel_weight += (w_top + w_bot) * L * 1.05 # เผื่อทาบ 5%
 
             # Stirrups
-            stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) # เส้นรอบรูปโดยประมาณ
+            stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) # Perimeter approx
             num_stir = (L * 1000.0) / res['shear']['s'] + 1
             w_stir = get_rebar_weight(res['shear']['db']) * stir_len_m * num_stir
             total_steel_weight += w_stir
