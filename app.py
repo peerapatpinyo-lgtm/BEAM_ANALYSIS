@@ -83,9 +83,9 @@ else:
         st.markdown("### ⚙️ Analysis Settings")
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
         
-        # [NEW] Checkbox for Self-Weight
+        # [CHECKBOX] Include Self-weight
         st.markdown("---")
-        include_sw = st.checkbox("➕ Include Beam Self-weight", value=True, help="คำนวณน้ำหนักคาน (2400 kg/m³) และรวมในการวิเคราะห์โครงสร้าง")
+        include_sw = st.checkbox("➕ Include Beam Self-weight", value=True, help="คิดน้ำหนักคาน (b x h x 2400) เป็น Dead Load")
     
     with col_set2:
         st.markdown("### 🔢 Load Factors")
@@ -100,36 +100,36 @@ else:
 
     try:
         # ==========================================
-        # ⚡ LOGIC: SELF-WEIGHT CALCULATION
+        # ⚡ LOGIC: SELF-WEIGHT CALCULATION (FIXED)
         # ==========================================
-        # สร้าง DataFrame สำหรับ Load ที่จะส่งเข้า Solver
         final_loads_df = loads_df.copy()
         
         if include_sw:
-            # 1. ดึงขนาดหน้าตัด
-            b_mm, h_mm = rc_utils.normalize_section_units(params.get('b', 300), params.get('h', 500))
+            # 1. แปลงหน่วยเป็นเมตร
+            b_m = params.get('b', 300) / 1000.0
+            h_m = params.get('h', 500) / 1000.0
             
             # 2. คำนวณ Uniform Load (N/m)
-            # Density 2400 kg/m^3 * 9.81 m/s^2
-            area_m2 = (b_mm / 1000.0) * (h_mm / 1000.0)
-            w_sw = area_m2 * 2400 * 9.81 # N/m
+            # Density 2400 kg/m^3 * 9.81 m/s^2 approx 23544 N/m3
+            w_sw = b_m * h_m * 2400 * 9.81 # N/m
             
             # 3. สร้าง Load List สำหรับทุก Span
             sw_data = []
             for i in range(n_spans):
                 sw_data.append({
                     'span_index': i,
-                    'type': 'U', # Uniform Load
-                    'mag': w_sw,
-                    'dist': spans[i],
-                    'd_start': 0
+                    'type': 'U',     # Uniform
+                    'mag': w_sw,     # Magnitude
+                    'dist': spans[i],# Full Distance
+                    'd_start': 0,
+                    'case': 'DL'     # <--- [FIXED] ระบุเป็น Dead Load เพื่อให้คูณ Factor ได้ถูกต้อง
                 })
             
-            # 4. รวมเข้ากับ Load เดิมของผู้ใช้
+            # 4. รวมเข้ากับ Load เดิม
             sw_df = pd.DataFrame(sw_data)
             final_loads_df = pd.concat([final_loads_df, sw_df], ignore_index=True)
 
-        # --- ANALYSIS ENGINE (ใช้ final_loads_df ที่รวม SW แล้ว) ---
+        # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_loads_df, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
@@ -250,7 +250,7 @@ else:
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # Store Data for Report
+                    # Store Data
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -272,7 +272,7 @@ else:
                 svg_long, _ = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, cover_mm)
                 st.components.v1.html(f'<div style="background:white; overflow-x:auto; border:1px solid #ddd; padding:10px;">{svg_long}</div>', height=500)
 
-        # ================= TAB 3: REPORT =================
+        # ================= TAB 3: REPORT & BOQ =================
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
@@ -282,7 +282,7 @@ else:
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
 
-            # ================= BOQ SECTION (BOTTOM OF TAB 3 ONLY) =================
+            # ================= BOQ SECTION (BOTTOM ONLY) =================
             st.markdown("---")
             st.header("💵 Bill of Quantities (BOQ)")
 
