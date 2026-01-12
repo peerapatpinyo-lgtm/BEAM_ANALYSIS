@@ -18,7 +18,7 @@ def get_rebar_weight(d_mm):
     """Calculate rebar weight kg/m from diameter"""
     return (d_mm ** 2) / 162.0
 
-# --- 3. INTERNAL HELPER: PLOT CROSS SECTION ---
+# --- 3. INTERNAL HELPER: PLOT CROSS SECTION (FIXED) ---
 def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     fig, ax = plt.subplots(figsize=(5, 6))
     rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='black', facecolor='white')
@@ -27,7 +27,7 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
                                      linewidth=1.5, edgecolor='#34495e', facecolor='none', linestyle='-')
     ax.add_patch(stirrup_rect)
     
-    # Top Rebar Drawing
+    # Top Rebar
     n_top = sum(l['n'] for l in top_layers)
     dia_top = top_layers[0]['db'] if top_layers else 12
     start_x = cover + dia_top/2
@@ -39,7 +39,7 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_top == 1:
         ax.add_patch(patches.Circle((b/2, h - cover - dia_top/2), radius=dia_top/2, color='#c0392b'))
 
-    # Bot Rebar Drawing
+    # Bot Rebar
     n_bot = sum(l['n'] for l in bot_layers)
     dia_bot = bot_layers[0]['db'] if bot_layers else 12
     start_x = cover + dia_bot/2
@@ -51,7 +51,7 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_bot == 1:
         ax.add_patch(patches.Circle((b/2, cover + dia_bot/2), radius=dia_bot/2, color='#27ae60'))
 
-    # Text Labels
+    # Labels
     text_x = b + (b * 0.1)
     ax.text(text_x, h - cover, f"Top:\n{n_top}DB{int(dia_top)}", color='#c0392b', fontsize=12, fontweight='bold', va='center')
     ax.text(text_x, cover + dia_bot, f"Bot:\n{n_bot}DB{int(dia_bot)}", color='#27ae60', fontsize=12, fontweight='bold', va='center')
@@ -72,7 +72,7 @@ st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div
 
 # --- 5. SIDEBAR ---
 with st.sidebar:
-    # Analysis Inputs Only (No Cost/BOQ inputs here)
+    # Removed Cost Inputs from here (Moved to Tab 3 Bottom)
     params, n_spans, spans, sup_df, loads_df, stable = input_handler.render_all_sidebar_inputs()
 
 if not stable:
@@ -108,14 +108,14 @@ else:
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
         # --- TABS START ---
-        tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report"])
+        tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report & BOQ"])
         final_design_res = []
 
-        # ================= TAB 1: ANALYSIS RESULTS (CLEAN) =================
+        # ================= TAB 1: ANALYSIS RESULTS (CLEANED) =================
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # 1. Graph Only
+            # Graph Only
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
             fig = design_view.plot_analysis_results(
                 res_df=df_for_plot, spans=spans, supports=sup_df, 
@@ -123,14 +123,12 @@ else:
             )
             st.plotly_chart(fig, use_container_width=True)
             
-            # 2. Key Metrics Only (No BOQ, No Tables)
+            # Key Metrics Only (NO BOQ)
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
             
-            # --- END OF TAB 1: ABSOLUTELY NOTHING ELSE HERE ---
-
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
             st.header("🏗️ Reinforcement Detailing")
@@ -141,12 +139,13 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
-                # Extract Analysis Data
+                # Analysis Data
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
 
+                # Service Data
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
                 ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
                 delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0
@@ -169,6 +168,7 @@ else:
                         d_t_val, as_prov_t, y_centroid_t = rc_design_engine.get_centroid_and_d(top_layers, h_mm, cover_mm, 9)
                         d_t = h_mm - y_centroid_t if y_centroid_t > 0 else h_mm - (cover_mm + 9 + 16/2)
                         as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
+                        as_min_t = max((0.25 * np.sqrt(fc) / fy) * b_mm * d_t, (1.4 / fy) * b_mm * d_t)
                         phi_Mn_t, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(top_layers, d_t, b_mm, h_mm, fc, fy)
                         st.markdown(f"**Status (Top):** Prov: {as_prov_t:.0f} mm² | Cap: {phi_Mn_t:.1f} kNm {'✅' if phi_Mn_t >= mu_neg else '❌'}")
 
@@ -219,7 +219,7 @@ else:
                         st.pyplot(fig_cs)
                         plt.close(fig_cs)
 
-                    # Store Data for Report
+                    # Gather Data for Tab 3
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
                         'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
@@ -241,7 +241,7 @@ else:
                 svg_long, _ = section_plotter.plot_longitudinal_section_detailed(spans, sup_df, final_design_res, h_mm, cover_mm)
                 st.components.v1.html(f'<div style="background:white; overflow-x:auto; border:1px solid #ddd; padding:10px;">{svg_long}</div>', height=500)
 
-        # ================= TAB 3: REPORT =================
+        # ================= TAB 3: REPORT & BOQ (ONLY HERE) =================
         with tab3:
             st.header("📝 Calculation Reports")
             if not final_design_res:
@@ -251,61 +251,58 @@ else:
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
 
+            # ================= BOQ SECTION (BOTTOM OF TAB 3 ONLY) =================
+            st.markdown("---")
+            st.header("💵 Bill of Quantities (BOQ)")
+
+            # Input Price (Inside Tab 3)
+            c_price1, c_price2, c_price3 = st.columns(3)
+            price_conc = c_price1.number_input("Concrete (Baht/m³)", value=2200, step=50)
+            price_steel = c_price2.number_input("Rebar (Baht/kg)", value=28.0, step=0.5)
+            price_form = c_price3.number_input("Formwork (Baht/m²)", value=300, step=10)
+
+            if final_design_res:
+                total_conc_vol = 0.0
+                total_form_area = 0.0
+                total_steel_weight = 0.0
+
+                for res in final_design_res:
+                    L = res['L']
+                    b_m = res['b'] / 1000.0
+                    h_m = res['h'] / 1000.0
+                    vol = b_m * h_m * L
+                    total_conc_vol += vol
+                    area = (2*h_m + b_m) * L
+                    total_form_area += area
+                    
+                    w_top = sum(get_rebar_weight(l['db']) * l['n'] for l in res['top']['all_layers'])
+                    w_bot = sum(get_rebar_weight(l['db']) * l['n'] for l in res['bot']['all_layers'])
+                    total_steel_weight += (w_top + w_bot) * L * 1.05 
+                    
+                    stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) 
+                    num_stir = (L * 1000.0) / res['shear']['s'] + 1
+                    w_stir = get_rebar_weight(res['shear']['db']) * stir_len_m * num_stir
+                    total_steel_weight += w_stir
+
+                boq_data = [
+                    {"Item": "Concrete Structure (240 ksc)", "Quantity": total_conc_vol, "Unit": "m³", "Unit Price": price_conc},
+                    {"Item": "Deformed Bars (DB) + Stirrups", "Quantity": total_steel_weight, "Unit": "kg", "Unit Price": price_steel},
+                    {"Item": "Formwork", "Quantity": total_form_area, "Unit": "m²", "Unit Price": price_form},
+                ]
+                
+                df_boq = pd.DataFrame(boq_data)
+                df_boq["Amount (THB)"] = df_boq["Quantity"] * df_boq["Unit Price"]
+                
+                c_boq1, c_boq2, c_boq3, c_boq4 = st.columns(4)
+                c_boq1.metric("Concrete", f"{total_conc_vol:.2f} m³")
+                c_boq2.metric("Steel", f"{total_steel_weight:.2f} kg")
+                c_boq3.metric("Formwork", f"{total_form_area:.2f} m²")
+                c_boq4.metric("TOTAL COST", f"{df_boq['Amount (THB)'].sum():,.0f} ฿", border=True)
+                
+                st.dataframe(
+                    df_boq.style.format({"Quantity": "{:.2f}", "Unit Price": "{:,.2f}", "Amount (THB)": "{:,.2f}"}), 
+                    use_container_width=True, hide_index=True
+                )
+
     except Exception as e:
         st.error(f"Error: {e}")
-
-    # =========================================================================
-    # $$$ BOTTOM SECTION: COST ESTIMATION (BOQ) $$$
-    # MOVED: Inputs and Outputs are NOW both here at the bottom only.
-    # =========================================================================
-    st.markdown("---")
-    st.header("💵 Bill of Quantities (BOQ)")
-
-    # 1. Price Inputs (Moved from Sidebar)
-    c_price1, c_price2, c_price3 = st.columns(3)
-    price_conc = c_price1.number_input("Concrete (Baht/m³)", value=2200, step=50)
-    price_steel = c_price2.number_input("Rebar (Baht/kg)", value=28.0, step=0.5)
-    price_form = c_price3.number_input("Formwork (Baht/m²)", value=300, step=10)
-
-    if final_design_res:
-        total_conc_vol = 0.0
-        total_form_area = 0.0
-        total_steel_weight = 0.0
-
-        for res in final_design_res:
-            L = res['L']
-            b_m = res['b'] / 1000.0
-            h_m = res['h'] / 1000.0
-            vol = b_m * h_m * L
-            total_conc_vol += vol
-            area = (2*h_m + b_m) * L
-            total_form_area += area
-            
-            w_top = sum(get_rebar_weight(l['db']) * l['n'] for l in res['top']['all_layers'])
-            w_bot = sum(get_rebar_weight(l['db']) * l['n'] for l in res['bot']['all_layers'])
-            total_steel_weight += (w_top + w_bot) * L * 1.05 
-            
-            stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) 
-            num_stir = (L * 1000.0) / res['shear']['s'] + 1
-            w_stir = get_rebar_weight(res['shear']['db']) * stir_len_m * num_stir
-            total_steel_weight += w_stir
-
-        boq_data = [
-            {"Item": "Concrete Structure (240 ksc)", "Quantity": total_conc_vol, "Unit": "m³", "Unit Price": price_conc},
-            {"Item": "Deformed Bars (DB) + Stirrups", "Quantity": total_steel_weight, "Unit": "kg", "Unit Price": price_steel},
-            {"Item": "Formwork", "Quantity": total_form_area, "Unit": "m²", "Unit Price": price_form},
-        ]
-        
-        df_boq = pd.DataFrame(boq_data)
-        df_boq["Amount (THB)"] = df_boq["Quantity"] * df_boq["Unit Price"]
-        
-        c_boq1, c_boq2, c_boq3, c_boq4 = st.columns(4)
-        c_boq1.metric("Concrete", f"{total_conc_vol:.2f} m³")
-        c_boq2.metric("Steel", f"{total_steel_weight:.2f} kg")
-        c_boq3.metric("Formwork", f"{total_form_area:.2f} m²")
-        c_boq4.metric("TOTAL COST", f"{df_boq['Amount (THB)'].sum():,.0f} ฿", border=True)
-        
-        st.dataframe(
-            df_boq.style.format({"Quantity": "{:.2f}", "Unit Price": "{:,.2f}", "Amount (THB)": "{:,.2f}"}), 
-            use_container_width=True, hide_index=True
-        )
