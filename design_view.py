@@ -3,9 +3,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 from section_plotter import plot_longitudinal_section_detailed, plot_cross_section
 from reporter import render_calculation_report
 
+# ==========================================
+# 1. HELPER: BOQ CALCULATION
+# ==========================================
 def calculate_boq_summary(design_res, spans):
     """
     คำนวณปริมาณงาน (BOQ) โดยประมาณจากผลการออกแบบ
@@ -78,10 +82,12 @@ def calculate_boq_summary(design_res, spans):
     
     return pd.DataFrame(data)
 
+# ==========================================
+# 2. ORIGINAL PLOTTER FUNCTION (RESTORED)
+# ==========================================
 def plot_analysis_results(df, spans, sup_df, loads, reactions):
     """
-    ฟังก์ชันสำหรับวาดกราฟ SFD, BMD, Deflection โดยใช้ Matplotlib
-    (ฟังก์ชันนี้จำเป็นต้องมีเพื่อให้ app.py เดิมทำงานได้)
+    ฟังก์ชันวาดกราฟ Matplotlib แบบเดิม (คืนค่ากลับมาเพื่อแก้ Error)
     """
     # Create Figure
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12), sharex=True, constrained_layout=True)
@@ -92,8 +98,6 @@ def plot_analysis_results(df, spans, sup_df, loads, reactions):
     D = df.iloc[:, 3] # Column 3: Deflection
 
     # 1. Bending Moment Diagram (BMD)
-    # Note: RC convention usually plots positive moment (tension bottom) downwards, 
-    # but here we plot standard sign. Fill between for clarity.
     ax1.plot(x, M/1000.0, color='#e74c3c', linewidth=2, label='Moment')
     ax1.fill_between(x, M/1000.0, 0, color='#e74c3c', alpha=0.1)
     ax1.set_ylabel("Moment (kNm)", fontweight='bold')
@@ -118,17 +122,19 @@ def plot_analysis_results(df, spans, sup_df, loads, reactions):
     ax3.grid(True, linestyle='--', alpha=0.6)
     ax3.axhline(0, color='black', linewidth=1)
     
-    # Invert Y for deflection to look natural (downward = negative)
-    # If solver returns negative for downward, we can leave it or invert axis.
-    # Usually structural apps invert Y for deflection.
-    # ax3.invert_yaxis() 
-
-    # Add Support Markers on x-axis
+    # วาด Support ลงบนกราฟ
+    current_x = 0
+    # วาดเส้นแบ่ง span
     for s in spans:
-        pass # Logic handled by x-ticks usually
-        
+        current_x += s
+        for ax in [ax1, ax2, ax3]:
+            ax.axvline(current_x, color='gray', linestyle=':', alpha=0.5)
+
     return fig
 
+# ==========================================
+# 3. MAIN RENDER FUNCTION
+# ==========================================
 def render_design_view(res_package):
     """
     Main View Controller: แสดงผลลัพธ์การออกแบบทั้งหมด
@@ -159,26 +165,17 @@ def render_design_view(res_package):
     with t1:
         st.subheader("1. Internal Forces Diagrams")
         
-        # Reuse the plotter function or create simple line charts
-        # Since app.py might have already plotted the matplotlib figure, 
-        # here we can use Streamlit native charts for interactivity.
-        
-        chart_data = pd.DataFrame({
-            "Position (m)": x,
-            "Moment (kNm)": m / 1000.0,
-            "Shear (kN)": v / 1000.0,
-            "Deflection (mm)": d * 1000.0
+        # เตรียมข้อมูลสำหรับ plot_analysis_results
+        df_for_plot = pd.DataFrame({
+            'x': x,
+            'moment': m,
+            'shear': v,
+            'deflection': d
         })
         
-        # Interactive Charts
-        st.caption("Bending Moment (kNm)")
-        st.line_chart(chart_data, x="Position (m)", y="Moment (kNm)", color="#FF4B4B")
-        
-        st.caption("Shear Force (kN)")
-        st.line_chart(chart_data, x="Position (m)", y="Shear (kN)", color="#0068C9")
-        
-        st.caption("Deflection (mm)")
-        st.line_chart(chart_data, x="Position (m)", y="Deflection (mm)", color="#29B09D")
+        # เรียกใช้กราฟ Matplotlib เดิม
+        fig = plot_analysis_results(df_for_plot, spans, sup_df, None, react)
+        st.pyplot(fig)
         
         st.divider()
         
@@ -239,7 +236,7 @@ def render_design_view(res_package):
     with t3:
         st.header("📝 Project Summary & Estimation")
         
-        # 1. Bill of Quantities (BOQ)
+        # 1. Bill of Quantities (BOQ) - อยู่ที่นี่ที่เดียวตามสั่ง
         st.subheader("1. Bill of Quantities (Estimated)")
         
         boq_df = calculate_boq_summary(design_res, spans)
