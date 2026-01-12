@@ -315,7 +315,15 @@ else:
         with tab1:
             st.subheader(f"📈 Diagrams ({tag} Load)")
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
-            fig = design_view.plot_analysis_results(df_for_plot, spans, sup_df, calc_loads_ult if not is_service else calc_loads_svc, R_plot)
+            
+            # เรียกใช้ฟังก์ชัน plot จาก design_view โดยใช้ชื่อ argument ที่ถูกต้อง
+            fig = design_view.plot_analysis_results(
+                res_df=df_for_plot, 
+                spans=spans, 
+                supports=sup_df, 
+                loads=calc_loads_ult if not is_service else calc_loads_svc, 
+                reactions=R_plot
+            )
             st.plotly_chart(fig, use_container_width=True)
             
             c_m1, c_m2, c_m3 = st.columns(3)
@@ -333,64 +341,67 @@ else:
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
         
-        # ================= ADDED: BOQ SECTION =================
+        # ================= BOQ SECTION (CORRECTED & LINKED) =================
         st.markdown("---")
         st.header("💵 Bill of Quantities (BOQ)")
         
         if final_design_res:
-            total_conc_vol, total_steel_weight, total_form_area = 0, 0, 0
-            boq_details = []
+            try:
+                # 1. ดึงปริมาณงานจากฟังก์ชัน design_view.calculate_boq_summary ที่แก้ไขใหม่
+                boq_df = design_view.calculate_boq_summary(final_design_res, spans)
+                
+                # 2. ใส่ราคาต่อหน่วยจาก Sidebar (Mapping)
+                price_map = {
+                    "Concrete Structure (240 ksc)": price_conc,
+                    "Formwork (Beam sides & bottom)": price_form,
+                    "Deformed Bars (DB) + Stirrups (RB)": price_steel
+                }
+                
+                # 3. คำนวณราคารวม
+                boq_df["Unit Price (THB)"] = boq_df["Item"].map(price_map)
+                boq_df["Amount (THB)"] = boq_df["Quantity"] * boq_df["Unit Price (THB)"]
+                
+                # 4. จัด Format ตาราง
+                formatted_df = boq_df.copy()
+                total_cost = formatted_df["Amount (THB)"].sum()
+                
+                # แสดงผล Metrics ด้านบนตาราง
+                c_boq1, c_boq2, c_boq3, c_boq4 = st.columns(4)
+                
+                conc_row = formatted_df[formatted_df['Item'].str.contains("Concrete")].iloc[0]
+                steel_row = formatted_df[formatted_df['Item'].str.contains("Bars")].iloc[0]
+                form_row = formatted_df[formatted_df['Item'].str.contains("Formwork")].iloc[0]
+                
+                c_boq1.metric("Concrete", f"{conc_row['Quantity']:.2f} m³", f"{conc_row['Amount (THB)']:,.0f} ฿")
+                c_boq2.metric("Rebar (+Stir)", f"{steel_row['Quantity']:.2f} kg", f"{steel_row['Amount (THB)']:,.0f} ฿")
+                c_boq3.metric("Formwork", f"{form_row['Quantity']:.2f} m²", f"{form_row['Amount (THB)']:,.0f} ฿")
+                c_boq4.metric("TOTAL COST", f"{total_cost:,.0f} ฿", border=True)
+                
+                # แสดงตาราง
+                st.dataframe(
+                    formatted_df.style.format({
+                        "Quantity": "{:.2f}", 
+                        "Unit Price (THB)": "{:,.2f}", 
+                        "Amount (THB)": "{:,.2f}"
+                    }),
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                # ปุ่ม Download
+                csv = formatted_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Download BOQ (CSV)",
+                    data=csv,
+                    file_name='beam_boq_estimate.csv',
+                    mime='text/csv',
+                )
 
-            for res in final_design_res:
-                L = res['L']
-                b, h = res['b'], res['h']
-                cover = res['cover']
-                
-                # 1. Concrete
-                vol = (b/1000) * (h/1000) * L
-                total_conc_vol += vol
-                
-                # 2. Formwork
-                f_area = ((2*h + b) / 1000) * L
-                total_form_area += f_area
-                
-                # 3. Steel
-                # Top
-                w_top = sum((l['db']**2 / 162) * l['n'] * L for l in res['neg']['layers'])
-                # Bot
-                w_bot = sum((l['db']**2 / 162) * l['n'] * L for l in res['pos']['layers'])
-                # Stirrup
-                stir_len = 2 * ((b - 2*cover) + (h - 2*cover)) / 1000
-                num_stir = (L * 1000) / res['shear']['s'] + 1
-                w_stir = (res['shear']['db']**2 / 162) * stir_len * num_stir
-                
-                total_steel_weight += (w_top + w_bot + w_stir)
-
-            # Waste 10% for steel
-            total_steel_weight *= 1.10
-            
-            # Costs
-            cost_conc = total_conc_vol * price_conc
-            cost_steel = total_steel_weight * price_steel
-            cost_form = total_form_area * price_form
-            total_cost = cost_conc + cost_steel + cost_form
-
-            # Display Metrics
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Concrete", f"{total_conc_vol:.2f} m³", f"{cost_conc:,.0f} ฿")
-            c2.metric("Rebar (+10%)", f"{total_steel_weight:.0f} kg", f"{cost_steel:,.0f} ฿")
-            c3.metric("Formwork", f"{total_form_area:.1f} m²", f"{cost_form:,.0f} ฿")
-            c4.metric("TOTAL COST", f"{total_cost:,.0f} ฿", border=True)
-            
-            # Table
-            boq_df = pd.DataFrame({
-                "Item": ["Concrete", "Rebar (inc. waste 10%)", "Formwork", "<b>TOTAL</b>"],
-                "Quantity": [f"{total_conc_vol:.2f}", f"{total_steel_weight:.2f}", f"{total_form_area:.2f}", "-"],
-                "Unit": ["m³", "kg", "m²", "-"],
-                "Unit Price": [f"{price_conc:,.0f}", f"{price_steel:,.0f}", f"{price_form:,.0f}", "-"],
-                "Amount (THB)": [f"{cost_conc:,.0f}", f"{cost_steel:,.0f}", f"{cost_form:,.0f}", f"<b>{total_cost:,.0f}</b>"]
-            })
-            st.markdown(boq_df.to_html(escape=False, index=False), unsafe_allow_html=True)
+            except AttributeError:
+                st.error("⚠️ ไม่พบฟังก์ชัน 'calculate_boq_summary' ใน design_view.py")
+                st.info("กรุณาอัปเดตไฟล์ design_view.py ตามโค้ดที่ให้ไปในข้อความก่อนหน้านี้ครับ")
+            except Exception as e:
+                st.error(f"เกิดข้อผิดพลาดในการคำนวณ BOQ: {e}")
 
     except Exception as e:
         st.error(f"❌ **System Error:** {e}")
