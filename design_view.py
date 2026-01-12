@@ -8,7 +8,7 @@ from section_plotter import plot_longitudinal_section_detailed, plot_cross_secti
 from reporter import render_calculation_report
 
 # ==========================================
-# 1. BOQ CALCULATION (เพิ่มส่วนนี้เพื่อให้ Tab 3 ทำงาน)
+# 1. BOQ CALCULATION (ฟังก์ชันคำนวณ BOQ)
 # ==========================================
 def calculate_boq_summary(design_res, spans):
     """
@@ -93,7 +93,7 @@ def calculate_boq_summary(design_res, spans):
     return pd.DataFrame(data)
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH (ตามที่คุณให้มา)
+# 2. PLOTLY ANALYSIS GRAPH (ตามโค้ดที่คุณส่งมา)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
@@ -268,7 +268,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     return fig
 
 # ==========================================
-# 3. DESIGN CHECK DISPLAY (ตามที่คุณให้มา)
+# 3. DESIGN CHECK DISPLAY (ตามโค้ดที่คุณส่งมา)
 # ==========================================
 def display_design_comparison(mu_pos, mu_neg, vu, design_res):
     st.markdown("---")
@@ -360,7 +360,7 @@ def display_design_comparison(mu_pos, mu_neg, vu, design_res):
             f"Stirrup RB{stir_db}@{stir_sp} mm")
 
 # ==========================================
-# 4. MAIN RENDER CONTROLLER (เชื่อมทุกอย่างเข้าด้วยกัน)
+# 4. MAIN RENDER CONTROLLER (ส่วนสำคัญที่รวม Tab และ BOQ)
 # ==========================================
 def render_design_view(res_package):
     """
@@ -391,6 +391,7 @@ def render_design_view(res_package):
     with t1:
         st.subheader("Analysis Results (Interactive)")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
+        # เรียกใช้ฟังก์ชันกราฟเดิมของคุณ
         fig = plot_analysis_results(df_plot, spans, sup_df, loads, react)
         st.plotly_chart(fig, use_container_width=True)
         
@@ -415,7 +416,7 @@ def render_design_view(res_package):
              st.image(svg_cross, use_container_width=True)
         
         with col2:
-             # ใช้ฟังก์ชันแสดงผลที่คุณให้มา
+             # เรียกใช้ฟังก์ชันแสดงผลดีไซน์เดิมของคุณ
              display_design_comparison(
                  current_res['Mu_pos'], 
                  current_res['Mu_neg'], 
@@ -428,7 +429,7 @@ def render_design_view(res_package):
         svg_long, _ = plot_longitudinal_section_detailed(spans, sup_df, design_res, params['h'], params.get('cover', 25))
         st.image(svg_long, use_container_width=True)
 
-    # --- TAB 3: Report & BOQ ---
+    # --- TAB 3: Report & BOQ (ส่วนที่คุณต้องการ) ---
     with t3:
         st.header("📝 Project Summary & Estimation")
         
