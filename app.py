@@ -88,7 +88,7 @@ else:
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
         
         st.markdown("---")
-        # [CRITICAL CHECKBOX]
+        # [SW CHECKBOX]
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
         params['include_sw'] = include_sw 
         
@@ -116,20 +116,19 @@ else:
 
     try:
         # ==========================================
-        # ⚡ FORCE CLEAN LOAD GENERATION
+        # ⚡ PREPARE LOADS FOR SOLVER (UNIT: NEWTONS)
         # ==========================================
         
-        # 1. Local Copy
+        # 1. Process User Loads
         clean_user_loads = raw_user_loads_df.copy(deep=True)
-        
-        # --- UNIT GUARD (กันเหนียว input) ---
         if not clean_user_loads.empty:
+            # UNIT GUARD: ถ้าค่าน้อยกว่า 2000 สันนิษฐานว่า User กรอก kN -> คูณ 1000 เป็น N
             clean_user_loads['mag'] = clean_user_loads['mag'].apply(lambda x: x * 1000.0 if abs(x) < 2000.0 else x)
         
-        # 2. Prepare SW Dataframe
+        # 2. Process Self-Weight
         sw_rows = []
         if include_sw:
-            sw_mag_newton = sw_calc_val * 1000.0 
+            sw_mag_newton = sw_calc_val * 1000.0 # แปลง kN/m -> N/m
             for i in range(n_spans):
                 sw_rows.append({
                     'span_index': i, 
@@ -144,7 +143,7 @@ else:
         else:
             final_calc_loads = clean_user_loads
 
-        # --- ANALYSIS ENGINE ---
+        # --- RUN ANALYSIS (SOLVER WORKS IN N, m) ---
         # 1. Ultimate Run
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
@@ -153,7 +152,9 @@ else:
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
+        # Select Result set for Plotting
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
+        current_loads_backend = calc_loads_svc if is_service else calc_loads_ult
 
         # Show Load Table
         design_view.render_load_table(params)
@@ -166,31 +167,43 @@ else:
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # --- [CRITICAL FIX] ---
-            # แปลงหน่วยตรงนี้ก่อนส่งเข้า Graph (N -> kN)
-            # Moment: N-m -> kN-m (หาร 1000)
-            # Shear:  N   -> kN   (หาร 1000)
-            # Deflection: m -> mm (คูณ 1000)
+            # --- [CRITICAL FIX: UNIT CONVERSION FOR PLOTTING] ---
+            
+            # 1. แปลงเส้นกราฟ (Moment/Shear) เป็น kN
             df_for_plot = pd.DataFrame({
                 'x': x_plot, 
-                'moment': M_plot / 1000.0,   # <--- FIX: Divide by 1000
-                'shear': V_plot / 1000.0,    # <--- FIX: Divide by 1000
-                'deflection': D_plot * 1000.0
+                'moment': M_plot / 1000.0,   # N-m -> kNm
+                'shear': V_plot / 1000.0,    # N -> kN
+                'deflection': D_plot * 1000.0 # m -> mm
             })
+
+            # 2. แปลง Load Bar (แท่งน้ำหนักในรูป) เป็น kN **จุดสำคัญที่ทำให้รูป Load ไม่พุ่ง**
+            loads_for_plot = current_loads_backend.copy()
+            if not loads_for_plot.empty:
+                loads_for_plot['mag'] = loads_for_plot['mag'] / 1000.0 # N -> kN
             
+            # 3. แปลง Reaction (ลูกศรรับแรง) เป็น kN
+            reactions_for_plot = {k: v / 1000.0 for k, v in R_plot.items()} # N -> kN
+
+            # ส่งค่าที่แปลงหน่วยแล้วเข้าฟังก์ชันวาดกราฟ
             unique_chart_key = f"chart_{include_sw}_{tag}_{np.random.randint(0,100)}"
             fig = design_view.plot_analysis_results(
-                res_df=df_for_plot, spans=spans, supports=sup_df, 
-                loads=calc_loads_ult if not is_service else calc_loads_svc, reactions=R_plot
+                res_df=df_for_plot, 
+                spans=spans, 
+                supports=sup_df, 
+                loads=loads_for_plot,       # <--- ส่ง Loads หน่วย kN
+                reactions=reactions_for_plot # <--- ส่ง Reactions หน่วย kN
             )
             st.plotly_chart(fig, use_container_width=True, key=unique_chart_key)
             
+            # Show Reactions Table
             st.markdown("#### 🏗️ Support Reactions")
             r_data = []
             for k, v in R_plot.items():
-                r_data.append({"Support": k, "Reaction (kN)": f"{v/1000:.2f}"}) # Reaction ก็หาร 1000
+                r_data.append({"Support": k, "Reaction (kN)": f"{v/1000:.2f}"}) # Display kN
             st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
             
+            # Max Values Metrics
             st.markdown("#### ⚡ Max Values")
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
@@ -207,10 +220,11 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
+                # Filter indices for this span
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 if not mask_u.any(): continue
 
-                # ดึงค่ามาคำนวณเหล็ก (ต้องหาร 1000 ให้เป็น kN-m สำหรับ RC Calculation)
+                # ดึงค่า N, Nm มาหาร 1000 เพื่อคำนวณ RC Design
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
