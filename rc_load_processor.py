@@ -1,66 +1,58 @@
-# rc_load_processor.py
 import pandas as pd
-from rc_utils import normalize_section_units
+import numpy as np
 
-def prepare_load_dataframe(raw_loads_df, n_spans, spans, params, f_dl, f_ll):
+def prepare_load_dataframe(user_loads_df, n_spans, spans, params, f_dl=1.4, f_ll=1.7):
     """
-    Helper function to prepare load dataframe for solver.
-    Scales loads by Load Factors (f_dl, f_ll).
-    Also handles Unit Normalization for Self-Weight calculation.
+    Processor สำหรับจัดการ Load:
+    1. รับ Load ทั้งหมด (User Inputs + Self-weight จาก app.py)
+    2. จัดการเรื่องหน่วย (Convert kN -> N)
+    3. คูณ Load Factor (U = f_dl*DL + f_ll*LL)
     """
-    # Normalize inputs for self-weight calculation
-    b_mm, h_mm = normalize_section_units(params['b'], params['h'])
-    b_m = b_mm / 1000.0
-    h_m = h_mm / 1000.0
     
-    # 1. Self-weight (Calculated from dimensions in Meters)
-    # Density approx 24 kN/m3
-    w_sw_base_kN = b_m * h_m * 24.0      
-    w_sw_factored_kN = w_sw_base_kN * f_dl
-    
-    # Initialize dictionary for Total UDL per span
-    span_total_udl_N = {i: w_sw_factored_kN * 1000.0 for i in range(n_spans)} 
-    combined_loads_list = []
-    
-    # 2. User Defined Loads from DataFrame
-    if not raw_loads_df.empty:
-        for _, row in raw_loads_df.iterrows():
-            try:
-                s_idx = int(row['span_index'])
-                if s_idx >= n_spans: continue 
-                
-                l_type = row['type']
-                # Determine factor based on case
-                u_factor = f_dl if row['case'] == 'DL' else f_ll
-                
-                mag_base_kN = float(row['mag']) 
-                mag_factored_N = mag_base_kN * u_factor * 1000.0 
-                
-                dist = float(row['dist'])
-                d_start = float(row['d_start'])
-                
-                if l_type == 'P':
-                    combined_loads_list.append({
-                        'span_index': s_idx, 'type': 'P', 'mag': mag_factored_N, 
-                        'd_start': d_start, 'dist': 0.0
-                    })
-                elif l_type == 'U':
-                    # If Full Span UDL, add to the base accumulator
-                    if d_start <= 0.01 and dist >= (spans[s_idx] - 0.01):
-                        span_total_udl_N[s_idx] += mag_factored_N
-                    else:
-                        combined_loads_list.append({
-                            'span_index': s_idx, 'type': 'U', 'mag': mag_factored_N, 
-                            'd_start': d_start, 'dist': dist
-                        })
-            except Exception: continue
-    
-    # Add Self-weight + Full Span UDLs combined
-    for i in range(n_spans):
-        if span_total_udl_N[i] > 0:
-            combined_loads_list.append({
-                'span_index': i, 'type': 'U', 'mag': span_total_udl_N[i], 
-                'd_start': 0.0, 'dist': spans[i]
-            })
-            
-    return pd.DataFrame(combined_loads_list)
+    # ถ้าไม่มี Load เลย ให้คืนค่า DataFrame ว่างๆ กลับไป
+    if user_loads_df is None or user_loads_df.empty:
+        return pd.DataFrame(columns=['span_index', 'type', 'mag', 'dist', 'd_start'])
+
+    processed_loads = []
+
+    # วนลูปเช็ค Load ทีละรายการ
+    for _, load in user_loads_df.iterrows():
+        # 1. เช็คประเภท Load เพื่อระบุ Factor
+        case_type = load.get('case', 'DL')
+        
+        # กำหนด Factor
+        if case_type in ['DL', 'SW', 'Dead', 'Superimposed Dead']:
+            factor = f_dl
+        elif case_type in ['LL', 'Live']:
+            factor = f_ll
+        else:
+            factor = 1.0
+
+        # 2. จัดการหน่วย (Unit Handling) & คูณ Factor
+        raw_mag = float(load['mag'])
+        
+        # [Smart Unit Check]
+        # app.py ส่ง Self-weight มาเป็น N/m (ค่าจะหลักพัน เช่น 3600)
+        # แต่ User Input มักใส่เป็น kN/m (ค่าจะหลักสิบ เช่น 10, 20)
+        # เราจึงใช้เงื่อนไขนี้แยกแยะเพื่อแปลงให้เป็น N ทั้งหมด
+        if raw_mag > 500.0:
+            # สันนิษฐานว่าเป็นหน่วย N/m หรือ N แล้ว (เช่น SW) -> ไม่ต้องคูณ 1000
+            mag_N = raw_mag
+        else:
+            # สันนิษฐานว่าเป็นหน่วย kN/m หรือ kN (User Input) -> แปลงเป็น N
+            mag_N = raw_mag * 1000.0
+
+        factored_mag_N = mag_N * factor
+
+        # 3. เตรียมข้อมูลส่งให้ Solver
+        processed_loads.append({
+            'span_index': int(load['span_index']),
+            'type': load['type'],                   # 'P' or 'U'
+            'mag': factored_mag_N,                  # หน่วย N (Factored)
+            'dist': float(load.get('dist', 0)),     
+            'd_start': float(load.get('d_start', 0)), 
+            'case_origin': case_type
+        })
+
+    # ส่งค่ากลับเป็น DataFrame
+    return pd.DataFrame(processed_loads)
