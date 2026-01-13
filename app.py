@@ -81,6 +81,7 @@ else:
         st.markdown("---")
         # [CRITICAL CHECKBOX]
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
+        params['include_sw'] = include_sw # Update params dict
         
         # Display SW Value for confidence
         b_m = params.get('b', 300) / 1000.0
@@ -97,18 +98,21 @@ else:
         if "Service" in mode_select:
             f_dl, f_ll = 1.0, 1.0
             tag, is_service = "Service", True
+            params['dl_factor'] = 1.0
+            params['ll_factor'] = 1.0
         else:
             f_dl = c1.number_input("Dead Load (DL)", 1.4, 1.6, 1.4, 0.1)
             f_ll = c2.number_input("Live Load (LL)", 1.7, 2.0, 1.7, 0.1)
             tag, is_service = "Ultimate", False
+            params['dl_factor'] = f_dl
+            params['ll_factor'] = f_ll
 
     try:
         # ==========================================
-        # ⚡ FORCE CLEAN LOAD GENERATION (The Fix)
+        # ⚡ FORCE CLEAN LOAD GENERATION
         # ==========================================
         
         # 1. Use a strictly local variable, copied deeply from user input
-        # This ensures we never accidentally reuse a dirty dataframe
         clean_user_loads = raw_user_loads_df.copy(deep=True)
         
         # 2. Prepare the ADD-ON dataframe (Self Weight)
@@ -124,11 +128,9 @@ else:
                     'case': 'DL'
                 })
             df_sw_only = pd.DataFrame(sw_rows)
-            # Combine: User Inputs + SW
             final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
             status_msg = "✅ **Self-Weight Included**"
         else:
-            # Strictly User Inputs ONLY
             final_calc_loads = clean_user_loads
             status_msg = "❌ **Self-Weight Excluded (Pure User Loads)**"
 
@@ -143,6 +145,12 @@ else:
 
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
+        # ===============================================
+        # [FIX] SHOW LOAD TABLE HERE (ก่อนเข้า Tabs)
+        # ===============================================
+        design_view.render_load_table(params)
+        # ===============================================
+
         # --- TABS START ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report & BOQ"])
         final_design_res = []
@@ -151,36 +159,31 @@ else:
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # --- DEBUGGER / CONFIRMATION BOX ---
-            with st.container():
-                cols_chk = st.columns([1, 4])
-                with cols_chk[0]:
-                    st.info(status_msg)
-                with cols_chk[1]:
-                    # Calculate total vertical load for verification
-                    total_v_load = final_calc_loads['mag'].sum() if not final_calc_loads.empty else 0
-                    st.caption(f"🔍 **System Check:** Total Vertical Load Magnitude entering solver: **{total_v_load/1000:.2f} kN** (Check this value changes when you toggle SW)")
-
             # Graph
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
             
-            # Create a unique key based on SW state to force re-render
+            # Call the Fixed Plotter
             unique_chart_key = f"chart_{include_sw}_{tag}_{np.random.randint(0,100)}"
-            
             fig = design_view.plot_analysis_results(
                 res_df=df_for_plot, spans=spans, supports=sup_df, 
                 loads=calc_loads_ult if not is_service else calc_loads_svc, reactions=R_plot
             )
             st.plotly_chart(fig, use_container_width=True, key=unique_chart_key)
             
+            # [FIX] Display Reaction Table in Tab 1
+            st.markdown("#### 🏗️ Support Reactions")
+            # Create readable reaction dictionary
+            r_data = []
+            for k, v in R_plot.items():
+                r_data.append({"Support": k, "Reaction (kN)": f"{v/1000:.2f}"})
+            st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
+            
             # Metrics
+            st.markdown("#### ⚡ Max Values")
             c_m1, c_m2, c_m3 = st.columns(3)
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
-            
-            with st.expander("🧐 View Raw Load Data Used (Click to Verify)"):
-                st.dataframe(final_calc_loads)
 
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
