@@ -61,7 +61,7 @@ def render_load_table(params):
     st.divider()
 
 # ==========================================
-# 2. PLOTLY ANALYSIS GRAPH (PIXEL SCALING FIX)
+# 2. PLOTLY ANALYSIS GRAPH (FIXED DATAFRAME HANDLING)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
@@ -107,10 +107,14 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             hoverinfo='name', name="Support"
         ), row=1, col=1)
 
-    # 1.3 Loads (The Critical Fix: Pixel Scaling)
-    # เราจะไม่ใช้ค่าแกน Y จริงในการวาดความยาวลูกศร แต่จะใช้ "Pixel" หน้าจอแทน
-    
-    load_iter = loads if isinstance(loads, list) else []
+    # 1.3 Loads (*** FIXED HERE: Handle DataFrame correctly ***)
+    # แปลง DataFrame ให้เป็น List of Dicts เพื่อให้ Loop ได้ถูกต้อง
+    if isinstance(loads, pd.DataFrame):
+        load_iter = loads.to_dict('records')
+    elif isinstance(loads, list):
+        load_iter = loads
+    else:
+        load_iter = []
     
     for l in load_iter:
         span_idx = int(l['span_index'])
@@ -127,7 +131,6 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             x_loc = start_x_span + float(l['d_start'])
             
             # ใช้ ayref='pixel' เพื่อกำหนดความยาวลูกศรเป็น Pixel (เช่น 50px)
-            # ไม่ว่าค่า Load จะเป็น 100 หรือ 100000 ลูกศรจะยาวเท่ากัน
             fig.add_annotation(
                 x=x_loc, y=0,
                 ax=0, ay=-50,      # หางลูกศรอยู่สูงขึ้นไป 50 pixels
@@ -256,9 +259,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         margin=dict(t=50, b=40, l=60, r=20)
     )
     
-    # *** CRITICAL SCALING FIX ***
-    # Lock FBD Y-Axis Range: กำหนดแกน Y ของ FBD ให้คงที่ (-0.5 ถึง 1.5)
-    # เพื่อให้เส้นคานไม่ถูกบีบอัด ส่วนลูกศรจะวาดทับด้วย Pixel Scaling เอง
+    # Lock FBD Y-Axis Range
     fig.update_yaxes(range=[-0.5, 1.5], showgrid=False, visible=False, row=1, col=1)
     
     # Axis Labels
