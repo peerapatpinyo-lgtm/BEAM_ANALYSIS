@@ -88,18 +88,15 @@ else:
         mode_select = st.radio("Design Mode:", ["Service Load (Check Deflection)", "Ultimate Strength (Design)"], index=1)
         
         st.markdown("---")
-        # [SW CHECKBOX]
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
         params['include_sw'] = include_sw 
         
         if include_sw:
             st.info(f"ℹ️ **Added:** {sw_calc_val:.2f} kN/m")
-            st.caption(f"({b_val}x{h_val} mm)")
         else:
             st.warning("ℹ️ **Excluded:** 0.00 kN/m")
     
     with col_set2:
-        # Load Factors
         st.markdown("### 🔢 Load Factors")
         c1, c2 = st.columns(2)
         if "Service" in mode_select:
@@ -116,45 +113,42 @@ else:
 
     try:
         # ==========================================
-        # ⚡ PREPARE LOADS FOR SOLVER (UNIT: NEWTONS)
+        # ⚡ PREPARE LOADS (INPUT = kN -> SOLVER = N)
         # ==========================================
         
         # 1. Process User Loads
         clean_user_loads = raw_user_loads_df.copy(deep=True)
         if not clean_user_loads.empty:
-            # UNIT GUARD: ถ้าค่าน้อยกว่า 2000 สันนิษฐานว่า User กรอก kN -> คูณ 1000 เป็น N
+            # UNIT GUARD: Ensure input is treated as kN then converted to N for Solver
+            # Logic: If user types '10' (kN), we multiply by 1000 -> 10,000 N
+            # If user already typed '10000' (N), we keep it. (Threshold 2000 is a heuristic)
             clean_user_loads['mag'] = clean_user_loads['mag'].apply(lambda x: x * 1000.0 if abs(x) < 2000.0 else x)
         
-        # 2. Process Self-Weight
+        # 2. Process Self-Weight (kN/m -> N/m)
         sw_rows = []
         if include_sw:
-            sw_mag_newton = sw_calc_val * 1000.0 # แปลง kN/m -> N/m
+            sw_mag_newton = sw_calc_val * 1000.0 
             for i in range(n_spans):
                 sw_rows.append({
-                    'span_index': i, 
-                    'type': 'U', 
-                    'mag': sw_mag_newton, 
-                    'dist': spans[i], 
-                    'd_start': 0, 
-                    'case': 'DL'
+                    'span_index': i, 'type': 'U', 'mag': sw_mag_newton, 'dist': spans[i], 'd_start': 0, 'case': 'DL'
                 })
             df_sw_only = pd.DataFrame(sw_rows)
             final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
         else:
             final_calc_loads = clean_user_loads
 
-        # --- RUN ANALYSIS (SOLVER WORKS IN N, m) ---
-        # 1. Ultimate Run
+        # --- RUN SOLVER (Calculates in N, m) ---
+        # 1. Ultimate
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
-        # 2. Service Run
+        # 2. Service
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
-        # Select Result set for Plotting
-        x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
-        current_loads_backend = calc_loads_svc if is_service else calc_loads_ult
+        # Select Data for Display (Raw SI Units: N, m)
+        x_raw, M_raw, V_raw, D_raw, R_raw = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
+        current_loads_raw = calc_loads_svc if is_service else calc_loads_ult
 
         # Show Load Table
         design_view.render_load_table(params)
@@ -167,48 +161,61 @@ else:
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # --- [CRITICAL FIX: UNIT CONVERSION FOR PLOTTING] ---
+            # =========================================================
+            # 🛠️ UNIT CONVERSION HUB (ENGINEERING UNITS)
+            # =========================================================
+            # Moment: N-m -> kNm (Div 1000)
+            # Shear:  N   -> kN  (Div 1000)
+            # Deflection: m -> mm (Mult 1000) !!! CRITICAL !!!
+            # Reaction: N -> kN (Div 1000)
             
-            # 1. แปลงเส้นกราฟ (Moment/Shear) เป็น kN
-            df_for_plot = pd.DataFrame({
-                'x': x_plot, 
-                'moment': M_plot / 1000.0,   # N-m -> kNm
-                'shear': V_plot / 1000.0,    # N -> kN
-                'deflection': D_plot * 1000.0 # m -> mm
+            # 1. For Line Plots
+            df_plot = pd.DataFrame({
+                'x': x_raw,
+                'moment': M_raw / 1000.0,      # kNm
+                'shear': V_raw / 1000.0,       # kN
+                'deflection': D_raw * 1000.0   # mm <--- Fix: Meters to Millimeters
             })
-
-            # 2. แปลง Load Bar (แท่งน้ำหนักในรูป) เป็น kN **จุดสำคัญที่ทำให้รูป Load ไม่พุ่ง**
-            loads_for_plot = current_loads_backend.copy()
-            if not loads_for_plot.empty:
-                loads_for_plot['mag'] = loads_for_plot['mag'] / 1000.0 # N -> kN
             
-            # 3. แปลง Reaction (ลูกศรรับแรง) เป็น kN
-            reactions_for_plot = {k: v / 1000.0 for k, v in R_plot.items()} # N -> kN
+            # 2. For Load Diagram Arrows
+            loads_plot = current_loads_raw.copy()
+            if not loads_plot.empty:
+                loads_plot['mag'] = loads_plot['mag'] / 1000.0 # N -> kN
+                
+            # 3. For Reaction Arrows
+            reactions_plot = {k: v / 1000.0 for k, v in R_raw.items()} # N -> kN
 
-            # ส่งค่าที่แปลงหน่วยแล้วเข้าฟังก์ชันวาดกราฟ
-            unique_chart_key = f"chart_{include_sw}_{tag}_{np.random.randint(0,100)}"
+            # --- PLOT ---
             fig = design_view.plot_analysis_results(
-                res_df=df_for_plot, 
+                res_df=df_plot, 
                 spans=spans, 
                 supports=sup_df, 
-                loads=loads_for_plot,       # <--- ส่ง Loads หน่วย kN
-                reactions=reactions_for_plot # <--- ส่ง Reactions หน่วย kN
+                loads=loads_plot,       # kN
+                reactions=reactions_plot # kN
             )
-            st.plotly_chart(fig, use_container_width=True, key=unique_chart_key)
+            st.plotly_chart(fig, use_container_width=True)
             
-            # Show Reactions Table
+            # --- MAX VALUES METRICS (DISPLAY UNITS) ---
+            st.markdown("#### ⚡ Critical Values")
+            c_m1, c_m2, c_m3 = st.columns(3)
+            
+            # Calculate Max Values from Converted Data
+            max_shear_kn = max(abs(df_plot['shear']))
+            max_moment_knm = max(df_plot['moment'])
+            min_moment_knm = min(df_plot['moment']) # For negative moment
+            max_moment_abs_knm = max(abs(df_plot['moment']))
+            max_defl_mm = max(abs(df_plot['deflection'])) # mm
+            
+            c_m1.metric("Max Shear (Vu)", f"{max_shear_kn:.2f} kN")
+            c_m2.metric("Max Moment (Mu)", f"{max_moment_abs_knm:.2f} kNm")
+            c_m3.metric("Max Deflection (Δ)", f"{max_defl_mm:.2f} mm") # Showing mm
+
+            # --- REACTIONS TABLE ---
             st.markdown("#### 🏗️ Support Reactions")
             r_data = []
-            for k, v in R_plot.items():
-                r_data.append({"Support": k, "Reaction (kN)": f"{v/1000:.2f}"}) # Display kN
+            for k, v_kn in reactions_plot.items():
+                r_data.append({"Support": k, "Reaction (kN)": f"{v_kn:.2f}"})
             st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
-            
-            # Max Values Metrics
-            st.markdown("#### ⚡ Max Values")
-            c_m1, c_m2, c_m3 = st.columns(3)
-            c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
-            c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
-            c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
 
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
@@ -220,18 +227,19 @@ else:
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
                 
-                # Filter indices for this span
+                # Filter indices
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 if not mask_u.any(): continue
 
-                # ดึงค่า N, Nm มาหาร 1000 เพื่อคำนวณ RC Design
-                mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
-                mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
-                vu_max = abs((V_ult[mask_u] / 1000.0)).max()
+                # --- PREPARE DESIGN FORCES (kNm, kN) ---
+                # Solver gives N, N-m. We convert for input to design logic
+                mu_pos_knm = max(0.0, (M_ult[mask_u]/1000.0).max())
+                mu_neg_knm = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
+                vu_max_kn = abs((V_ult[mask_u] / 1000.0)).max()
 
                 mask_s = (x_svc >= s_start - 1e-6) & (x_svc <= s_end + 1e-6)
-                ma_pos_svc = max(0.0, (M_svc[mask_s]/1000.0).max())
-                delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0
+                ma_pos_svc_knm = max(0.0, (M_svc[mask_s]/1000.0).max())
+                delta_elastic_mm = abs(D_svc[mask_s]).max() * 1000.0 # m -> mm
 
                 with st.expander(f"📍 SPAN {i+1} (L={s_len} m)", expanded=True):
                     col_input, col_draw = st.columns([2, 1])
@@ -239,7 +247,8 @@ else:
                         cover_mm = st.number_input(f"Cover (mm)", 20, 50, 25, key=f"cov_{i}")
 
                         # Top Steel
-                        st.markdown("#### 🔼 Top Reinforcement")
+                        st.markdown("#### 🔼 Top Reinforcement (Negative Moment)")
+                        st.caption(f"Req. Mu = **{mu_neg_knm:.2f} kNm**")
                         num_t_layers = st.selectbox("Top Layers", [1, 2, 3], index=0, key=f"tl_qty_{i}")
                         top_layers = []
                         for l_idx in range(num_t_layers):
@@ -250,12 +259,18 @@ else:
                         
                         d_t_val, as_prov_t, y_centroid_t = rc_design_engine.get_centroid_and_d(top_layers, h_mm, cover_mm, 9)
                         d_t = h_mm - y_centroid_t if y_centroid_t > 0 else h_mm - (cover_mm + 9 + 16/2)
-                        as_req_t, _, _ = rc_design_engine.get_as_req(mu_neg, d_t, fc, fy, b_mm)
+                        
                         phi_Mn_t, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(top_layers, d_t, b_mm, h_mm, fc, fy)
-                        st.markdown(f"**Status (Top):** Prov: {as_prov_t:.0f} mm² | Cap: {phi_Mn_t:.1f} kNm {'✅' if phi_Mn_t >= mu_neg else '❌'}")
+                        
+                        # Display Status
+                        status_t = "✅ OK" if phi_Mn_t >= mu_neg_knm else "❌ Fail"
+                        st.markdown(f"**Capacity:** {phi_Mn_t:.2f} kNm | **Status:** {status_t}")
+
+                        st.markdown("---")
 
                         # Bottom Steel
-                        st.markdown("#### 🔽 Bottom Reinforcement")
+                        st.markdown("#### 🔽 Bottom Reinforcement (Positive Moment)")
+                        st.caption(f"Req. Mu = **{mu_pos_knm:.2f} kNm**")
                         num_b_layers = st.selectbox("Bottom Layers", [1, 2, 3], index=0, key=f"bl_qty_{i}")
                         bot_layers = []
                         for l_idx in range(num_b_layers):
@@ -266,35 +281,43 @@ else:
                         
                         d_b, as_prov_b, _ = rc_design_engine.get_centroid_and_d(bot_layers, h_mm, cover_mm, 9)
                         if d_b <= 0: d_b = h_mm - (cover_mm + 9 + 16/2)
-                        as_req_b, _, _ = rc_design_engine.get_as_req(mu_pos, d_b, fc, fy, b_mm)
+                        
                         phi_Mn_b, _, _, _, _, _ = rc_design_engine.get_phi_Mn_details_multi(bot_layers, d_b, b_mm, h_mm, fc, fy)
-                        st.markdown(f"**Status (Bot):** Prov: {as_prov_b:.0f} mm² | Cap: {phi_Mn_b:.1f} kNm {'✅' if phi_Mn_b >= mu_pos else '❌'}")
+                        
+                        status_b = "✅ OK" if phi_Mn_b >= mu_pos_knm else "❌ Fail"
+                        st.markdown(f"**Capacity:** {phi_Mn_b:.2f} kNm | **Status:** {status_b}")
+
+                        st.markdown("---")
 
                         # Shear
                         st.markdown("#### 🌀 Shear Stirrups")
+                        st.caption(f"Req. Vu = **{vu_max_kn:.2f} kN**")
                         cs1, cs2 = st.columns(2)
                         with cs1: stir_db = st.selectbox("Stirrup Dia", [6, 9, 12], index=1, key=f"sdb_final_{i}")
-                        with cs2: stir_s = st.number_input("Spacing @", 50, 300, 150, key=f"ss_{i}")
-                        status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max, b_mm, d_b, fc, fy, stir_db, stir_s)
-                        if phi_Vn < vu_max: st.error(f"❌ Shear Fail: {phi_Vn:.1f} < {vu_max:.1f} kN")
-                        else: st.success(f"✅ Shear OK: {phi_Vn:.1f} ≥ {vu_max:.1f} kN")
+                        with cs2: stir_s = st.number_input("Spacing @ (mm)", 50, 300, 150, key=f"ss_{i}")
+                        
+                        status_v, phi_Vn, _, _, _, _ = rc_design_engine.check_shear_details(vu_max_kn, b_mm, d_b, fc, fy, stir_db, stir_s)
+                        
+                        if phi_Vn < vu_max_kn: st.error(f"❌ Shear Fail: Cap {phi_Vn:.1f} < Req {vu_max_kn:.1f} kN")
+                        else: st.success(f"✅ Shear OK: Cap {phi_Vn:.1f} ≥ Req {vu_max_kn:.1f} kN")
 
                         # Checks
                         st.markdown("---")
+                        st.markdown("#### 📏 Serviceability Checks")
                         d_inst, d_long, Ie, Icr, lambda_d = rc_design_engine.check_serviceability(
-                            ma_pos_svc, delta_elastic_mm, b_mm, h_mm, d_b, as_prov_b, as_prov_t, fc
+                            ma_pos_svc_knm, delta_elastic_mm, b_mm, h_mm, d_b, as_prov_b, as_prov_t, fc
                         )
                         limit_240 = (s_len * 1000) / 240
                         total_n_bars_bot = sum(l['n'] for l in bot_layers)
                         w_crack, fs_actual = rc_design_engine.check_crack_width(
-                            Ma_svc=ma_pos_svc, b=b_mm, h=h_mm, d=d_b, As=as_prov_b, n_bars=total_n_bars_bot, fc=fc
+                            Ma_svc=ma_pos_svc_knm, b=b_mm, h=h_mm, d=d_b, As=as_prov_b, n_bars=total_n_bars_bot, fc=fc
                         )
                         limit_crack = 0.30
                         status_crack = "✅ Pass" if w_crack <= limit_crack else "⚠️ Warning"
 
                         col_chk1, col_chk2 = st.columns(2)
-                        with col_chk1: st.metric("Deflection (L/240)", f"{d_long:.2f} mm", f"{'Pass' if d_long <= limit_240 else 'Fail'}")
-                        with col_chk2: st.metric("Crack Width", f"{w_crack:.3f} mm", f"{'Pass' if w_crack <= limit_crack else 'Warning'}")
+                        with col_chk1: st.metric("Deflection (L/240)", f"{d_long:.2f} mm", f"Limit: {limit_240:.1f} mm")
+                        with col_chk2: st.metric("Crack Width", f"{w_crack:.3f} mm", f"Limit: {limit_crack:.2f} mm")
 
                     with col_draw:
                         fig_cs = plot_cross_section_fixed(b=b_mm, h=h_mm, cover=cover_mm, top_layers=top_layers, bot_layers=bot_layers, shear_res={'db': stir_db, 's': stir_s})
@@ -303,13 +326,13 @@ else:
 
                     final_design_res.append({
                         'span_id': i, 'L': s_len, 'b': b_mm, 'h': h_mm, 'fc': fc, 'fy': fy, 
-                        'Mu_pos': mu_pos, 'Mu_neg': mu_neg, 'Vu_max': vu_max, 'cover': cover_mm,
-                        'Ma_pos_svc': ma_pos_svc, 'delta_svc_mm': d_long, 
+                        'Mu_pos': mu_pos_knm, 'Mu_neg': mu_neg_knm, 'Vu_max': vu_max_kn, 'cover': cover_mm,
+                        'Ma_pos_svc': ma_pos_svc_knm, 'delta_svc_mm': d_long, 
                         'top_db': top_layers[0]['db'] if top_layers else 12, 
                         'bot_db': bot_layers[0]['db'] if bot_layers else 12,
                         'stir_db': stir_db, 'stir_s': stir_s,
-                        'pos': {'n': sum(l['n'] for l in bot_layers), 'area': as_prov_b, 'layers': bot_layers, 'status': (phi_Mn_b >= mu_pos)},
-                        'neg': {'n': sum(l['n'] for l in top_layers), 'area': as_prov_t, 'layers': top_layers, 'status': (phi_Mn_t >= mu_neg)},
+                        'pos': {'n': sum(l['n'] for l in bot_layers), 'area': as_prov_b, 'layers': bot_layers, 'status': (phi_Mn_b >= mu_pos_knm)},
+                        'neg': {'n': sum(l['n'] for l in top_layers), 'area': as_prov_t, 'layers': top_layers, 'status': (phi_Mn_t >= mu_neg_knm)},
                         'shear': {'s': stir_s, 'db': stir_db, 'status': status_v},
                         'service': {'delta_long': d_long, 'limit_240': limit_240, 'ok': d_long <= limit_240},
                         'crack': {'w': w_crack, 'limit': limit_crack, 'status': status_crack},
@@ -332,7 +355,6 @@ else:
                     with st.expander(f"📘 Span {res['span_id']+1} Details", expanded=(res['span_id']==0)):
                         reporter.render_calculation_report(res)
 
-            # ================= BOQ SECTION =================
             st.markdown("---")
             st.header("💵 Bill of Quantities (BOQ)")
 
