@@ -13,7 +13,7 @@ import section_plotter
 import reporter
 import rc_utils
 import rc_design_engine
-import rc_load_processor  # ตัวจัดการ Load ที่เราเพิ่งแก้ไป
+import rc_load_processor
 import app_styles
 
 # --- 2. PAGE CONFIGURATION ---
@@ -37,7 +37,6 @@ def get_rebar_weight(d_mm):
 def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     """
     Generate a Matplotlib figure for the cross-section.
-    Used for instant visualization in Tab 2.
     """
     fig, ax = plt.subplots(figsize=(4, 5))
     
@@ -95,11 +94,9 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     ax.set_title(f"Section {int(b)}x{int(h)} mm", fontsize=12, fontweight='bold', pad=15)
     ax.set_aspect('equal')
     ax.axis('off')
-    # Set limits to include text
     ax.set_xlim(-50, b + 250) 
     ax.set_ylim(-50, h + 50)
     plt.tight_layout()
-    
     return fig
 
 # --- 4. MAIN HEADER ---
@@ -109,6 +106,28 @@ st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div
 with st.sidebar:
     # Get raw user inputs from input_handler module
     params, n_spans, spans, sup_df, raw_user_loads_df, stable = input_handler.render_all_sidebar_inputs()
+
+    # ==========================================================
+    # 🛠️ SMART UNIT FIXER (ระบบแก้หน่วยอัตโนมัติ)
+    # ==========================================================
+    # เช็คว่า user เผลอกรอกหน่วย "เมตร" (ค่าน้อยกว่า 10) หรือไม่
+    # ถ้าใช่ -> แปลงเป็น mm ให้ทันที เพื่อให้โค้ดส่วนอื่นทำงานถูกต้อง
+    
+    raw_b = params.get('b', 300)
+    raw_h = params.get('h', 500)
+    msg_unit = ""
+
+    if raw_b < 10: 
+        params['b'] = raw_b * 1000.0
+        msg_unit += f"Width: {raw_b}m ➔ {params['b']:.0f}mm "
+    
+    if raw_h < 10:
+        params['h'] = raw_h * 1000.0
+        msg_unit += f"Depth: {raw_h}m ➔ {params['h']:.0f}mm"
+    
+    if msg_unit:
+        st.success(f"⚡ **Auto-Correct Units:**\n{msg_unit}")
+    # ==========================================================
 
 # --- MAIN LOGIC ---
 if not stable:
@@ -125,9 +144,11 @@ else:
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
         
         # --- FIXED: Self-Weight Calculation (Unit: N/m) ---
-        b_m = params.get('b', 300) / 1000.0
-        h_m = params.get('h', 500) / 1000.0
-        # ใช้คอนกรีตหนัก 24 kN/m3 -> 24000 N/m3
+        # ตอนนี้ params['b'] และ params['h'] เป็น mm แน่นอนแล้วจาก Smart Fix ด้านบน
+        b_m = params['b'] / 1000.0
+        h_m = params['h'] / 1000.0
+        
+        # คอนกรีต 24000 N/m3
         sw_val = b_m * h_m * 24000.0  
         
         if include_sw:
@@ -169,7 +190,7 @@ else:
                     'mag': sw_val,  # หน่วย N/m (หลักพัน)
                     'dist': spans[i], 
                     'd_start': 0, 
-                    'case': 'SW'    # ระบุเป็น SW ให้ Processor รู้
+                    'case': 'SW'
                 })
             df_sw_only = pd.DataFrame(sw_rows)
             final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
@@ -179,7 +200,7 @@ else:
             status_msg = "❌ **Self-Weight Excluded (Pure User Loads)**"
 
         # --- RUN SOLVER ---
-        # 1. Ultimate Run (Factored) -> เรียก Processor ที่แก้แล้ว
+        # 1. Ultimate Run (Factored)
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
@@ -203,19 +224,16 @@ else:
             with cols_chk[0]:
                 st.info(status_msg)
             with cols_chk[1]:
-                # Check from Processed Load (Factored N) -> convert to kN for display
                 total_factored_N = calc_loads_ult['mag'].sum() if not calc_loads_ult.empty else 0
                 st.caption(f"🔍 **Total Factored Load (Check):** {total_factored_N/1000:,.2f} kN")
 
-            # --- DEBUGGER (ถ้าค่ายังเป็น 0 ให้กดดูตรงนี้) ---
-            with st.expander("🛠️ Debug: Check Loads (Click to see raw data)"):
-                st.write("**1. Raw Loads (User Input + SW):**", final_calc_loads)
-                st.write("**2. Processed Loads (Entering Solver - Unit N):**", calc_loads_ult)
-                st.write("**3. SW Value (N/m):**", sw_val)
+            # Debugger
+            with st.expander("🛠️ Debug: Check Loads"):
+                st.write(f"**Calculated SW (N/m):** {sw_val:.2f} (from b={params['b']}mm, h={params['h']}mm)")
+                st.write("**Processed Loads (Entering Solver - Unit N):**", calc_loads_ult)
 
             # Main Graph
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
-            
             unique_chart_key = f"chart_{include_sw}_{tag}_{np.random.randint(0,1000)}"
             
             fig = design_view.plot_analysis_results(
@@ -337,7 +355,7 @@ else:
                             shear_res={'db': stir_db, 's': stir_s}
                         )
                         st.pyplot(fig_cs)
-                        plt.close(fig_cs) # Important to prevent memory leak
+                        plt.close(fig_cs) 
 
                     # Store Results for Report
                     final_design_res.append({
@@ -401,14 +419,13 @@ else:
                     area = (2*h_m + b_m) * L
                     total_form_area += area
                     
-                    # Main Steel (Top + Bot) with 5% Lap splice/Waste
+                    # Main Steel
                     w_top = sum(get_rebar_weight(l['db']) * l['n'] for l in res['top']['all_layers'])
                     w_bot = sum(get_rebar_weight(l['db']) * l['n'] for l in res['bot']['all_layers'])
                     total_steel_weight += (w_top + w_bot) * L * 1.05 
                     
                     # Stirrups
                     stir_len_m = (2 * (res['b'] + res['h']) / 1000.0) 
-                    # Number of stirrups = Length / Spacing + 1
                     num_stir = (L * 1000.0) / res['shear']['s'] + 1
                     w_stir = get_rebar_weight(res['shear']['db']) * stir_len_m * num_stir
                     total_steel_weight += w_stir
@@ -435,4 +452,4 @@ else:
 
     except Exception as e:
         st.error(f"An unexpected error occurred during processing: {e}")
-        st.exception(e) # Show stack trace for debugging
+        st.exception(e)
