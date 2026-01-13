@@ -97,12 +97,15 @@ else:
         # [CRITICAL CHECKBOX]
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
         
-        # Display SW Value for confidence
+        # --- FIX 1: CALCULATE SW IN kN/m (Not N/m) ---
+        # ต้องหาร 1000 เพื่อให้หน่วยเป็น kN/m ให้ตรงกับ User Input
         b_m = params.get('b', 300) / 1000.0
         h_m = params.get('h', 500) / 1000.0
-        sw_val = b_m * h_m * 2400 * 9.81  # Density 2400 kg/m^3 * g (N/m)
+        # Density 2400 kg/m^3 * 9.81 m/s^2 = N/m^3 -> /1000 = kN/m^3
+        sw_val_kN = (b_m * h_m * 2400 * 9.81) / 1000.0 
+        
         if include_sw:
-            st.caption(f"ℹ️ **Added:** {sw_val/1000:.2f} kN/m")
+            st.caption(f"ℹ️ **Added:** {sw_val_kN:.2f} kN/m")
         else:
             st.caption("ℹ️ **Excluded:** 0.00 kN/m")
     
@@ -132,7 +135,7 @@ else:
                 sw_rows.append({
                     'span_index': i, 
                     'type': 'U', 
-                    'mag': sw_val,  # Value in N/m
+                    'mag': sw_val_kN,  # FIX: Send kN/m value to dataframe (e.g. 3.5 not 3500)
                     'dist': spans[i], 
                     'd_start': 0, 
                     'case': 'DL'
@@ -147,6 +150,8 @@ else:
             status_msg = "❌ **Self-Weight Excluded (Pure User Loads)**"
 
         # --- ANALYSIS ENGINE (Calculates in N, Nm, m) ---
+        # Solver/Processor will likely convert kN input -> N for internal matrix calculation
+        
         # 1. Ultimate Run
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
@@ -155,7 +160,7 @@ else:
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
-        # Select results for plotting based on mode (Raw Solver Output in N, Nm)
+        # Select results for plotting based on mode (Raw Solver Output is usually N, Nm)
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
         loads_to_plot_raw = calc_loads_svc if is_service else calc_loads_ult
 
@@ -175,10 +180,10 @@ else:
                 with cols_chk[1]:
                     # Display Total Load for Check
                     total_v_load = final_calc_loads['mag'].sum() if not final_calc_loads.empty else 0
-                    st.caption(f"🔍 **System Check:** Total Vertical Load Magnitude entering solver: **{total_v_load/1000:.2f} kN**")
+                    st.caption(f"🔍 **System Check:** Total Vertical Load Magnitude (Input): **{total_v_load:.2f} kN**")
 
             # =========================================================================
-            # 🔧 UNIT NORMALIZATION FOR PLOTTING (Fixing the 1000x scale issue)
+            # 🔧 UNIT NORMALIZATION FOR PLOTTING (Solver N -> Plot kN)
             # =========================================================================
             
             # 1. Convert Forces/Moments (N -> kN, Nm -> kNm)
@@ -187,23 +192,22 @@ else:
                 'x': x_plot, 
                 'moment': M_plot / 1000.0,   # Fix: N-m -> kN-m
                 'shear': V_plot / 1000.0,    # Fix: N -> kN
-                'deflection': D_plot * 1000.0 # Fix: m -> mm (Keep as is)
+                'deflection': D_plot * 1000.0 # Fix: m -> mm
             })
             
             # 2. Convert Loads DataFrame (N -> kN) for visualization
+            # Solver processor converts inputs to N, so we must divide by 1000 to show kN
             loads_display = loads_to_plot_raw.copy()
             if not loads_display.empty:
-                loads_display['mag'] = loads_display['mag'] / 1000.0 # Fix: N/m -> kN/m or N -> kN
+                loads_display['mag'] = loads_display['mag'] / 1000.0 
             
             # 3. Convert Reactions (N -> kN)
-            # R_plot is likely a dictionary {support_index: reaction_value_N} or array
-            # We must handle both cases safely
             if isinstance(R_plot, dict):
                 R_display = {k: v / 1000.0 for k, v in R_plot.items()}
             elif isinstance(R_plot, (list, np.ndarray)):
                  R_display = [r / 1000.0 for r in R_plot]
             else:
-                 R_display = R_plot # Fallback
+                 R_display = R_plot
 
             # =========================================================================
 
@@ -222,13 +226,12 @@ else:
             
             # Metrics Display (Correct units match the graph now)
             c_m1, c_m2, c_m3 = st.columns(3)
-            # Values in df_for_plot are already in kN and kNm
             c_m1.metric("Max Shear", f"{max(abs(df_for_plot['shear'])):.2f} kN")
             c_m2.metric("Max Moment", f"{max(df_for_plot['moment']):.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(df_for_plot['deflection'])):.2f} mm")
             
             with st.expander("🧐 View Raw Load Data Used (kN)"):
-                st.dataframe(final_calc_loads) # This is usually already in kN/user units
+                st.dataframe(final_calc_loads)
 
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
@@ -244,8 +247,7 @@ else:
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 if not mask_u.any(): continue
 
-                # Note: Design functions expect kNm and kN usually, check your rc_design_engine.
-                # Assuming engine takes kN/kNm:
+                # FIX: Ensure design forces are in kN/kNm
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
