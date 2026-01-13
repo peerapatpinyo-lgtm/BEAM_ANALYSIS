@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 # --- 1. IMPORT CUSTOM MODULES ---
+# (ต้องแน่ใจว่าไฟล์เหล่านี้อยู่ในโฟลเดอร์เดียวกัน)
 import input_handler, solver, design_view, section_plotter, reporter
 import rc_utils, rc_design_engine, rc_load_processor, app_styles
 
@@ -101,7 +102,7 @@ else:
             st.warning("ℹ️ **Excluded:** 0.00 kN/m")
     
     with col_set2:
-        # ... (โค้ดส่วน Load Factors เหมือนเดิม) ...
+        # Load Factors
         st.markdown("### 🔢 Load Factors")
         c1, c2 = st.columns(2)
         if "Service" in mode_select:
@@ -118,12 +119,20 @@ else:
 
     try:
         # ==========================================
-        # ⚡ FORCE CLEAN LOAD GENERATION
+        # ⚡ FORCE CLEAN LOAD GENERATION & UNIT FIX
         # ==========================================
         
         # 1. Local Copy
         clean_user_loads = raw_user_loads_df.copy(deep=True)
         
+        # --- [CRITICAL FIX: UNIT GUARD] ---
+        # ป้องกันกราฟเพี้ยน: ตรวจสอบหน่วยของ Load ที่รับเข้ามา
+        # ถ้าค่าน้อยกว่า 2000 -> สันนิษฐานว่าเป็น kN -> คูณ 1000 ให้เป็น N
+        # ถ้าค่ามากกว่า 2000 -> สันนิษฐานว่าเป็น N แล้ว -> ไม่ต้องคูณ
+        if not clean_user_loads.empty:
+            clean_user_loads['mag'] = clean_user_loads['mag'].apply(lambda x: x * 1000.0 if abs(x) < 2000.0 else x)
+        # ----------------------------------
+
         # 2. Prepare SW Dataframe
         sw_rows = []
         if include_sw:
@@ -146,8 +155,6 @@ else:
             final_calc_loads = clean_user_loads
             status_msg = "❌ **Self-Weight Excluded**"
 
-        # ... (ส่วนเรียก Solver และ Tabs เหมือนเดิม) ...
-
         # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
@@ -160,7 +167,7 @@ else:
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
         # ===============================================
-        # [FIX] SHOW LOAD TABLE HERE (ก่อนเข้า Tabs)
+        # [FIX] SHOW LOAD TABLE HERE (ตรวจสอบค่าก่อน plot)
         # ===============================================
         design_view.render_load_table(params)
         # ===============================================
@@ -174,6 +181,7 @@ else:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
             # Graph
+            # Deflection D_plot (m) -> *1000 to mm
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
             
             # Call the Fixed Plotter
@@ -189,12 +197,14 @@ else:
             # Create readable reaction dictionary
             r_data = []
             for k, v in R_plot.items():
+                # Reaction v is in N -> Divide by 1000 to show kN
                 r_data.append({"Support": k, "Reaction (kN)": f"{v/1000:.2f}"})
             st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
             
             # Metrics
             st.markdown("#### ⚡ Max Values")
             c_m1, c_m2, c_m3 = st.columns(3)
+            # แสดงผลหาร 1000 เพื่อแปลง N -> kN
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
@@ -373,4 +383,3 @@ else:
 
     except Exception as e:
         st.error(f"Error: {e}")
-
