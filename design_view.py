@@ -5,22 +5,74 @@ import pandas as pd
 import streamlit as st
 
 # ==========================================
-# 1. HELPER: LOAD TABLE
+# 1. HELPER: LOAD TABLE (WITH DETAILED CALCULATION)
 # ==========================================
 def render_load_table(params):
-    st.markdown("### 📋 Design Load Parameters")
+    st.markdown("### 📋 Design Load Parameters & Calculation")
+    
+    # 1. ดึงตัวแปร
     dl_f = params.get('dl_factor', 1.4)
     ll_f = params.get('ll_factor', 1.7)
     inc_sw = params.get('include_sw', True)
     
-    data = [
-        {"Load Case": "Dead Load (DL)", "Factor": f"{dl_f:.2f}", "Description": "Superimposed Dead Load"},
-        {"Load Case": "Live Load (LL)", "Factor": f"{ll_f:.2f}", "Description": "Live Load (Occupancy)"}
-    ]
+    b_mm = params.get('b', 300)
+    h_mm = params.get('h', 500)
+    
+    # 2. คำนวณ Self-Weight (SW)
+    # สูตร: Width(m) * Depth(m) * 2400 kg/m3 * 9.81 m/s2
+    b_m = b_mm / 1000.0
+    h_m = h_mm / 1000.0
+    concrete_density = 2400 # kg/m3
+    gravity = 9.81          # m/s2
+    
+    sw_val_kn = (b_m * h_m * concrete_density * gravity) / 1000.0 # แปลงเป็น kN/m
+    
+    # 3. แสดงตารางสรุป Factor
+    col1, col2 = st.columns([1.5, 2])
+    
+    with col1:
+        st.markdown("**Load Factors:**")
+        data = [
+            {"Type": "Dead Load (DL)", "Factor": f"× {dl_f:.2f}"},
+            {"Type": "Live Load (LL)", "Factor": f"× {ll_f:.2f}"}
+        ]
+        st.table(pd.DataFrame(data))
+
+    with col2:
+        st.markdown("**Beam Properties for SW:**")
+        st.write(f"- Width ($b$) = {b_mm} mm = {b_m:.2f} m")
+        st.write(f"- Depth ($h$) = {h_mm} mm = {h_m:.2f} m")
+        st.write(f"- Density ($\gamma_c$) = 2400 kg/m³")
+
+    st.markdown("---")
+    st.markdown("#### 🧮 Self-Weight Calculation Details")
+    
     if inc_sw:
-        data.insert(0, {"Load Case": "Self-Weight (SW)", "Factor": f"{dl_f:.2f}", "Description": "Beam Self-Weight"})
+        # แสดงวิธีทำแบบละเอียด
+        st.latex(r"w_{sw} = b \cdot h \cdot \gamma_c \cdot g")
+        st.markdown(f"""
+        **แทนค่า:**
+        $$ w_{{sw}} = {b_m:.2f} \\times {h_m:.2f} \\times 2400 \\times 9.81 / 1000 $$
+        """)
+        st.success(f"✅ **calculated $w_{{sw}}$ = {sw_val_kn:.3f} kN/m** (Included in Analysis)")
+    else:
+        st.latex(r"w_{sw} = \text{Excluded by User}")
+        st.warning(f"❌ **calculated $w_{{sw}}$ = 0.000 kN/m** (Self-weight is turned OFF)")
+
+    # 4. แสดงสมการ Design Load Combination
+    st.markdown("#### ⚖️ Ultimate Design Load Equation")
+    
+    if inc_sw:
+        # กรณีรวม SW
+        eq_text = f"$$ U = {dl_f:.2f}(DL + {sw_val_kn:.3f}) + {ll_f:.2f}(LL) $$"
+        expl_text = f"*หมายเหตุ: นำค่า $w_{{sw}}$ ({sw_val_kn:.3f} kN/m) ไปรวมกับ Dead Load (DL) ที่ผู้ใช้กรอกเพิ่มในแต่ละช่วงคาน*"
+    else:
+        # กรณีไม่รวม SW
+        eq_text = f"$$ U = {dl_f:.2f}(DL) + {ll_f:.2f}(LL) $$"
+        expl_text = "*หมายเหตุ: คิดเฉพาะ Dead Load (DL) ที่ผู้ใช้กรอกเพิ่มเท่านั้น ไม่รวมน้ำหนักคาน*"
         
-    st.dataframe(pd.DataFrame(data), use_container_width=True, hide_index=True)
+    st.markdown(eq_text)
+    st.caption(expl_text)
     st.divider()
 
 # ==========================================
