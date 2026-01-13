@@ -1,15 +1,11 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import io
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+from matplotlib import gridspec
 
 # --- 1. IMPORT CUSTOM MODULES ---
-# เราจะใช้ module คำนวณ (solver) แต่จะไม่ใช้ module วาดกราฟ (design_view) แล้ว
-# เพื่อตัดปัญหาเรื่องหน่วยที่ซ่อนอยู่ข้างในครับ
 import input_handler, solver, section_plotter, reporter
 import rc_utils, rc_design_engine, rc_load_processor, app_styles
 
@@ -22,141 +18,106 @@ def get_rebar_weight(d_mm):
     return (d_mm ** 2) / 162.0
 
 # =========================================================================
-# 🛑 NEW PLOTTING ENGINE (EMBEDDED TO FORCE CORRECT UNITS)
-# ฟังก์ชันวาดกราฟใหม่ที่เขียนทับเพื่อคุมหน่วย kN, kNm, mm โดยเฉพาะ
+# 🛑 CORRECTED PLOTTING ENGINE (MATPLOTLIB - CLASSIC STYLE)
+# วาดกราฟด้วย Matplotlib เพื่อให้เหมือนเดิม แต่แก้หน่วยให้ถูกต้อง
 # =========================================================================
-def plot_analysis_results_fixed(res_df, spans, supports, loads, reactions):
+def plot_analysis_results_matplotlib(res_df, spans, supports, loads, reactions):
     """
-    res_df: DataFrame ที่มีคอลัมน์ x, moment(kNm), shear(kN), deflection(mm) **(แปลงหน่วยมาแล้ว)**
-    loads: DataFrame Load **(ต้องแปลงเป็น kN แล้ว)**
-    reactions: Dict Reaction **(ต้องแปลงเป็น kN แล้ว)**
+    res_df: DataFrame (x, moment, shear, deflection) -> หน่วยต้องแปลงมาแล้ว (kN, kNm, mm)
+    loads: DataFrame -> หน่วยต้องแปลงมาแล้ว (kN, kN/m)
+    reactions: Dict -> หน่วยต้องแปลงมาแล้ว (kN)
     """
+    # Create Figure
+    fig = plt.figure(figsize=(10, 12))
+    gs = gridspec.GridSpec(4, 1, height_ratios=[1, 1, 1, 1.2], hspace=0.4)
     
-    # สร้าง Subplots 4 แถว (Load, Shear, Moment, Deflection)
-    fig = make_subplots(
-        rows=4, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.08,
-        subplot_titles=("<b>Load Diagram (kN, kN/m)</b>", "<b>Shear Force (kN)</b>", "<b>Bending Moment (kNm)</b>", "<b>Deflection (mm)</b>"),
-        row_heights=[0.2, 0.25, 0.25, 0.3]
-    )
-
-    # --- 1. LOAD DIAGRAM ---
-    # วาดคาน
+    # 1. LOAD DIAGRAM
+    ax0 = plt.subplot(gs[0])
     total_len = sum(spans)
-    fig.add_trace(go.Scatter(x=[0, total_len], y=[0, 0], mode='lines', line=dict(color='black', width=3), hoverinfo='skip'), row=1, col=1)
-
-    # วาด Loads (Input เป็น kN แล้ว)
-    max_load_val = 10.0 # Default scaling
-    if not loads.empty:
-        max_load_val = loads['mag'].abs().max() if loads['mag'].abs().max() > 0 else 10.0
-        
-        for _, load in loads.iterrows():
-            # Point Load (P)
-            if load['type'] == 'P':
-                x_loc = load['d_start']
-                mag = load['mag'] # kN
-                fig.add_annotation(
-                    x=x_loc, y=0,
-                    ax=0, ay=-40 if mag > 0 else 40, # ทิศทางลูกศร
-                    text=f"{mag:.2f} kN",
-                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor='red',
-                    row=1, col=1
-                )
-            # Uniform Load (U)
-            elif load['type'] == 'U':
-                x_start = load['d_start']
-                x_end = x_start + load['dist']
-                mag = load['mag'] # kN/m
-                
-                # วาดเส้น load
-                fig.add_trace(go.Scatter(
-                    x=[x_start, x_end], y=[mag, mag], 
-                    mode='lines', line=dict(color='blue', width=1), fill='tozeroy', 
-                    name='UDL'
-                ), row=1, col=1)
-                
-                # Annotation ตรงกลาง
-                fig.add_annotation(
-                    x=(x_start+x_end)/2, y=mag,
-                    text=f"{mag:.2f} kN/m",
-                    showarrow=True, arrowhead=1, ax=0, ay=-20 if mag > 0 else 20,
-                    row=1, col=1
-                )
-
-    # วาด Supports & Reactions
+    ax0.plot([0, total_len], [0, 0], 'k-', linewidth=3) # Beam line
+    
+    # Supports
     sup_x = 0
     for i, s_type in enumerate(supports['type']):
-        # วาดรูปสามเหลี่ยม Support
-        fig.add_trace(go.Scatter(
-            x=[sup_x], y=[0], mode='markers', 
-            marker=dict(symbol='triangle-up', size=15, color='black'),
-            name='Support'
-        ), row=1, col=1)
-        
-        # ใส่ค่า Reaction (แปลงเป็น kN มาแล้ว)
+        ax0.plot(sup_x, 0, marker='^', markersize=12, color='black', markeredgecolor='black')
+        # Reaction Text
         r_val = reactions.get(f"R{i}", 0.0)
-        fig.add_annotation(
-            x=sup_x, y=0,
-            text=f"R{i}={r_val:.2f} kN",
-            showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor='green',
-            ax=0, ay=40, # ชี้ขึ้น
-            row=1, col=1
-        )
-        if i < len(spans):
-            sup_x += spans[i]
+        ax0.text(sup_x, -0.5, f"R{i}={r_val:.2f} kN", ha='center', va='top', fontsize=10, color='green', fontweight='bold')
+        if i < len(spans): sup_x += spans[i]
 
-    # --- 2. SHEAR DIAGRAM (kN) ---
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['shear'],
-        mode='lines', line=dict(color='#2980b9', width=2),
-        fill='tozeroy', name='Shear (kN)'
-    ), row=2, col=1)
+    # Loads
+    max_mag = 1.0
+    if not loads.empty:
+        max_mag = loads['mag'].abs().max() if loads['mag'].abs().max() > 0 else 1.0
+        scale = 2.0 / max_mag # Scale factor for arrows
+        
+        for _, load in loads.iterrows():
+            if load['type'] == 'P': # Point Load
+                x = load['d_start']
+                mag = load['mag']
+                dy = -1.5 if mag > 0 else 1.5
+                ax0.arrow(x, dy, 0, -dy*0.8, head_width=0.2, head_length=0.3, fc='red', ec='red')
+                ax0.text(x, dy, f"{mag:.2f} kN", ha='center', va='bottom' if mag>0 else 'top', color='red')
+            elif load['type'] == 'U': # Uniform Load
+                x1 = load['d_start']
+                x2 = x1 + load['dist']
+                mag = load['mag']
+                ax0.fill_between([x1, x2], [0, 0], [mag/max_mag, mag/max_mag], color='blue', alpha=0.3)
+                ax0.text((x1+x2)/2, mag/max_mag, f"{mag:.2f} kN/m", ha='center', va='bottom', color='blue')
 
-    # --- 3. MOMENT DIAGRAM (kNm) ---
-    # Invert Y for RC convention
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['moment'],
-        mode='lines', line=dict(color='#c0392b', width=2),
-        fill='tozeroy', name='Moment (kNm)'
-    ), row=3, col=1)
-    fig.update_yaxes(autorange="reversed", title_text="Moment (kNm)", row=3, col=1)
+    ax0.set_title("Load Diagram (kN, kN/m)", fontsize=11, fontweight='bold')
+    ax0.set_ylim(-2.5, 2.5)
+    ax0.axis('off')
 
-    # --- 4. DEFLECTION DIAGRAM (mm) ---
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['deflection'],
-        mode='lines', line=dict(color='#8e44ad', width=2),
-        name='Deflection (mm)'
-    ), row=4, col=1)
-    # Add Limit Line (L/240 approx check)
-    # fig.add_hline(y=total_len*1000/240, line_dash="dash", line_color="gray", row=4, col=1)
+    # 2. SHEAR DIAGRAM (kN)
+    ax1 = plt.subplot(gs[1], sharex=ax0)
+    ax1.plot(res_df['x'], res_df['shear'], 'b-', linewidth=1.5)
+    ax1.fill_between(res_df['x'], res_df['shear'], 0, color='blue', alpha=0.1)
+    ax1.set_ylabel("Shear (kN)", fontsize=10)
+    ax1.grid(True, linestyle=':', alpha=0.6)
+    # Annotate Max Shear
+    v_max = res_df['shear'].max()
+    v_min = res_df['shear'].min()
+    ax1.text(0, v_max, f"{v_max:.2f}", color='blue', fontsize=9)
+    ax1.text(0, v_min, f"{v_min:.2f}", color='blue', fontsize=9)
 
-    # --- LAYOUT SETTINGS ---
-    fig.update_layout(
-        height=900, 
-        showlegend=False,
-        hovermode="x unified",
-        margin=dict(t=50, b=50, l=60, r=20)
-    )
-    
-    # Set Y-Axis Titles specifically
-    fig.update_yaxes(title_text="Load (kN)", row=1, col=1)
-    fig.update_yaxes(title_text="Shear (kN)", row=2, col=1)
-    # Moment set above
-    fig.update_yaxes(title_text="Defl. (mm)", row=4, col=1)
+    # 3. MOMENT DIAGRAM (kNm)
+    ax2 = plt.subplot(gs[2], sharex=ax0)
+    ax2.plot(res_df['x'], res_df['moment'], 'r-', linewidth=1.5)
+    ax2.fill_between(res_df['x'], res_df['moment'], 0, color='red', alpha=0.1)
+    ax2.set_ylabel("Moment (kNm)", fontsize=10)
+    ax2.invert_yaxis() # Flip for RC convention
+    ax2.grid(True, linestyle=':', alpha=0.6)
+    # Annotate Max Moment
+    m_max = res_df['moment'].max()
+    m_min = res_df['moment'].min()
+    ax2.text(total_len/2, m_max, f"{m_max:.2f}", color='red', fontsize=9)
+    ax2.text(total_len/2, m_min, f"{m_min:.2f}", color='red', fontsize=9)
 
+    # 4. DEFLECTION DIAGRAM (mm)
+    ax3 = plt.subplot(gs[3], sharex=ax0)
+    ax3.plot(res_df['x'], res_df['deflection'], 'm-', linewidth=1.5)
+    ax3.set_ylabel("Deflection (mm)", fontsize=10) # Fixed Unit Label
+    ax3.set_xlabel("Distance (m)", fontsize=10)
+    ax3.grid(True, linestyle=':', alpha=0.6)
+    # Annotate Max Deflection
+    d_max_abs = res_df['deflection'].abs().max()
+    ax3.text(total_len/2, -d_max_abs, f"Max: {d_max_abs:.2f} mm", color='purple', fontsize=9)
+
+    plt.tight_layout()
     return fig
 
-# --- 4. INTERNAL HELPER: PLOT CROSS SECTION (Matplotlib) ---
 def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     fig, ax = plt.subplots(figsize=(4, 5))
+    # Main Concrete Rect
     rect = patches.Rectangle((0, 0), b, h, linewidth=2, edgecolor='black', facecolor='white')
     ax.add_patch(rect)
+    # Stirrup
     stirrup_rect = patches.Rectangle((cover, cover), b - 2*cover, h - 2*cover, 
                                      linewidth=1.5, edgecolor='#34495e', facecolor='none', linestyle='-')
     ax.add_patch(stirrup_rect)
     
-    # Draw Top Bars
+    # Top Bars
     n_top = sum(l['n'] for l in top_layers)
     dia_top = top_layers[0]['db'] if top_layers else 12
     start_x = cover + dia_top/2
@@ -168,7 +129,7 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_top == 1:
         ax.add_patch(patches.Circle((b/2, h - cover - dia_top/2), radius=dia_top/2, color='#c0392b'))
 
-    # Draw Bot Bars
+    # Bot Bars
     n_bot = sum(l['n'] for l in bot_layers)
     dia_bot = bot_layers[0]['db'] if bot_layers else 12
     start_x = cover + dia_bot/2
@@ -180,11 +141,11 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     elif n_bot == 1:
         ax.add_patch(patches.Circle((b/2, cover + dia_bot/2), radius=dia_bot/2, color='#27ae60'))
 
-    # Text Annotations
-    text_x = b + (b * 0.1)
+    # Text
+    text_x = b + (b * 0.15)
     ax.text(text_x, h - cover, f"Top: {n_top}DB{int(dia_top)}", color='#c0392b', fontsize=11, fontweight='bold', va='center')
     ax.text(text_x, cover + dia_bot, f"Bot: {n_bot}DB{int(dia_bot)}", color='#27ae60', fontsize=11, fontweight='bold', va='center')
-    ax.text(text_x, h/2, f"Stirrup: RB{int(shear_res['db'])}@{int(shear_res['s'])}", color='#2c3e50', fontsize=10, fontweight='bold', va='center')
+    ax.text(text_x, h/2, f"Stir: RB{int(shear_res['db'])}@{int(shear_res['s'])}", color='#2c3e50', fontsize=10, fontweight='bold', va='center')
 
     ax.set_title(f"SECTION {int(b)}x{int(h)} mm", fontsize=12, fontweight='bold', pad=15)
     ax.set_aspect('equal')
@@ -194,12 +155,10 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
     plt.tight_layout()
     return fig
 
-
-# --- 5. MAIN APP LOGIC ---
-st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro (Fixed Units)</div>', unsafe_allow_html=True)
+# --- 4. MAIN APP LOGIC ---
+st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro (Fixed)</div>', unsafe_allow_html=True)
 
 with st.sidebar:
-    # Get inputs
     params, n_spans, spans, sup_df, raw_user_loads_df, stable = input_handler.render_all_sidebar_inputs()
     
     # Calculate SW (kN/m)
@@ -211,7 +170,6 @@ with st.sidebar:
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
 else:
-    # --- ANALYSIS SETTINGS ---
     col_set1, col_set2 = st.columns([1, 2])
     with col_set1:
         st.markdown("### ⚙️ Analysis Settings")
@@ -234,33 +192,22 @@ else:
         params.update({'dl_factor': f_dl, 'll_factor': f_ll, 'include_sw': include_sw})
 
     try:
-        # ========================================================
-        # ⚡ DATA PREPARATION FOR SOLVER (THE BRIDGE)
-        # ========================================================
-        
-        # 1. Clean User Loads (Assuming Input is kN -> Convert to N for Solver)
-        # Why? Because standard FEA solvers usually work in Base SI (N, m, Pa)
+        # --- DATA PREP (kN -> N for Solver) ---
         clean_user_loads = raw_user_loads_df.copy(deep=True)
         if not clean_user_loads.empty:
-            # Heuristic: If value < 1000, assume kN -> multiply 1000
-            # If value > 1000 (e.g. 5000), assume N -> keep it
             clean_user_loads['mag'] = clean_user_loads['mag'].apply(lambda x: x * 1000.0 if abs(x) < 2000.0 else x)
         
-        # 2. Add Self Weight (kN/m -> N/m)
         sw_rows = []
         if include_sw:
             sw_mag_newton = sw_calc_val * 1000.0 
             for i in range(n_spans):
-                sw_rows.append({
-                    'span_index': i, 'type': 'U', 'mag': sw_mag_newton, 
-                    'dist': spans[i], 'd_start': 0, 'case': 'DL'
-                })
+                sw_rows.append({'span_index': i, 'type': 'U', 'mag': sw_mag_newton, 'dist': spans[i], 'd_start': 0, 'case': 'DL'})
             df_sw_only = pd.DataFrame(sw_rows)
             final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
         else:
             final_calc_loads = clean_user_loads
 
-        # --- RUN SOLVER (Returns N, m) ---
+        # --- RUN SOLVER ---
         # 1. Ultimate
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
@@ -269,61 +216,42 @@ else:
         calc_loads_svc = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, 1.0, 1.0)
         x_svc, M_svc, V_svc, D_svc, R_svc = solver.solve_beam(spans, sup_df, calc_loads_svc, params)
 
-        # Select Dataset for Display
+        # Select Data
         x_raw, M_raw, V_raw, D_raw, R_raw = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
         current_loads_raw = calc_loads_svc if is_service else calc_loads_ult
 
-        # ================= TAB 1: ANALYSIS (THE FIX) =================
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report & BOQ"])
         final_design_res = []
 
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # 🛠️ UNIT CONVERSION FOR PLOTTING (Explicitly)
-            # Moment: N-m -> kNm (/1000)
-            # Shear: N -> kN (/1000)
-            # Deflection: m -> mm (*1000)
-            # Reaction: N -> kN (/1000)
-            # Load: N -> kN (/1000)
-
-            # 1. Prepare Line Data
+            # --- UNIT CONVERSION FOR PLOT ---
             df_plot = pd.DataFrame({
                 'x': x_raw,
-                'moment': M_raw / 1000.0,
-                'shear': V_raw / 1000.0,
-                'deflection': D_raw * 1000.0 
+                'moment': M_raw / 1000.0,    # kNm
+                'shear': V_raw / 1000.0,     # kN
+                'deflection': D_raw * 1000.0 # mm
             })
-
-            # 2. Prepare Load Arrows (Copy & Scale)
             loads_plot = current_loads_raw.copy(deep=True)
             if not loads_plot.empty:
                 loads_plot['mag'] = loads_plot['mag'] / 1000.0
-            
-            # 3. Prepare Reactions
             reactions_plot = {k: v / 1000.0 for k, v in R_raw.items()}
 
-            # 4. CALL NEW EMBEDDED PLOTTING FUNCTION
-            fig = plot_analysis_results_fixed(df_plot, spans, sup_df, loads_plot, reactions_plot)
-            st.plotly_chart(fig, use_container_width=True)
+            # --- PLOT (Matplotlib) ---
+            fig = plot_analysis_results_matplotlib(df_plot, spans, sup_df, loads_plot, reactions_plot)
+            st.pyplot(fig)
 
-            # --- METRICS & TABLES ---
-            st.markdown("#### ⚡ Critical Values")
+            # --- METRICS ---
             c_m1, c_m2, c_m3 = st.columns(3)
-            
-            max_v = max(abs(df_plot['shear']))
-            max_m = max(abs(df_plot['moment']))
-            max_d = max(abs(df_plot['deflection']))
-            
-            c_m1.metric("Max Shear (Vu)", f"{max_v:.2f} kN")
-            c_m2.metric("Max Moment (Mu)", f"{max_m:.2f} kNm")
-            c_m3.metric("Max Deflection (Δ)", f"{max_d:.2f} mm") # Unit is mm now
+            c_m1.metric("Max Shear (Vu)", f"{max(abs(df_plot['shear'])):.2f} kN")
+            c_m2.metric("Max Moment (Mu)", f"{max(abs(df_plot['moment'])):.2f} kNm")
+            c_m3.metric("Max Deflection (Δ)", f"{max(abs(df_plot['deflection'])):.2f} mm")
 
             st.markdown("#### 🏗️ Support Reactions")
             r_data = [{"Support": k, "Reaction (kN)": f"{v:.2f}"} for k, v in reactions_plot.items()]
             st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
 
-        # ================= TAB 2: DESIGN =================
         with tab2:
             st.header("🏗️ Reinforcement Detailing")
             b_mm, h_mm = rc_utils.normalize_section_units(params['b'], params['h'])
@@ -332,11 +260,9 @@ else:
             
             for i in range(n_spans):
                 s_len, s_start, s_end = spans[i], offsets[i], offsets[i+1]
-                
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 if not mask_u.any(): continue
 
-                # Forces in kNm, kN
                 mu_pos_knm = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg_knm = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max_kn = abs((V_ult[mask_u] / 1000.0)).max()
@@ -391,14 +317,11 @@ else:
 
                         # Checks
                         st.markdown("---")
-                        d_inst, d_long, Ie, Icr, lambda_d = rc_design_engine.check_serviceability(
-                            ma_pos_svc_knm, delta_elastic_mm, b_mm, h_mm, d_b, as_prov_b, as_prov_t, fc
-                        )
+                        d_inst, d_long, Ie, Icr, lambda_d = rc_design_engine.check_serviceability(ma_pos_svc_knm, delta_elastic_mm, b_mm, h_mm, d_b, as_prov_b, as_prov_t, fc)
                         limit_240 = (s_len * 1000) / 240
                         total_n_bars_bot = sum(l['n'] for l in bot_layers)
-                        w_crack, fs_actual = rc_design_engine.check_crack_width(
-                            Ma_svc=ma_pos_svc_knm, b=b_mm, h=h_mm, d=d_b, As=as_prov_b, n_bars=total_n_bars_bot, fc=fc
-                        )
+                        w_crack, fs_actual = rc_design_engine.check_crack_width(Ma_svc=ma_pos_svc_knm, b=b_mm, h=h_mm, d=d_b, As=as_prov_b, n_bars=total_n_bars_bot, fc=fc)
+                        
                         col_chk1, col_chk2 = st.columns(2)
                         with col_chk1: st.metric("Deflection (L/240)", f"{d_long:.2f} mm", f"{'Pass' if d_long <= limit_240 else 'Fail'}")
                         with col_chk2: st.metric("Crack Width (0.3mm)", f"{w_crack:.3f} mm", f"{'Pass' if w_crack <= 0.3 else 'Warning'}")
@@ -424,7 +347,6 @@ else:
                         'bot': {'n': bot_layers[0]['n'] if bot_layers else 0, 'db': bot_layers[0]['db'] if bot_layers else 12, 'layers': num_b_layers, 'all_layers': bot_layers}
                     })
 
-        # ================= TAB 3: BOQ =================
         with tab3:
             st.header("💵 Bill of Quantities")
             c_price1, c_price2, c_price3 = st.columns(3)
@@ -457,7 +379,16 @@ else:
                 c_boq2.metric("Steel", f"{total_steel_weight:.2f} kg")
                 c_boq3.metric("Formwork", f"{total_form_area:.2f} m²")
                 c_boq4.metric("TOTAL COST", f"{df_boq['Amount (THB)'].sum():,.0f} ฿", border=True)
-                st.dataframe(df_boq.style.format("{:.2f}"), use_container_width=True, hide_index=True)
+                
+                # FIXED: Apply format only to numeric columns
+                st.dataframe(
+                    df_boq.style.format({
+                        "Quantity": "{:.2f}", 
+                        "Unit Price": "{:.2f}", 
+                        "Amount (THB)": "{:,.2f}"
+                    }), 
+                    use_container_width=True, hide_index=True
+                )
 
     except Exception as e:
         st.error(f"Error: {e}")
