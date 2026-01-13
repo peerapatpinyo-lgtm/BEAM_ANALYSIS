@@ -63,16 +63,17 @@ def calculate_boq_summary(design_res, spans):
     ])
 
 # ==========================================
-# 3. PLOTLY ANALYSIS GRAPH (SCALED & PRECISION)
+# 3. PLOTLY ANALYSIS GRAPH (DATA COORDINATE SYSTEM)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
-    World-Class Engineering FBD:
-    1. Point Loads touch the beam (y=0).
-    2. Dynamic Scaling: Arrow size proportional to load magnitude.
-    3. Point Load overlays UDL cleanly.
+    Final Corrected FBD:
+    - Uses 'Data Coordinates' (ayref='y') instead of pixels.
+    - Guaranteed contact with beam (y=0).
+    - Perfect relative scaling between UDL and Point Load.
     """
-    # --- SETUP & SCALING LOGIC ---
+    
+    # --- 1. DATA PREP & SCALING FACTOR ---
     if isinstance(loads, pd.DataFrame):
         load_list = loads.to_dict('records')
     elif isinstance(loads, list):
@@ -80,45 +81,40 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     else:
         load_list = []
 
-    # Find Max Load for Scaling Calculation
-    max_mag = 1.0
-    if load_list:
-        max_mag = max([l['mag'] for l in load_list])
+    # หาค่าแรงสูงสุดเพื่อกำหนดสเกลความสูงกราฟ (Scaling Base)
+    # ทั้ง UDL และ Point Load จะถูกหารด้วยค่านี้เพื่อให้สัดส่วนถูกต้อง
+    all_mags = [l['mag'] for l in load_list] if load_list else [1]
+    max_load_val = max(all_mags) if all_mags else 1.0
+    if max_load_val == 0: max_load_val = 1.0
     
-    # Function to calculate visual pixel height based on magnitude
-    # Min height = 40px, Max height = 120px
-    def get_pixel_scale(mag):
-        base_px = 40
-        variable_px = 80
-        ratio = mag / max_mag if max_mag > 0 else 0
-        return base_px + (ratio * variable_px)
+    # กำหนดความสูงสูงสุดของกราฟ (Visual Height Limit)
+    VISUAL_Y_MAX = 2.0 
 
-    # --- PLOT CREATION ---
+    # --- 2. SETUP PLOT ---
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.08,
         subplot_titles=("<b>1. Free Body Diagram (FBD)</b>", "<b>2. Shear Force Diagram (SFD)</b>", "<b>3. Bending Moment Diagram (BMD)</b>", "<b>4. Deflection Diagram</b>"),
-        row_heights=[0.35, 0.22, 0.22, 0.21] # เพิ่มพื้นที่แถวบนให้ FBD
+        row_heights=[0.35, 0.22, 0.22, 0.21]
     )
 
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
     
-    # 1.1 Beam Line (y=0)
+    # Beam (y=0)
     fig.add_trace(go.Scatter(x=[0, total_L], y=[0, 0], mode='lines', line=dict(color='black', width=5), hoverinfo='skip'), row=1, col=1)
     
-    # 1.2 Supports
+    # Supports
     for idx, row in supports.iterrows():
         sym = "square" if row['type'] == 'Fixed' else ("circle" if row['type'] == 'Roller' else "triangle-up")
         fig.add_trace(go.Scatter(
-            x=[row['x']], y=[-0.02], mode='markers+text',
+            x=[row['x']], y=[-0.05], mode='markers+text',
             marker=dict(symbol=sym, size=12, color='white', line=dict(width=2, color='black')),
             text=[row['type'][0]], textposition="bottom center", hoverinfo='name', name="Support"
         ), row=1, col=1)
 
-    # --- 1.3 DRAW LOADS (LAYERED) ---
+    # --- 3. DRAW LOADS (SCALED BY DATA) ---
     
-    # LAYER 1: UDL (Background)
-    # UDL ใช้ความสูงแบบ Visual Scale (0.5 - 1.0 unit ในแกน Y) เพื่อไม่ให้บัง Point Load
+    # LAYER 1: UDL
     for l in load_list:
         if l['type'] == 'U':
             span_idx = int(l['span_index'])
@@ -126,45 +122,43 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             end_x = start_x + float(l['dist'])
             mag = l['mag']
             
-            # Scale Visual Height ของกล่อง UDL ตามขนาดแรง (0.3 ถึง 0.8 หน่วยกราฟ)
-            # เพื่อให้ UDL ที่หนักกว่าดูหนากว่า
-            udl_h_visual = 0.3 + (0.5 * (mag / max_mag))
+            # คำนวณความสูงตามสัดส่วนจริง
+            # ขั้นต่ำ 0.4 หน่วย เพื่อให้มองเห็นชัดแม้แรงน้อย
+            ratio = mag / max_load_val
+            h_visual = 0.4 + (ratio * (VISUAL_Y_MAX - 0.4)) * 0.6  # ปรับตัวคูณ 0.6 เพื่อให้ UDL เตี้ยกว่า Point Load ที่แรงเท่ากันนิดหน่อยตามธรรมเนียม
             
             color = '#e74c3c' if l.get('case') == 'LL' else '#2980b9'
             
-            # Fill Area
+            # Draw Block
             fig.add_trace(go.Scatter(
-                x=[start_x, end_x, end_x, start_x], y=[0, 0, udl_h_visual, udl_h_visual],
+                x=[start_x, end_x, end_x, start_x], y=[0, 0, h_visual, h_visual],
                 fill='toself', fillcolor=color, opacity=0.15, line=dict(width=0), hoverinfo='skip', showlegend=False
             ), row=1, col=1)
-            
             # Top Line
             fig.add_trace(go.Scatter(
-                x=[start_x, end_x], y=[udl_h_visual, udl_h_visual],
-                mode='lines', line=dict(color=color, width=1, dash='dash'), hoverinfo='skip'
+                x=[start_x, end_x], y=[h_visual, h_visual],
+                mode='lines', line=dict(color=color, width=1, dash='dot'), hoverinfo='skip'
             ), row=1, col=1)
-            
-            # Arrows (ชี้ลงคาน y=0)
-            n_arrows = max(3, int(float(l['dist']) * 2.5))
-            # ความยาวลูกศร UDL ให้สั้นกว่า Point Load เสมอ (Fix Pixel หรือตามความสูงกล่อง)
-            # ใช้ Pixel ที่สัมพันธ์กับความสูงกล่องคร่าวๆ
-            arrow_px_len = 25 + (15 * (mag / max_mag)) 
-
-            for ax_x in np.linspace(start_x, end_x, n_arrows + 2)[1:-1]:
-                fig.add_annotation(
-                    x=ax_x, y=0, ax=0, ay=-arrow_px_len, ayref='pixel',
-                    xref="x1", yref="y1", showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
-                    row=1, col=1
-                )
-            
-            # Label (วางเหนือกราฟิก UDL)
+            # Label
             label_txt = f"w={mag/1000:.2f}" if l.get('case')!='SW' else f"SW={mag/1000:.2f}"
             fig.add_annotation(
-                x=(start_x+end_x)/2, y=udl_h_visual, text=label_txt, showarrow=False, yshift=10,
+                x=(start_x+end_x)/2, y=h_visual, text=label_txt, showarrow=False, yshift=10,
                 font=dict(color=color, size=10), row=1, col=1
             )
+            # Internal Arrows (Scale with block)
+            n_arrows = max(3, int(float(l['dist']) * 2.0))
+            for ax_x in np.linspace(start_x, end_x, n_arrows + 2)[1:-1]:
+                 # ใช้ ayref='y' เพื่อยึดหางลูกศรกับความสูงกราฟ (Data Coordinates)
+                 fig.add_annotation(
+                    x=ax_x, y=0,           # หัวลูกศรที่คาน
+                    ax=ax_x, ay=h_visual,  # หางลูกศรที่ความสูง Block
+                    axref='x', ayref='y',  # *** KEY FIX: ใช้แกนข้อมูลจริง ไม่ใช่ Pixel ***
+                    xref='x', yref='y',
+                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
+                    row=1, col=1
+                )
 
-    # LAYER 2: POINT LOAD (Foreground - High Impact)
+    # LAYER 2: POINT LOAD
     for l in load_list:
         if l['type'] == 'P':
             span_idx = int(l['span_index'])
@@ -172,82 +166,51 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             mag = l['mag']
             color = '#c0392b' if l.get('case') == 'LL' else '#2980b9'
             
-            # *** Dynamic Scaling ***
-            # คำนวณความยาวลูกศรตามสัดส่วนแรงจริง (Pixel)
-            arrow_len = get_pixel_scale(mag)
+            # คำนวณความสูงตามสัดส่วนจริง (Direct Ratio)
+            # Point Load จะสูงกว่า UDL เสมอถ้าแรงเท่ากัน เพื่อความเด่น
+            ratio = mag / max_load_val
+            h_arrow = 0.5 + (ratio * (VISUAL_Y_MAX - 0.5))
             
-            # ตรวจสอบว่ามี UDL ซ้อนทับไหม เพื่อดัน Text ให้พ้น
-            overlap_udl_h = 0
-            for ul in load_list:
-                if ul['type'] == 'U':
-                    u_s = cum_dist[int(ul['span_index'])] + float(ul.get('d_start', 0))
-                    u_e = u_s + float(ul['dist'])
-                    if u_s <= x_loc <= u_e:
-                        overlap_udl_h = 0.8 # ค่าประมาณความสูง UDL สูงสุด
+            # Label Offset (อยู่เหนือหางลูกศรนิดหน่อย)
+            text_y = h_arrow + 0.2
             
-            # ถ้าแรงเยอะ ลูกศรยาว มันจะพ้น UDL เอง
-            # แต่ถ้าแรงน้อย ลูกศรสั้น อาจจมใน UDL -> ต้องดัน Text ขึ้น
-            text_yshift = arrow_len + 10
-            
-            # วาดลูกศร (Head @ y=0)
+            # *** KEY FIX: Arrow using Data Coordinates ***
             fig.add_annotation(
-                x=x_loc, y=0,
-                ax=0, ay=-arrow_len, # หางอยู่สูงขึ้นไปตามสเกลแรง
-                ayref='pixel', xref="x1", yref="y1",
-                showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=3, arrowcolor=color, # หนา 3px เด่นๆ
+                x=x_loc, y=0,          # หัวลูกศรแตะคาน (y=0) เป๊ะ
+                ax=x_loc, ay=h_arrow,  # หางลูกศรอยู่ที่ความสูงคำนวณ (Data Coords)
+                xref='x', yref='y',    # อ้างอิงแกนกราฟ
+                axref='x', ayref='y',  # อ้างอิงแกนกราฟ (ทำให้ไม่ลอย ไม่เพี้ยนเมื่อซูม)
+                
+                showarrow=True, arrowhead=2, arrowsize=1.5, arrowwidth=3, arrowcolor=color,
                 text=f"<b>P={mag/1000:.2f}</b>",
-                yshift=text_yshift,
+                
+                # ตำแหน่ง Text
+                xanchor='center', yanchor='bottom',
+                yshift=10, # ขยับ Text ขึ้นจากหางนิดนึง
                 font=dict(color=color, size=12, family="Arial Black"),
                 row=1, col=1
             )
 
-    # --- ROW 2-4: DIAGRAMS ---
+    # --- 4. DIAGRAMS & LAYOUT ---
     # SFD
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['shear']/1000, mode='lines', line=dict(color='#e74c3c', width=2),
-        fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
-    ), row=2, col=1)
-    v_vals = res_df['shear']/1000
-    for val in [v_vals.max(), v_vals.min()]:
-        if abs(val) > 0.01:
-            idx = (v_vals - val).abs().idxmin()
-            fig.add_annotation(x=res_df['x'].iloc[idx], y=val, text=f"<b>{val:.2f}</b>", showarrow=False, yshift=10 if val>0 else -10, font=dict(color='#e74c3c', size=11), row=2, col=1)
-
+    fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['shear']/1000, mode='lines', line=dict(color='#e74c3c', width=2), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'), row=2, col=1)
     # BMD
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['moment']/1000, mode='lines', line=dict(color='#27ae60', width=2),
-        fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
-    ), row=3, col=1)
-    m_vals = res_df['moment']/1000
-    for val in [m_vals.max(), m_vals.min()]:
-        if abs(val) > 0.01:
-            idx = (m_vals - val).abs().idxmin()
-            fig.add_annotation(x=res_df['x'].iloc[idx], y=val, text=f"<b>{val:.2f}</b>", showarrow=True, arrowhead=1, ay=20 if val>0 else -20, font=dict(color='#27ae60', size=11), row=3, col=1)
-
-    # DEFLECTION
+    fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['moment']/1000, mode='lines', line=dict(color='#27ae60', width=2), fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'), row=3, col=1)
+    # Deflection
     fig.add_hline(y=0, line_color="black", line_width=1, row=4, col=1)
-    fig.add_trace(go.Scatter(
-        x=res_df['x'], y=res_df['deflection'], mode='lines', line=dict(color='#8e44ad', width=2)
-    ), row=4, col=1)
-    if not res_df['deflection'].empty:
-        idx_max = res_df['deflection'].abs().idxmax()
-        val_max = res_df['deflection'].iloc[idx_max]
-        if abs(val_max) > 0.001:
-             fig.add_annotation(x=res_df['x'].iloc[idx_max], y=val_max, text=f"<b>Max: {val_max:.2f} mm</b>", showarrow=True, arrowhead=1, ay=30 if val_max < 0 else -30, font=dict(color='#8e44ad', size=11), row=4, col=1)
+    fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['deflection'], mode='lines', line=dict(color='#8e44ad', width=2)), row=4, col=1)
 
-    # --- LAYOUT ---
+    # Layout Updates
     for x_pos in cum_dist:
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
-    fig.update_layout(
-        height=1100, showlegend=False, template="plotly_white", hovermode="x unified",
-        margin=dict(t=50, b=40, l=60, r=20)
-    )
+    fig.update_layout(height=1100, showlegend=False, template="plotly_white", hovermode="x unified", margin=dict(t=50, b=40, l=60, r=20))
     
-    # เปิด Range แกน Y ให้กว้างพอสำหรับลูกศรที่ยาวที่สุด
-    fig.update_yaxes(range=[-0.5, 2.5], showgrid=False, visible=False, row=1, col=1)
+    # Scale Y-Axis to fit Arrows (Important!)
+    # ปรับแกน Y ให้สูงพอที่จะรับลูกศรที่ยาวที่สุดได้
+    fig.update_yaxes(range=[-0.5, VISUAL_Y_MAX * 1.3], showgrid=False, visible=False, row=1, col=1)
     
     fig.update_yaxes(title_text="Shear (kN)", showgrid=True, row=2, col=1)
     fig.update_yaxes(title_text="Moment (kNm)", autorange="reversed", showgrid=True, row=3, col=1)
