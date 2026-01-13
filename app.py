@@ -6,7 +6,6 @@ import matplotlib.patches as patches
 import streamlit.components.v1 as components
 
 # --- 1. IMPORT CUSTOM MODULES ---
-# ตรวจสอบว่ามีไฟล์เหล่านี้อยู่ในโฟลเดอร์เดียวกัน
 import input_handler
 import solver
 import design_view
@@ -14,7 +13,7 @@ import section_plotter
 import reporter
 import rc_utils
 import rc_design_engine
-import rc_load_processor
+import rc_load_processor  # ตัวจัดการ Load ที่เราเพิ่งแก้ไป
 import app_styles
 
 # --- 2. PAGE CONFIGURATION ---
@@ -125,10 +124,12 @@ else:
         # [CRITICAL CHECKBOX]
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
         
-        # Display SW Value
+        # --- FIXED: Self-Weight Calculation (Unit: N/m) ---
         b_m = params.get('b', 300) / 1000.0
         h_m = params.get('h', 500) / 1000.0
-        sw_val = b_m * h_m * 2400 * 9.81 # N/m
+        # ใช้คอนกรีตหนัก 24 kN/m3 -> 24000 N/m3
+        sw_val = b_m * h_m * 24000.0  
+        
         if include_sw:
             st.caption(f"ℹ️ **Added:** {sw_val/1000:.2f} kN/m")
         else:
@@ -165,10 +166,10 @@ else:
                 sw_rows.append({
                     'span_index': i, 
                     'type': 'U', 
-                    'mag': sw_val, 
+                    'mag': sw_val,  # หน่วย N/m (หลักพัน)
                     'dist': spans[i], 
                     'd_start': 0, 
-                    'case': 'DL'
+                    'case': 'SW'    # ระบุเป็น SW ให้ Processor รู้
                 })
             df_sw_only = pd.DataFrame(sw_rows)
             final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
@@ -178,7 +179,7 @@ else:
             status_msg = "❌ **Self-Weight Excluded (Pure User Loads)**"
 
         # --- RUN SOLVER ---
-        # 1. Ultimate Run (Factored)
+        # 1. Ultimate Run (Factored) -> เรียก Processor ที่แก้แล้ว
         calc_loads_ult = rc_load_processor.prepare_load_dataframe(final_calc_loads, n_spans, spans, params, f_dl, f_ll)
         x_ult, M_ult, V_ult, D_ult, R_ult = solver.solve_beam(spans, sup_df, calc_loads_ult, params)
         
@@ -202,13 +203,19 @@ else:
             with cols_chk[0]:
                 st.info(status_msg)
             with cols_chk[1]:
-                total_v_load = final_calc_loads['mag'].sum() if not final_calc_loads.empty else 0
-                st.caption(f"🔍 **Solver Input Check:** Total Vertical Load = **{total_v_load/1000:.2f} kN**")
+                # Check from Processed Load (Factored N) -> convert to kN for display
+                total_factored_N = calc_loads_ult['mag'].sum() if not calc_loads_ult.empty else 0
+                st.caption(f"🔍 **Total Factored Load (Check):** {total_factored_N/1000:,.2f} kN")
+
+            # --- DEBUGGER (ถ้าค่ายังเป็น 0 ให้กดดูตรงนี้) ---
+            with st.expander("🛠️ Debug: Check Loads (Click to see raw data)"):
+                st.write("**1. Raw Loads (User Input + SW):**", final_calc_loads)
+                st.write("**2. Processed Loads (Entering Solver - Unit N):**", calc_loads_ult)
+                st.write("**3. SW Value (N/m):**", sw_val)
 
             # Main Graph
             df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
             
-            # Unique key ensures chart refreshes when settings change
             unique_chart_key = f"chart_{include_sw}_{tag}_{np.random.randint(0,1000)}"
             
             fig = design_view.plot_analysis_results(
@@ -226,9 +233,6 @@ else:
             c_m2.metric("Max Moment (M_max)", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
             
-            with st.expander("🧐 View Raw Load Data Used"):
-                st.dataframe(final_calc_loads)
-
         # ================= TAB 2: CONCRETE DESIGN =================
         with tab2:
             st.header("🏗️ Reinforcement Detailing")
