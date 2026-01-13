@@ -9,101 +9,64 @@ import streamlit as st
 # ==========================================
 def render_load_table(params, raw_loads_df=None):
     """
-    แสดงรายการคำนวณ Load Analysis แบบละเอียดที่สุด (Calculation Breakdown)
-    - แก้ปัญหาค่าเป็น 0 ด้วยการใส่ Fallback Values
-    - แสดงที่มาของตัวเลขทุกตัว (b x h x density)
+    แสดงรายการคำนวณ Load Analysis แบบละเอียด (Fixed Unit Calculation)
     """
     st.markdown("### 📑 Detailed Load Analysis Report")
     
-    # --- ส่วนที่ 1: ดึงค่าและตรวจสอบความถูกต้อง (Data Validation) ---
+    # 1. Geometry Check
     st.markdown("#### 1. Geometry & Parameters Check")
     
-    # 1.1 พยายามดึงค่าจาก params (รองรับหลายชื่อตัวแปร)
-    raw_b = params.get('b', params.get('width', 0))
-    raw_h = params.get('h', params.get('depth', 0))
+    # รับค่าและแปลงหน่วย (Input Handler ส่งมาเป็น mm)
+    raw_b = params.get('b', params.get('width', 300))
+    raw_h = params.get('h', params.get('depth', 500))
     
-    # 1.2 ระบบป้องกันค่าเป็น 0 (Zero-Value Guard)
-    # ถ้าค่าเป็น 0 หรือน้อยกว่า ให้ใช้ค่าสมมติ 300x500 เพื่อแสดงรายการคำนวณให้เห็นภาพ
-    if raw_b <= 0 or raw_h <= 0:
-        st.warning(f"⚠️ **Warning:** ตรวจพบขนาดหน้าตัดเป็น 0 (b={raw_b}, h={raw_h}) โปรแกรมจะใช้ค่าสมมติ **300 x 500 mm** เพื่อแสดงตัวอย่างการคำนวณ")
-        b_mm = 300.0
-        h_mm = 500.0
-    else:
-        b_mm = float(raw_b)
-        h_mm = float(raw_h)
-        
-    # แปลงหน่วยเป็นเมตร (m) สำหรับคำนวณ
-    b_m = b_mm / 1000.0
-    h_m = h_mm / 1000.0
+    # แปลง mm -> m
+    b_m = float(raw_b) / 1000.0
+    h_m = float(raw_h) / 1000.0
     
-    # ค่าคงที่วัสดุ
     conc_density = 2400  # kg/m3
     g = 9.81             # m/s2
     
-    # แสดงค่าที่ใช้คำนวณจริง
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Width (b)", f"{b_mm:.0f} mm", f"{b_m:.2f} m")
-    c2.metric("Depth (h)", f"{h_mm:.0f} mm", f"{h_m:.2f} m")
+    c1.metric("Width (b)", f"{raw_b:.0f} mm", f"{b_m:.2f} m")
+    c2.metric("Depth (h)", f"{raw_h:.0f} mm", f"{h_m:.2f} m")
     c3.metric("Conc. Density", "2400 kg/m³")
     c4.metric("Gravity (g)", "9.81 m/s²")
     
     st.divider()
 
-    # --- ส่วนที่ 2: รายการคำนวณ Self-Weight (SW) แบบบรรทัดต่อบรรทัด ---
+    # 2. Self-Weight Calculation
     st.markdown("#### 2. Self-Weight Calculation ($w_{sw}$)")
-    
     inc_sw = params.get('include_sw', True)
     
-    # แสดงสูตรตั้งต้น
-    st.markdown("**1️⃣ Formula (สูตร):**")
+    st.markdown("**1️⃣ Formula:**")
     st.latex(r"w_{sw} = b \times h \times \rho_{conc} \times g")
     
-    # แสดงการแทนค่า (Substitution)
-    st.markdown("**2️⃣ Substitution (แทนค่า):**")
-    substitution_text = f"""
-    $$
-    w_{{sw}} = {b_m:.2f} \\text{{ m}} \\times {h_m:.2f} \\text{{ m}} \\times 2400 \\text{{ kg/m}}^3 \\times 9.81 \\text{{ m/s}}^2
-    $$
-    """
-    st.markdown(substitution_text)
+    st.markdown("**2️⃣ Substitution:**")
+    st.markdown(f"$$ w_{{sw}} = {b_m:.2f} \\times {h_m:.2f} \\times 2400 \\times 9.81 $$")
     
-    # คำนวณผลลัพธ์ (N/m -> kN/m)
+    # คำนวณ N/m แล้วแปลงเป็น kN/m
     val_N_m = b_m * h_m * conc_density * g
     val_kN_m = val_N_m / 1000.0
     
-    st.markdown("**3️⃣ Result (ผลลัพธ์):**")
-    st.markdown(f"$$ = {val_N_m:.2f} \\text{{ N/m}} $$")
-    st.markdown(f"$$ \\Downarrow $$")
-    st.markdown(f"$$ \\mathbf{{{val_kN_m:.3f} \\text{{ kN/m}}}} $$")
+    st.markdown("**3️⃣ Result:**")
+    st.markdown(f"$$ = {val_N_m:.2f} \\text{{ N/m}} \\Rightarrow \\mathbf{{{val_kN_m:.3f} \\text{{ kN/m}}}} $$")
     
-    # สรุปสถานะ (รวม หรือ ไม่รวม)
-    if inc_sw:
-        st.success(f"✅ **Self-Weight Status:** ENABLED. ค่า **{val_kN_m:.3f} kN/m** จะถูกนำไปบวกเพิ่มใน Dead Load (DL)")
-    else:
-        st.error(f"❌ **Self-Weight Status:** DISABLED. ค่าที่คำนวณได้ **{val_kN_m:.3f} kN/m** จะ **ไม่ถูกนำไปใช้** (ใช้ค่า 0.00 แทน)")
-        val_kN_m = 0.0 # Reset เป็น 0 สำหรับการแสดงสมการข้างล่าง
+    if not inc_sw:
+        st.error("❌ Self-Weight is DISABLED (Not added to DL)")
+        val_kN_m = 0.0
 
     st.divider()
 
-    # --- ส่วนที่ 3: Ultimate Load Equation ---
+    # 3. Ultimate Load Equation
     st.markdown("#### 3. Ultimate Design Load ($U$)")
-    
     dl_f = params.get('dl_factor', 1.4)
     ll_f = params.get('ll_factor', 1.7)
     
-    st.markdown("สมการคำนวณน้ำหนักบรรทุกประลัย (Factored Load):")
-    st.latex(r"U = \text{Factor}_{DL} \times (DL_{user} + w_{sw}) + \text{Factor}_{LL} \times LL_{user}")
-    
-    st.markdown("แทนค่า Factor และ Self-Weight:")
-    
-    # แสดงสมการสุดท้ายที่ใช้จริง
-    eq_str = f"$$ U = {dl_f:.2f} \\times (DL_{{user}} + \mathbf{{{val_kN_m:.3f}}}) + {ll_f:.2f} \\times LL_{{user}} $$"
-    
-    st.markdown(eq_str)
-    
-    # ตาราง Load ของ User
+    st.latex(r"U = " + f"{dl_f}" + r" \times (DL_{user} + " + f"{val_kN_m:.3f}" + r") + " + f"{ll_f}" + r" \times LL_{user}")
+
     if raw_loads_df is not None and not raw_loads_df.empty:
-        with st.expander("ดูรายการ Load ที่กรอกเพิ่ม (User Inputs)"):
+        with st.expander("Show User Input Loads"):
             st.dataframe(raw_loads_df, use_container_width=True)
             
     st.divider()
@@ -112,6 +75,7 @@ def render_load_table(params, raw_loads_df=None):
 # 2. BOQ CALCULATION
 # ==========================================
 def calculate_boq_summary(design_res, spans):
+    # (คงเดิม - ไม่มีการเปลี่ยนแปลงส่วนนี้)
     total_concrete_vol = 0.0
     total_formwork_area = 0.0
     total_steel_weight = 0.0
@@ -125,7 +89,6 @@ def calculate_boq_summary(design_res, spans):
         total_formwork_area += (2 * h_m + b_m) * L
         
         w_span = 0.0
-        # Rebar weight calc
         def calc_w(n, db, length): return n * (db**2 / 162) * length if n > 0 else 0
 
         if 'top' in res and 'all_layers' in res['top']:
@@ -149,12 +112,13 @@ def calculate_boq_summary(design_res, spans):
     ])
 
 # ==========================================
-# 3. PLOTLY ANALYSIS GRAPH (FINAL PERFECTED)
+# 3. PLOTLY ANALYSIS GRAPH (FIXED UNITS)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
-    Standard Engineering FBD with Strict Proportions & Units
+    Standard Engineering FBD with Smart Unit Detection
     """
+    # แปลง Loads เป็น List
     if isinstance(loads, pd.DataFrame):
         load_list = loads.to_dict('records')
     elif isinstance(loads, list):
@@ -162,9 +126,28 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     else:
         load_list = []
 
-    all_mags = [l['mag'] for l in load_list] if load_list else [1]
-    max_load_val = max(all_mags) if all_mags else 1.0
-    if max_load_val == 0: max_load_val = 1.0
+    # --- Smart Unit Detection Logic ---
+    # ถ้าค่า mag > 500 ให้เดาว่าเป็น N -> หาร 1000 เพื่อโชว์ kN
+    # ถ้าค่า mag <= 500 ให้เดาว่าเป็น kN -> โชว์ค่าเดิม
+    processed_loads = []
+    max_val_for_scale = 1.0
+    
+    for l in load_list:
+        raw_mag = float(l['mag'])
+        # Logic แก้ปัญหาค่าเกิน 1000:
+        # ถ้าค่าเกิน 1000 (เช่น 5000) -> หาร 1000 = 5 kN
+        # ถ้าค่าน้อย (เช่น 10) -> ใช้ 10 kN เลย
+        if abs(raw_mag) > 1000: 
+            display_mag = raw_mag / 1000.0
+        else:
+            display_mag = raw_mag
+            
+        l_copy = l.copy()
+        l_copy['display_mag'] = display_mag
+        processed_loads.append(l_copy)
+        
+        if abs(display_mag) > max_val_for_scale:
+            max_val_for_scale = abs(display_mag)
 
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.08,
@@ -175,10 +158,10 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
     
-    # Beam
+    # 1. Beam Line
     fig.add_trace(go.Scatter(x=[0, total_L], y=[0, 0], mode='lines', line=dict(color='black', width=5), hoverinfo='skip'), row=1, col=1)
     
-    # Supports
+    # 2. Supports
     for idx, row in supports.iterrows():
         sym = "square" if row['type'] == 'Fixed' else ("circle" if row['type'] == 'Roller' else "triangle-up")
         fig.add_trace(go.Scatter(
@@ -187,67 +170,79 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             text=[row['type'][0]], textposition="bottom center", hoverinfo='name', name="Support"
         ), row=1, col=1)
 
-    # Loads
+    # 3. Loads Drawing
     UDL_MIN_H, UDL_MAX_H = 0.25, 0.55
     P_MIN_H, P_MAX_H = 0.70, 1.30
     ARROW_TIP_OFFSET = 0.08
     
-    # LAYER 1: UDL
-    for l in load_list:
+    for l in processed_loads:
+        d_mag = l['display_mag'] # ใช้ค่าที่ปรับหน่วยแล้ว
+        
+        # --- Draw UDL ---
         if l['type'] == 'U':
             span_idx = int(l['span_index'])
             start_x = cum_dist[span_idx] + float(l.get('d_start', 0))
             end_x = start_x + float(l['dist'])
-            mag = l['mag']
             
-            ratio = mag / max_load_val
+            ratio = abs(d_mag) / max_val_for_scale if max_val_for_scale > 0 else 0.5
             h_visual = UDL_MIN_H + (ratio * (UDL_MAX_H - UDL_MIN_H))
             color = '#e74c3c' if l.get('case') == 'LL' else '#2980b9'
             
+            # Area
             fig.add_trace(go.Scatter(x=[start_x, end_x, end_x, start_x], y=[0, 0, h_visual, h_visual], fill='toself', fillcolor=color, opacity=0.12, line=dict(width=0), hoverinfo='skip', showlegend=False), row=1, col=1)
+            # Top Line
             fig.add_trace(go.Scatter(x=[start_x, end_x], y=[h_visual, h_visual], mode='lines', line=dict(color=color, width=1, dash='dot'), hoverinfo='skip'), row=1, col=1)
             
-            label_txt = f"w={mag/1000:.2f} kN/m" if l.get('case')!='SW' else f"SW={mag/1000:.2f} kN/m"
+            # Label (ใช้ d_mag ที่ปรับหน่วยแล้ว)
+            label_txt = f"w={d_mag:.2f} kN/m"
             fig.add_annotation(x=(start_x+end_x)/2, y=h_visual, text=label_txt, showarrow=False, yshift=8, font=dict(color=color, size=9), row=1, col=1)
             
+            # Arrows
             n_arrows = max(3, int(float(l['dist']) * 1.8))
             for ax_x in np.linspace(start_x, end_x, n_arrows + 2)[1:-1]:
                  fig.add_annotation(x=ax_x, y=ARROW_TIP_OFFSET, ax=ax_x, ay=h_visual, axref='x', ayref='y', xref='x', yref='y', showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color, row=1, col=1)
 
-    # LAYER 2: POINT LOAD
-    for l in load_list:
-        if l['type'] == 'P':
+        # --- Draw Point Load ---
+        elif l['type'] == 'P':
             span_idx = int(l['span_index'])
             x_loc = cum_dist[span_idx] + float(l['d_start'])
-            mag = l['mag']
-            color = '#c0392b' if l.get('case') == 'LL' else '#2980b9'
             
-            ratio = mag / max_load_val
+            ratio = abs(d_mag) / max_val_for_scale if max_val_for_scale > 0 else 0.5
             h_arrow = P_MIN_H + (ratio * (P_MAX_H - P_MIN_H))
+            color = '#c0392b' if l.get('case') == 'LL' else '#2980b9'
             
             fig.add_annotation(
                 x=x_loc, y=ARROW_TIP_OFFSET, ax=x_loc, ay=h_arrow, xref='x', yref='y', axref='x', ayref='y',
                 showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2.0, arrowcolor=color,
-                text=f"<b>P={mag/1000:.2f} kN</b>", xanchor='center', yanchor='bottom', yshift=5, font=dict(color=color, size=11, family="Arial"), row=1, col=1
+                text=f"<b>P={d_mag:.2f} kN</b>", xanchor='center', yanchor='bottom', yshift=5, font=dict(color=color, size=11, family="Arial"), row=1, col=1
             )
 
-    # Diagrams
+    # 4. Results (SFD / BMD / Deflection)
+    # Solver Output (res_df) is ALWAYS in N and Nm -> Must divide by 1000
+    
+    # SFD
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
-    fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['shear']/1000, mode='lines', line=dict(color='#e74c3c', width=2), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'), row=2, col=1)
-    v_vals = res_df['shear']/1000
+    fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['shear']/1000.0, mode='lines', line=dict(color='#e74c3c', width=2), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'), row=2, col=1)
+    
+    # Annotate SFD
+    v_vals = res_df['shear']/1000.0
     for val in [v_vals.max(), v_vals.min()]:
         if abs(val) > 0.01:
             idx = (v_vals - val).abs().idxmin()
-            fig.add_annotation(x=res_df['x'].iloc[idx], y=val, text=f"<b>{val:.2f} kN</b>", showarrow=False, yshift=10 if val>0 else -10, font=dict(color='#e74c3c', size=11), row=2, col=1)
+            fig.add_annotation(x=res_df['x'].iloc[idx], y=val, text=f"<b>{val:.2f}</b>", showarrow=False, yshift=10 if val>0 else -10, font=dict(color='#e74c3c', size=11), row=2, col=1)
 
+    # BMD
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
-    fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['moment']/1000, mode='lines', line=dict(color='#27ae60', width=2), fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'), row=3, col=1)
-    m_vals = res_df['moment']/1000
+    fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['moment']/1000.0, mode='lines', line=dict(color='#27ae60', width=2), fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'), row=3, col=1)
+    
+    # Annotate BMD
+    m_vals = res_df['moment']/1000.0
     for val in [m_vals.max(), m_vals.min()]:
         if abs(val) > 0.01:
             idx = (m_vals - val).abs().idxmin()
-            fig.add_annotation(x=res_df['x'].iloc[idx], y=val, text=f"<b>{val:.2f} kNm</b>", showarrow=True, arrowhead=1, ay=20 if val>0 else -20, font=dict(color='#27ae60', size=11), row=3, col=1)
+            fig.add_annotation(x=res_df['x'].iloc[idx], y=val, text=f"<b>{val:.2f}</b>", showarrow=True, arrowhead=1, ay=20 if val>0 else -20, font=dict(color='#27ae60', size=11), row=3, col=1)
 
+    # Deflection
     fig.add_hline(y=0, line_color="black", line_width=1, row=4, col=1)
     fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['deflection'], mode='lines', line=dict(color='#8e44ad', width=2)), row=4, col=1)
     if not res_df['deflection'].empty:
@@ -256,11 +251,12 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         if abs(val_max) > 0.001:
              fig.add_annotation(x=res_df['x'].iloc[idx_max], y=val_max, text=f"<b>Max: {val_max:.2f} mm</b>", showarrow=True, arrowhead=1, ay=30 if val_max < 0 else -30, font=dict(color='#8e44ad', size=11), row=4, col=1)
 
+    # Grid & Layout
     for x_pos in cum_dist:
         fig.add_vline(x=x_pos, line_width=1, line_dash="dash", line_color="gray", opacity=0.3)
 
     fig.update_layout(height=1100, showlegend=False, template="plotly_white", hovermode="x unified", margin=dict(t=50, b=40, l=60, r=20))
-    fig.update_yaxes(range=[-0.4, 1.6], showgrid=False, visible=False, row=1, col=1)
+    fig.update_yaxes(visible=False, row=1, col=1)
     fig.update_yaxes(title_text="Shear (kN)", showgrid=True, row=2, col=1)
     fig.update_yaxes(title_text="Moment (kNm)", autorange="reversed", showgrid=True, row=3, col=1)
     fig.update_yaxes(title_text="Def. (mm)", showgrid=True, row=4, col=1)
