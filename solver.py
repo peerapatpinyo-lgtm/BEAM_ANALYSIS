@@ -1,4 +1,3 @@
-# solver.py
 import numpy as np
 import pandas as pd
 
@@ -93,8 +92,6 @@ def solve_beam(spans, sup_df, loads_df, params):
                     b_dist = L - a
                     
                     # FEA Formulas for Point Load
-                    # Note: These are standard FEA. Timoshenko FEA is slightly different 
-                    # but for most practical RC beams, standard FEA is sufficient approx.
                     denom = L**2
                     
                     fea[0] = (P * b_dist**2 * (3*a + b_dist)) / L**3
