@@ -6,41 +6,38 @@ def render_all_sidebar_inputs():
     """
     Renders sidebar inputs for RC Beam Analysis.
     Features: DL/LL Case, Partial UDL (Start/End), and Error Handling for Session State.
-    Fixed: Unit consistency (mm for geometry, N for loads) to ensure calculation works.
+    Fixed: Stores Loads in kN (Raw Input) to prevent double-multiplication error.
     """
     st.sidebar.markdown("### 1. Material & Section")
     
     # --- 1. Parameters (Material & Section) ---
-    # แก้ไขหน่วยเป็น mm เพื่อให้สอดคล้องกับ Calculation Engine (design_view.py)
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        fc = st.number_input("f'c (MPa or ksc)", 15.0, 500.0, 240.0, step=10.0) # รองรับค่า ksc (e.g. 240)
-        b = st.number_input("Width b (mm)", 100.0, 1000.0, 300.0, step=50.0) # Input เป็น mm
+        fc = st.number_input("f'c (MPa or ksc)", 15.0, 500.0, 240.0, step=10.0) 
+        b = st.number_input("Width b (mm)", 100.0, 1000.0, 300.0, step=50.0) 
     with col2:
-        fy = st.number_input("fy (MPa or ksc)", 240.0, 5000.0, 4000.0, step=100.0) # รองรับ ksc (e.g. 4000)
-        h = st.number_input("Depth h (mm)", 200.0, 2000.0, 500.0, step=50.0) # Input เป็น mm
+        fy = st.number_input("fy (MPa or ksc)", 240.0, 5000.0, 4000.0, step=100.0) 
+        h = st.number_input("Depth h (mm)", 200.0, 2000.0, 500.0, step=50.0) 
         
-    # E_c calculation (Approximate for concrete)
-    # Note: สูตรนี้ใช้ MPa ถ้าใส่ ksc ค่า E อาจเพี้ยนเล็กน้อยแต่โปรแกรมรันได้
-    if fc > 100: # สันนิษฐานว่าเป็น ksc
-         E_c = 15100 * np.sqrt(fc) * 10 # ksc -> bar -> convert logic later if needed
+    # E_c calculation
+    if fc > 100: 
+         E_c = 15100 * np.sqrt(fc) * 10 
     else:
          E_c = 4700 * np.sqrt(fc) * 1e6  
          
-    # Inertia (m^4) - แปลง mm เป็น m ก่อนคำนวณ I
+    # Inertia calculation
     b_m = b / 1000.0
     h_m = h / 1000.0
     I_g = (b_m * h_m**3) / 12
 
-    # Pack parameters (สำคัญ: ส่งค่า b, h เป็นค่าดิบ mm ออกไป)
+    # Pack parameters (Send raw mm for b, h)
     params = {
         'fc': fc, 
         'fy': fy, 
-        'b': b,      # ส่งออกเป็น mm
-        'h': h,      # ส่งออกเป็น mm
+        'b': b,      
+        'h': h,      
         'E': E_c, 
         'I': I_g,
-        # เพิ่ม Default Values ป้องกัน Key Error
         'dl_factor': 1.4,
         'll_factor': 1.7,
         'include_sw': True
@@ -61,15 +58,11 @@ def render_all_sidebar_inputs():
     st.sidebar.markdown("### 3. Supports")
     node_coords = [0] + list(np.cumsum(spans))
     n_nodes = len(node_coords)
-    
-    # Logic เลือก Default Support (ซ้ายสุด=Pin, ที่เหลือ=Roller)
     default_sups = ["Pin"] + ["Roller"] * (n_nodes - 1)
         
     sup_data = []
     for i in range(n_nodes):
-        # ปรับ logic index ให้ปลอดภัย
         def_idx = ["None", "Pin", "Roller", "Fixed"].index(default_sups[i]) if i < len(default_sups) else 2
-        
         stype = st.sidebar.selectbox(
             f"Node {i} (@{node_coords[i]:.2f}m)", 
             ["None", "Pin", "Roller", "Fixed"], 
@@ -83,7 +76,6 @@ def render_all_sidebar_inputs():
     # --- 4. Loads Management ---
     st.sidebar.markdown("### 4. Loads")
     
-    # Initialize session state with defensive check
     if 'load_list' not in st.session_state:
         st.session_state.load_list = []
 
@@ -95,7 +87,7 @@ def render_all_sidebar_inputs():
         l_span_idx = span_opts.index(st.selectbox("Select Span", span_opts))
         max_l = spans[l_span_idx]
         
-        # รับค่าเป็น kN หรือ kN/m
+        # User inputs kN or kN/m
         l_mag = st.number_input("Magnitude (kN or kN/m)", -5000.0, 5000.0, 10.0, step=1.0)
         
         d_start, d_end = 0.0, max_l
@@ -110,15 +102,14 @@ def render_all_sidebar_inputs():
                 d_end = st.number_input("End Dist (m)", d_start, max_l, max_l)
 
         if st.button("Confirm & Add Load"):
-            # แปลง kN -> N เพื่อเก็บในระบบ (Solver ใช้ N)
-            mag_newton = l_mag * 1000.0
-            
+            # ⚠️ FIX: Save EXACTLY what user typed (kN). Do NOT multiply by 1000 here.
+            # Let the Solver/App handle the unit conversion.
             st.session_state.load_list.append({
                 "id": len(st.session_state.load_list),
                 "case": "DL" if "DL" in l_case else "LL",
                 "type": "P" if "Point" in l_type else "U",
                 "span_index": l_span_idx,
-                "mag": mag_newton,  # เก็บค่า N
+                "mag": l_mag,  # Store as kN
                 "d_start": d_start,
                 "d_end": d_end,
                 "dist": d_end - d_start 
@@ -127,20 +118,14 @@ def render_all_sidebar_inputs():
 
     # --- 5. Data Visualization & Cleanup ---
     loads_df = pd.DataFrame(st.session_state.load_list)
-    
-    # Defensive check for DataFrame columns (Fixes KeyError)
     required_cols = ['case', 'type', 'span_index', 'mag', 'd_start', 'd_end']
     
     if not loads_df.empty:
-        # Check if all required columns exist (for backward compatibility)
         if all(col in loads_df.columns for col in required_cols):
             st.sidebar.markdown("#### Active Load List")
-            
-            # สร้าง Dataframe สำหรับแสดงผล (Show as kN)
+            # Display exactly what is stored (Assuming kN)
             display_df = loads_df[required_cols].copy()
-            display_df['mag'] = display_df['mag'] / 1000.0 # Show kN
             display_df.rename(columns={'mag': 'Mag(kN)'}, inplace=True)
-            
             st.sidebar.dataframe(display_df, hide_index=True)
         else:
             st.sidebar.warning("Old data format detected. Clearing table...")
@@ -160,5 +145,4 @@ def render_all_sidebar_inputs():
         
     stable = fixed_dof >= 3
     
-    # Returns 6 values to app.py
     return params, n_spans, spans, sup_df, loads_df, stable
