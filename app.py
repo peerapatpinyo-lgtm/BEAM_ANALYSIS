@@ -64,10 +64,20 @@ def plot_cross_section_fixed(b, h, cover, top_layers, bot_layers, shear_res):
 # --- 4. MAIN HEADER ---
 st.markdown('<div class="main-header">🏗️ RC Beam Analysis & Design Pro</div>', unsafe_allow_html=True)
 
+
 # --- 5. SIDEBAR ---
 with st.sidebar:
     # Get raw user inputs
     params, n_spans, spans, sup_df, raw_user_loads_df, stable = input_handler.render_all_sidebar_inputs()
+
+    # --- SW CALCULATION (คำนวณสดๆ ตรงนี้เพื่อให้ค่าอัปเดตทันที) ---
+    b_val = params.get('b', 300)
+    h_val = params.get('h', 500)
+    
+    # คำนวณ SW (kN/m)
+    # 2400 kg/m3 * 9.81 m/s2 / 1000 = 23.544 kN/m3
+    unit_w_conc = 2400 * 9.81 / 1000 
+    sw_calc_val = (b_val / 1000) * (h_val / 1000) * unit_w_conc
 
 if not stable:
     st.error("🚨 **Structure Error:** โครงสร้างไม่เสถียร!")
@@ -83,16 +93,15 @@ else:
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
         params['include_sw'] = include_sw # Update params dict
         
-        # Display SW Value for confidence
-        b_m = params.get('b', 300) / 1000.0
-        h_m = params.get('h', 500) / 1000.0
-        sw_val = b_m * h_m * 2400 * 9.81
+        # Display SW Value with Calculation Hint
         if include_sw:
-            st.caption(f"ℹ️ **Added:** {sw_val/1000:.2f} kN/m")
+            st.info(f"ℹ️ **Added:** {sw_calc_val:.2f} kN/m")
+            st.caption(f"({b_val}x{h_val} mm)")
         else:
-            st.caption("ℹ️ **Excluded:** 0.00 kN/m")
+            st.warning("ℹ️ **Excluded:** 0.00 kN/m")
     
     with col_set2:
+        # ... (โค้ดส่วน Load Factors เหมือนเดิม) ...
         st.markdown("### 🔢 Load Factors")
         c1, c2 = st.columns(2)
         if "Service" in mode_select:
@@ -112,27 +121,32 @@ else:
         # ⚡ FORCE CLEAN LOAD GENERATION
         # ==========================================
         
-        # 1. Use a strictly local variable, copied deeply from user input
+        # 1. Local Copy
         clean_user_loads = raw_user_loads_df.copy(deep=True)
         
-        # 2. Prepare the ADD-ON dataframe (Self Weight)
+        # 2. Prepare SW Dataframe
         sw_rows = []
         if include_sw:
+            # ใช้ค่า sw_calc_val ที่คำนวณไว้ด้านบน (หน่วย kN/m -> แปลงเป็น N/m สำหรับ Solver)
+            sw_mag_newton = sw_calc_val * 1000.0 
+            
             for i in range(n_spans):
                 sw_rows.append({
                     'span_index': i, 
                     'type': 'U', 
-                    'mag': sw_val, 
+                    'mag': sw_mag_newton, 
                     'dist': spans[i], 
                     'd_start': 0, 
-                    'case': 'DL'
+                    'case': 'DL' # SW ถือเป็น Dead Load
                 })
             df_sw_only = pd.DataFrame(sw_rows)
             final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
-            status_msg = "✅ **Self-Weight Included**"
+            status_msg = f"✅ **Self-Weight Included:** {sw_calc_val:.2f} kN/m"
         else:
             final_calc_loads = clean_user_loads
-            status_msg = "❌ **Self-Weight Excluded (Pure User Loads)**"
+            status_msg = "❌ **Self-Weight Excluded**"
+
+        # ... (ส่วนเรียก Solver และ Tabs เหมือนเดิม) ...
 
         # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
@@ -359,3 +373,4 @@ else:
 
     except Exception as e:
         st.error(f"Error: {e}")
+
