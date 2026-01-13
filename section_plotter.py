@@ -1,4 +1,3 @@
-# section_plotter.py
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import io
@@ -11,7 +10,7 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
     """
     spans_mm = [s * 1000 for s in spans]
     total_L = sum(spans_mm)
-    v_h = 400  
+    v_h = 400  # Visual Height (Fixed for drawing scale)
     fig_w = max(16, total_L / 300)
     fig, ax = plt.subplots(figsize=(fig_w, 5))
     
@@ -54,41 +53,56 @@ def plot_longitudinal_section_detailed(spans, sup_df, design_res, h_mm, cover_mm
         stir_db = res.get('stir_db', 9)
         stir_s = res.get('stir_s') or res.get('shear', {}).get('s', 150)
         
-        # TOP BARS
+        # --- Prepare Top Layers ---
+        # Fallback if 'all_layers' doesn't exist but basic 'top_n' does
         top_layers = res.get('top', {}).get('all_layers', [])
+        if not top_layers and res.get('top_n', 0) > 0:
+            top_layers = [{'n': res.get('top_n'), 'db': res.get('top_db', 12)}]
+
         curr_y_top = v_h - (cover_mm + stir_db)
         t_labels = []
         for l_idx, layer in enumerate(top_layers):
             if layer['n'] > 0:
                 t_labels.append(f"L{l_idx+1}: {int(layer['n'])}DB{int(layer['db'])}")
-                if l_idx == 0: x_s, x_e = x_curr, x_curr + span_L
+                # Drawing Logic: Continuous top bar for simplicity, cut-offs for extra layers
+                if l_idx == 0: 
+                    x_s, x_e = x_curr, x_curr + span_L
+                    ax.plot([x_s, x_e], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                 else:
-                    cut_off = span_L * 0.30
+                    cut_off = span_L * 0.25 # Simplify cut-off visualization
                     ax.plot([x_curr, x_curr + cut_off], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
                     ax.plot([x_curr + span_L - cut_off, x_curr + span_L], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
-                    x_s, x_e = None, None
-                if x_s is not None: ax.plot([x_s, x_e], [curr_y_top, curr_y_top], color='#d30000', lw=2.5, zorder=10)
+                
                 curr_y_top -= v_spacing
         
-        # BOT BARS
+        # --- Prepare Bottom Layers ---
         bot_layers = res.get('bot', {}).get('all_layers', [])
+        if not bot_layers and res.get('bot_n', 0) > 0:
+            bot_layers = [{'n': res.get('bot_n'), 'db': res.get('bot_db', 12)}]
+
         curr_y_bot = cover_mm + stir_db
         b_labels = [] 
         for l_idx, layer in enumerate(bot_layers):
             if layer['n'] > 0:
                 b_labels.append(f"L{l_idx+1}: {int(layer['n'])}DB{int(layer['db'])}")
-                if l_idx == 0: x_s, x_e = x_curr + 50, x_curr + span_L - 50
+                if l_idx == 0: 
+                    x_s, x_e = x_curr + 50, x_curr + span_L - 50 # Hook allowance
                 else:
                     offset = span_L * 0.125
                     x_s, x_e = x_curr + offset, x_curr + span_L - offset
+                
                 ax.plot([x_s, x_e], [curr_y_bot, curr_y_bot], color='#008c00', lw=2.5, zorder=10)
                 curr_y_bot += v_spacing
         
         mid = x_curr + span_L/2
-        ax.text(mid, v_h + 80, "\n".join(t_labels), color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
-        ax.text(mid, -120, "\n".join(reversed(b_labels)), color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
         
-        # Stirrup Tag ในรูปตัดยาว
+        # Labels
+        if t_labels:
+            ax.text(mid, v_h + 80, "\n".join(t_labels), color='#d30000', ha='center', va='bottom', fontsize=9, fontweight='bold')
+        if b_labels:
+            ax.text(mid, -120, "\n".join(reversed(b_labels)), color='#008c00', ha='center', va='top', fontsize=9, fontweight='bold')
+        
+        # Stirrup Tag
         ax.text(mid, v_h/2, f"STIRRUPS:\nRB{int(stir_db)} @ {stir_s/1000:.2f} m", 
                 color='#34495e', ha='center', va='center', fontsize=9, fontweight='bold', 
                 bbox=dict(boxstyle='round,pad=0.3', fc='white', ec='#34495e', lw=1, alpha=0.9))
@@ -114,8 +128,24 @@ def plot_cross_section(res):
     stir_db = float(res.get('stir_db', 9))
     stir_s = res.get('stir_s') or res.get('shear', {}).get('s') or res.get('s')
     
-    top_layers = res.get('top_layers') or [{'n': res.get('top', {}).get('n', 0), 'db': res.get('top_db', 16)}]
-    bot_layers = res.get('bot_layers') or [{'n': res.get('bot', {}).get('n', 0), 'db': res.get('bot_db', 16)}]
+    # ดึงข้อมูลเหล็ก (รองรับทั้งแบบ Simple และ Detailed)
+    # Top
+    top_layers = res.get('top_layers')
+    if not top_layers:
+        # Fallback to simple
+        if res.get('top') and 'all_layers' in res['top']:
+            top_layers = res['top']['all_layers']
+        else:
+            top_layers = [{'n': res.get('top_n', 0), 'db': res.get('top_db', 12)}]
+            
+    # Bot
+    bot_layers = res.get('bot_layers')
+    if not bot_layers:
+         # Fallback to simple
+        if res.get('bot') and 'all_layers' in res['bot']:
+            bot_layers = res['bot']['all_layers']
+        else:
+            bot_layers = [{'n': res.get('bot_n', 0), 'db': res.get('bot_db', 12)}]
     
     fig, ax = plt.subplots(figsize=(6, 5)) 
     x0, y0 = -b/2, -h/2
@@ -142,8 +172,14 @@ def plot_cross_section(res):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n > 0:
             y_p = curr_y_top - (db/2)
-            x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n) if n > 1 else [0]
-            for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
+            # กระจายเหล็กให้สวยงาม
+            if n > 1:
+                x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n)
+            else:
+                x_p = [0] # ตรงกลาง
+
+            for x in x_p: 
+                ax.add_patch(patches.Circle((x, y_p), db/2, color='#d30000', zorder=10))
             curr_y_top -= (db + 25.0)
 
     # วาดเหล็กล่าง
@@ -152,8 +188,13 @@ def plot_cross_section(res):
         n, db = int(l.get('n', 0)), float(l.get('db', 16))
         if n > 0:
             y_p = curr_y_bot + (db/2)
-            x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n) if n > 1 else [0]
-            for x in x_p: ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
+            if n > 1:
+                x_p = np.linspace(s_x+stir_db+db/2, s_x+s_w-stir_db-db/2, n)
+            else:
+                x_p = [0] # ตรงกลาง
+                
+            for x in x_p: 
+                ax.add_patch(patches.Circle((x, y_p), db/2, color='#008c00', zorder=10))
             curr_y_bot += (db + 25.0)
 
     # Label ข้อมูล
@@ -161,8 +202,10 @@ def plot_cross_section(res):
     top_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in top_layers if int(l.get('n',0)) > 0])
     bot_t = " + ".join([f"{int(l['n'])}DB{int(l['db'])}" for l in bot_layers if int(l.get('n',0)) > 0])
     
-    ax.text(text_x, h/2 - 10, f"Top:\n{textwrap.fill(top_t, 18)}", color='#d30000', va='top', fontweight='bold', fontsize=9)
-    ax.text(text_x, -h/2 + 10, f"Bot:\n{textwrap.fill(bot_t, 18)}", color='#008c00', va='bottom', fontweight='bold', fontsize=9)
+    if top_t:
+        ax.text(text_x, h/2 - 10, f"Top:\n{textwrap.fill(top_t, 18)}", color='#d30000', va='top', fontweight='bold', fontsize=9)
+    if bot_t:
+        ax.text(text_x, -h/2 + 10, f"Bot:\n{textwrap.fill(bot_t, 18)}", color='#008c00', va='bottom', fontweight='bold', fontsize=9)
     
     if stir_s:
         stir_color = '#d30000' if float(stir_s) > s_max_limit else '#34495e'
