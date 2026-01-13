@@ -7,21 +7,28 @@ def render_calculation_report(res):
     Includes Clause References, Substitutions, Limit States, and Crack Width Control.
     """
     # --- Data Extraction ---
-    idx = res['span_id'] + 1
-    L_m = res['L']
-    b = res['b'] 
-    h = res['h'] 
-    cov = res['cover']
-    fc = res['fc']
-    fy = res['fy']
+    # ใช้ .get() เพื่อป้องกัน Error กรณี key ไม่ครบ
+    idx = res.get('span_id', 0) + 1
+    L_m = res.get('L', 0)
+    b = res.get('b', 200) 
+    h = res.get('h', 400) 
+    cov = res.get('cover', 25)
+    fc = res.get('fc', 24)
+    fy = res.get('fy', 400)
     
-    Mu = res['Mu_pos']
-    Vu = res['Vu_max']
-    Ma = res['Ma_pos_svc']   
-    delta_svc = res['delta_svc_mm'] 
+    Mu = res.get('Mu_pos', 0)
+    Vu = res.get('Vu_max', 0)
+    Ma = res.get('Ma_pos_svc', 0)    
+    delta_svc = res.get('delta_svc_mm', 0) 
     
-    bot_n, bot_db = res['bot']['n'], res['bot']['db']
-    stir_db, stir_s = res['shear']['db'], res['shear']['s']
+    # Extract Reinforcement Data safely
+    bot = res.get('bot', {})
+    bot_n = bot.get('n', 0)
+    bot_db = bot.get('db', 12)
+    
+    shear = res.get('shear', {})
+    stir_db = shear.get('db', res.get('stir_db', 9))
+    stir_s = shear.get('s', res.get('stir_s', 150))
 
     # --- Constants & ACI Parameters ---
     Es = 200000.0 
@@ -80,10 +87,21 @@ def render_calculation_report(res):
 
     # 2.3 Tension-Controlled & Ductility (ACI 21.2.2)
     st.markdown("**2.3 Strain Compatibility & Strength Reduction ($\phi$)**")
-    a = (As * fy) / (0.85 * fc * b)
-    c_neutral = a / beta1
-    # Check division by zero if c_neutral is 0 (unlikely but safe)
-    epsilon_t = 0.003 * (d - c_neutral) / c_neutral if c_neutral > 0 else 999 
+    
+    # Calculate a (Depth of equivalent rectangular stress block)
+    # Prevent division by zero if As is 0 (though unlikely in design result)
+    if As > 0:
+        a = (As * fy) / (0.85 * fc * b)
+        c_neutral = a / beta1
+    else:
+        a = 0
+        c_neutral = 0
+
+    # Calculate Strain
+    if c_neutral > 0:
+        epsilon_t = 0.003 * (d - c_neutral) / c_neutral
+    else:
+        epsilon_t = 999 # Infinite ductility implies no compression block
 
     # Determine Phi (Table 21.2.2)
     if epsilon_t >= 0.005:
@@ -122,7 +140,12 @@ def render_calculation_report(res):
     
     Vc = (0.17 * 1.0 * np.sqrt(fc) * b * d) / 1000
     Av = 2 * (np.pi * (stir_db/2)**2) 
-    Vs = (Av * fy * d / stir_s) / 1000
+    
+    if stir_s > 0:
+        Vs = (Av * fy * d / stir_s) / 1000
+    else:
+        Vs = 0
+        
     phiVn = 0.75 * (Vc + Vs)
 
     st.latex(rf"V_c = 0.17 \lambda \sqrt{{f'_c}} b_w d = {Vc:.2f}\text{{ kN}}")
@@ -161,9 +184,10 @@ def render_calculation_report(res):
     
     
     if 'crack' in res:
-        w_val = res['crack']['w']
-        w_lim = res['crack']['limit']
-        status = res['crack']['status']
+        crack_data = res['crack']
+        w_val = crack_data.get('w', 0)
+        w_lim = crack_data.get('limit', 0.4)
+        status = crack_data.get('status', 'N/A')
         
         st.markdown("Based on Gergely-Lutz equation (Modified for SI):")
         st.latex(r"w = 0.076 \beta f_s \sqrt[3]{d_c A}")
