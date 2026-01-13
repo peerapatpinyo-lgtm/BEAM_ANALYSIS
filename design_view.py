@@ -63,14 +63,14 @@ def calculate_boq_summary(design_res, spans):
     ])
 
 # ==========================================
-# 3. PLOTLY ANALYSIS GRAPH (FINAL POLISHED)
+# 3. PLOTLY ANALYSIS GRAPH (FINAL PERFECTED)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
-    Final Polish:
-    - UDL Height lifted slightly (0.25 - 0.55) for better visibility.
-    - Point Load Height adjusted (0.70 - 1.30) to maintain hierarchy.
-    - Strict Data Coordinates.
+    Final Engineered FBD:
+    - Arrow Tips: Offset to y=0.08 (Sits ON beam line, doesn't sink).
+    - Labels: Full units (kN, kNm, mm) for professional reporting.
+    - Proportions: Tuned for clarity.
     """
     
     # --- 1. DATA PREP ---
@@ -96,8 +96,8 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
     
-    # Beam Line (y=0)
-    fig.add_trace(go.Scatter(x=[0, total_L], y=[0, 0], mode='lines', line=dict(color='black', width=4), hoverinfo='skip'), row=1, col=1)
+    # Beam Line (y=0) - Thick Black Line
+    fig.add_trace(go.Scatter(x=[0, total_L], y=[0, 0], mode='lines', line=dict(color='black', width=5), hoverinfo='skip'), row=1, col=1)
     
     # Supports
     for idx, row in supports.iterrows():
@@ -108,13 +108,16 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             text=[row['type'][0]], textposition="bottom center", hoverinfo='name', name="Support"
         ), row=1, col=1)
 
-    # --- 3. DRAW LOADS (ADJUSTED HEIGHTS) ---
+    # --- 3. DRAW LOADS ---
     
-    # LAYER 1: UDL (Lifted up slightly)
-    # New Range: 0.25 (Min) - 0.55 (Max) -> สูงขึ้นกว่าเดิมเพื่อให้ลูกศรดูสวย
+    # [CONFIG] Visual Constants
     UDL_MIN_H = 0.25
     UDL_MAX_H = 0.55
+    P_MIN_H = 0.70
+    P_MAX_H = 1.30
+    ARROW_TIP_OFFSET = 0.08  # ยกหัวลูกศรขึ้นเล็กน้อยเพื่อให้วาง "บน" เส้นคานพอดี
     
+    # LAYER 1: UDL
     for l in load_list:
         if l['type'] == 'U':
             span_idx = int(l['span_index'])
@@ -139,7 +142,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 mode='lines', line=dict(color=color, width=1, dash='dot'), hoverinfo='skip'
             ), row=1, col=1)
             # Label
-            label_txt = f"w={mag/1000:.2f}" if l.get('case')!='SW' else f"SW={mag/1000:.2f}"
+            label_txt = f"w={mag/1000:.2f} kN/m" if l.get('case')!='SW' else f"SW={mag/1000:.2f} kN/m"
             fig.add_annotation(
                 x=(start_x+end_x)/2, y=h_visual, text=label_txt, showarrow=False, yshift=8,
                 font=dict(color=color, size=9), row=1, col=1
@@ -148,17 +151,14 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             n_arrows = max(3, int(float(l['dist']) * 1.8))
             for ax_x in np.linspace(start_x, end_x, n_arrows + 2)[1:-1]:
                  fig.add_annotation(
-                    x=ax_x, y=0, ax=ax_x, ay=h_visual,
+                    x=ax_x, y=ARROW_TIP_OFFSET, # Tip sits ON beam
+                    ax=ax_x, ay=h_visual,       # Tail at block height
                     axref='x', ayref='y', xref='x', yref='y',
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
                     row=1, col=1
                 )
 
-    # LAYER 2: POINT LOAD (Lifted to maintain hierarchy)
-    # New Range: 0.70 (Min) - 1.30 (Max) -> ยังไงก็สูงกว่า UDL
-    P_MIN_H = 0.70
-    P_MAX_H = 1.30
-    
+    # LAYER 2: POINT LOAD
     for l in load_list:
         if l['type'] == 'P':
             span_idx = int(l['span_index'])
@@ -170,25 +170,62 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             h_arrow = P_MIN_H + (ratio * (P_MAX_H - P_MIN_H))
             
             fig.add_annotation(
-                x=x_loc, y=0, ax=x_loc, ay=h_arrow,
+                x=x_loc, y=ARROW_TIP_OFFSET, # Tip sits ON beam
+                ax=x_loc, ay=h_arrow,
                 xref='x', yref='y', axref='x', ayref='y',
                 showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2.0, arrowcolor=color,
-                text=f"<b>P={mag/1000:.2f}</b>",
+                text=f"<b>P={mag/1000:.2f} kN</b>",
                 xanchor='center', yanchor='bottom', yshift=5, 
                 font=dict(color=color, size=11, family="Arial"),
                 row=1, col=1
             )
 
-    # --- 4. DIAGRAMS & LAYOUT ---
+    # --- 4. DIAGRAMS & LAYOUT (WITH UNITS) ---
+    
     # SFD
     fig.add_hline(y=0, line_color="black", line_width=1, row=2, col=1)
     fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['shear']/1000, mode='lines', line=dict(color='#e74c3c', width=2), fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'), row=2, col=1)
+    # SFD Labels with Units
+    v_vals = res_df['shear']/1000
+    for val in [v_vals.max(), v_vals.min()]:
+        if abs(val) > 0.01:
+            idx = (v_vals - val).abs().idxmin()
+            fig.add_annotation(
+                x=res_df['x'].iloc[idx], y=val, 
+                text=f"<b>{val:.2f} kN</b>", # <--- Added Unit
+                showarrow=False, yshift=10 if val>0 else -10, 
+                font=dict(color='#e74c3c', size=11), row=2, col=1
+            )
+
     # BMD
     fig.add_hline(y=0, line_color="black", line_width=1, row=3, col=1)
     fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['moment']/1000, mode='lines', line=dict(color='#27ae60', width=2), fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'), row=3, col=1)
+    # BMD Labels with Units
+    m_vals = res_df['moment']/1000
+    for val in [m_vals.max(), m_vals.min()]:
+        if abs(val) > 0.01:
+            idx = (m_vals - val).abs().idxmin()
+            fig.add_annotation(
+                x=res_df['x'].iloc[idx], y=val, 
+                text=f"<b>{val:.2f} kNm</b>", # <--- Added Unit
+                showarrow=True, arrowhead=1, ay=20 if val>0 else -20, 
+                font=dict(color='#27ae60', size=11), row=3, col=1
+            )
+
     # Deflection
     fig.add_hline(y=0, line_color="black", line_width=1, row=4, col=1)
     fig.add_trace(go.Scatter(x=res_df['x'], y=res_df['deflection'], mode='lines', line=dict(color='#8e44ad', width=2)), row=4, col=1)
+    # Deflection Labels with Units
+    if not res_df['deflection'].empty:
+        idx_max = res_df['deflection'].abs().idxmax()
+        val_max = res_df['deflection'].iloc[idx_max]
+        if abs(val_max) > 0.001:
+             fig.add_annotation(
+                 x=res_df['x'].iloc[idx_max], y=val_max, 
+                 text=f"<b>Max: {val_max:.2f} mm</b>", # <--- Added Unit
+                 showarrow=True, arrowhead=1, ay=30 if val_max < 0 else -30, 
+                 font=dict(color='#8e44ad', size=11), row=4, col=1
+             )
 
     # Grid & Layout
     for x_pos in cum_dist:
