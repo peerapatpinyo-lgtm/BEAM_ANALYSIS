@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 # --- 1. IMPORT CUSTOM MODULES ---
-# (ต้องแน่ใจว่าไฟล์เหล่านี้อยู่ในโฟลเดอร์เดียวกัน)
 import input_handler, solver, design_view, section_plotter, reporter
 import rc_utils, rc_design_engine, rc_load_processor, app_styles
 
@@ -71,12 +70,11 @@ with st.sidebar:
     # Get raw user inputs
     params, n_spans, spans, sup_df, raw_user_loads_df, stable = input_handler.render_all_sidebar_inputs()
 
-    # --- SW CALCULATION (คำนวณสดๆ ตรงนี้เพื่อให้ค่าอัปเดตทันที) ---
+    # --- SW CALCULATION ---
     b_val = params.get('b', 300)
     h_val = params.get('h', 500)
     
     # คำนวณ SW (kN/m)
-    # 2400 kg/m3 * 9.81 m/s2 / 1000 = 23.544 kN/m3
     unit_w_conc = 2400 * 9.81 / 1000 
     sw_calc_val = (b_val / 1000) * (h_val / 1000) * unit_w_conc
 
@@ -92,9 +90,8 @@ else:
         st.markdown("---")
         # [CRITICAL CHECKBOX]
         include_sw = st.checkbox("➕ Include Beam Self-weight", value=True)
-        params['include_sw'] = include_sw # Update params dict
+        params['include_sw'] = include_sw 
         
-        # Display SW Value with Calculation Hint
         if include_sw:
             st.info(f"ℹ️ **Added:** {sw_calc_val:.2f} kN/m")
             st.caption(f"({b_val}x{h_val} mm)")
@@ -119,26 +116,20 @@ else:
 
     try:
         # ==========================================
-        # ⚡ FORCE CLEAN LOAD GENERATION & UNIT FIX
+        # ⚡ FORCE CLEAN LOAD GENERATION
         # ==========================================
         
         # 1. Local Copy
         clean_user_loads = raw_user_loads_df.copy(deep=True)
         
-        # --- [CRITICAL FIX: UNIT GUARD] ---
-        # ป้องกันกราฟเพี้ยน: ตรวจสอบหน่วยของ Load ที่รับเข้ามา
-        # ถ้าค่าน้อยกว่า 2000 -> สันนิษฐานว่าเป็น kN -> คูณ 1000 ให้เป็น N
-        # ถ้าค่ามากกว่า 2000 -> สันนิษฐานว่าเป็น N แล้ว -> ไม่ต้องคูณ
+        # --- UNIT GUARD (กันเหนียว input) ---
         if not clean_user_loads.empty:
             clean_user_loads['mag'] = clean_user_loads['mag'].apply(lambda x: x * 1000.0 if abs(x) < 2000.0 else x)
-        # ----------------------------------
-
+        
         # 2. Prepare SW Dataframe
         sw_rows = []
         if include_sw:
-            # ใช้ค่า sw_calc_val ที่คำนวณไว้ด้านบน (หน่วย kN/m -> แปลงเป็น N/m สำหรับ Solver)
             sw_mag_newton = sw_calc_val * 1000.0 
-            
             for i in range(n_spans):
                 sw_rows.append({
                     'span_index': i, 
@@ -146,14 +137,12 @@ else:
                     'mag': sw_mag_newton, 
                     'dist': spans[i], 
                     'd_start': 0, 
-                    'case': 'DL' # SW ถือเป็น Dead Load
+                    'case': 'DL'
                 })
             df_sw_only = pd.DataFrame(sw_rows)
             final_calc_loads = pd.concat([clean_user_loads, df_sw_only], ignore_index=True)
-            status_msg = f"✅ **Self-Weight Included:** {sw_calc_val:.2f} kN/m"
         else:
             final_calc_loads = clean_user_loads
-            status_msg = "❌ **Self-Weight Excluded**"
 
         # --- ANALYSIS ENGINE ---
         # 1. Ultimate Run
@@ -166,11 +155,8 @@ else:
 
         x_plot, M_plot, V_plot, D_plot, R_plot = (x_svc, M_svc, V_svc, D_svc, R_svc) if is_service else (x_ult, M_ult, V_ult, D_ult, R_ult)
 
-        # ===============================================
-        # [FIX] SHOW LOAD TABLE HERE (ตรวจสอบค่าก่อน plot)
-        # ===============================================
+        # Show Load Table
         design_view.render_load_table(params)
-        # ===============================================
 
         # --- TABS START ---
         tab1, tab2, tab3 = st.tabs(["📊 1. Analysis Results", "📝 2. Concrete Design", "📘 3. Report & BOQ"])
@@ -180,11 +166,18 @@ else:
         with tab1:
             st.subheader(f"📈 Analysis Diagrams ({tag})")
             
-            # Graph
-            # Deflection D_plot (m) -> *1000 to mm
-            df_for_plot = pd.DataFrame({'x': x_plot, 'moment': M_plot, 'shear': V_plot, 'deflection': D_plot * 1000})
+            # --- [CRITICAL FIX] ---
+            # แปลงหน่วยตรงนี้ก่อนส่งเข้า Graph (N -> kN)
+            # Moment: N-m -> kN-m (หาร 1000)
+            # Shear:  N   -> kN   (หาร 1000)
+            # Deflection: m -> mm (คูณ 1000)
+            df_for_plot = pd.DataFrame({
+                'x': x_plot, 
+                'moment': M_plot / 1000.0,   # <--- FIX: Divide by 1000
+                'shear': V_plot / 1000.0,    # <--- FIX: Divide by 1000
+                'deflection': D_plot * 1000.0
+            })
             
-            # Call the Fixed Plotter
             unique_chart_key = f"chart_{include_sw}_{tag}_{np.random.randint(0,100)}"
             fig = design_view.plot_analysis_results(
                 res_df=df_for_plot, spans=spans, supports=sup_df, 
@@ -192,19 +185,14 @@ else:
             )
             st.plotly_chart(fig, use_container_width=True, key=unique_chart_key)
             
-            # [FIX] Display Reaction Table in Tab 1
             st.markdown("#### 🏗️ Support Reactions")
-            # Create readable reaction dictionary
             r_data = []
             for k, v in R_plot.items():
-                # Reaction v is in N -> Divide by 1000 to show kN
-                r_data.append({"Support": k, "Reaction (kN)": f"{v/1000:.2f}"})
+                r_data.append({"Support": k, "Reaction (kN)": f"{v/1000:.2f}"}) # Reaction ก็หาร 1000
             st.dataframe(pd.DataFrame(r_data), use_container_width=True, hide_index=True)
             
-            # Metrics
             st.markdown("#### ⚡ Max Values")
             c_m1, c_m2, c_m3 = st.columns(3)
-            # แสดงผลหาร 1000 เพื่อแปลง N -> kN
             c_m1.metric("Max Shear", f"{max(abs(V_plot))/1000:.2f} kN")
             c_m2.metric("Max Moment", f"{max(M_plot)/1000:.2f} kNm")
             c_m3.metric("Max Deflection", f"{max(abs(D_plot))*1000:.2f} mm")
@@ -222,6 +210,7 @@ else:
                 mask_u = (x_ult >= s_start - 1e-6) & (x_ult <= s_end + 1e-6)
                 if not mask_u.any(): continue
 
+                # ดึงค่ามาคำนวณเหล็ก (ต้องหาร 1000 ให้เป็น kN-m สำหรับ RC Calculation)
                 mu_pos = max(0.0, (M_ult[mask_u]/1000.0).max())
                 mu_neg = abs(min(0.0, (M_ult[mask_u]/1000.0).min()))
                 vu_max = abs((V_ult[mask_u] / 1000.0)).max()
