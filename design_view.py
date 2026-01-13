@@ -63,17 +63,17 @@ def calculate_boq_summary(design_res, spans):
     ])
 
 # ==========================================
-# 3. PLOTLY ANALYSIS GRAPH (PERFECTED PROPORTIONS)
+# 3. PLOTLY ANALYSIS GRAPH (FINAL POLISHED)
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
-    Refined Proportions:
-    - UDL Height: 0.15 to 0.40 (Low profile)
-    - Point Load Height: 0.50 to 1.10 (Distinct but not huge)
-    - Anchoring: Absolute y=0 contact.
+    Final Polish:
+    - UDL Height lifted slightly (0.25 - 0.55) for better visibility.
+    - Point Load Height adjusted (0.70 - 1.30) to maintain hierarchy.
+    - Strict Data Coordinates.
     """
     
-    # --- 1. DATA PREP & SCALING ---
+    # --- 1. DATA PREP ---
     if isinstance(loads, pd.DataFrame):
         load_list = loads.to_dict('records')
     elif isinstance(loads, list):
@@ -81,7 +81,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     else:
         load_list = []
 
-    # Scaling Logic: Find Max Load
+    # Scaling Logic
     all_mags = [l['mag'] for l in load_list] if load_list else [1]
     max_load_val = max(all_mags) if all_mags else 1.0
     if max_load_val == 0: max_load_val = 1.0
@@ -90,13 +90,13 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.08,
         subplot_titles=("<b>1. Free Body Diagram (FBD)</b>", "<b>2. Shear Force Diagram (SFD)</b>", "<b>3. Bending Moment Diagram (BMD)</b>", "<b>4. Deflection Diagram</b>"),
-        row_heights=[0.30, 0.24, 0.24, 0.22] # ปรับ FBD ไม่ต้องสูงเวอร์ เพราะเราคุมสเกลแล้ว
+        row_heights=[0.30, 0.24, 0.24, 0.22]
     )
 
     total_L = sum(spans)
     cum_dist = [0] + list(np.cumsum(spans))
     
-    # Beam Line (y=0) - สีดำ เส้นคม
+    # Beam Line (y=0)
     fig.add_trace(go.Scatter(x=[0, total_L], y=[0, 0], mode='lines', line=dict(color='black', width=4), hoverinfo='skip'), row=1, col=1)
     
     # Supports
@@ -108,12 +108,12 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             text=[row['type'][0]], textposition="bottom center", hoverinfo='name', name="Support"
         ), row=1, col=1)
 
-    # --- 3. DRAW LOADS (CLAMPED SCALING) ---
+    # --- 3. DRAW LOADS (ADJUSTED HEIGHTS) ---
     
-    # LAYER 1: UDL (Low Profile)
-    # Range ความสูง: 0.15 (ต่ำสุด) ถึง 0.40 (สูงสุด)
-    UDL_MIN_H = 0.15
-    UDL_MAX_H = 0.40
+    # LAYER 1: UDL (Lifted up slightly)
+    # New Range: 0.25 (Min) - 0.55 (Max) -> สูงขึ้นกว่าเดิมเพื่อให้ลูกศรดูสวย
+    UDL_MIN_H = 0.25
+    UDL_MAX_H = 0.55
     
     for l in load_list:
         if l['type'] == 'U':
@@ -122,18 +122,18 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             end_x = start_x + float(l['dist'])
             mag = l['mag']
             
-            # Linear Interpolation with Clamping
+            # Scaled Height
             ratio = mag / max_load_val
             h_visual = UDL_MIN_H + (ratio * (UDL_MAX_H - UDL_MIN_H))
             
             color = '#e74c3c' if l.get('case') == 'LL' else '#2980b9'
             
-            # Fill Area (จางๆ)
+            # Fill Area
             fig.add_trace(go.Scatter(
                 x=[start_x, end_x, end_x, start_x], y=[0, 0, h_visual, h_visual],
                 fill='toself', fillcolor=color, opacity=0.12, line=dict(width=0), hoverinfo='skip', showlegend=False
             ), row=1, col=1)
-            # Top Line (เส้นประบางๆ)
+            # Top Line
             fig.add_trace(go.Scatter(
                 x=[start_x, end_x], y=[h_visual, h_visual],
                 mode='lines', line=dict(color=color, width=1, dash='dot'), hoverinfo='skip'
@@ -144,21 +144,20 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
                 x=(start_x+end_x)/2, y=h_visual, text=label_txt, showarrow=False, yshift=8,
                 font=dict(color=color, size=9), row=1, col=1
             )
-            # Internal Arrows (ยึดกับ Data Coordinates)
+            # Internal Arrows
             n_arrows = max(3, int(float(l['dist']) * 1.8))
             for ax_x in np.linspace(start_x, end_x, n_arrows + 2)[1:-1]:
                  fig.add_annotation(
-                    x=ax_x, y=0,           # Head @ Beam
-                    ax=ax_x, ay=h_visual,  # Tail @ Top of UDL block
-                    axref='x', ayref='y', xref='x', yref='y', # Strict Data Coords
+                    x=ax_x, y=0, ax=ax_x, ay=h_visual,
+                    axref='x', ayref='y', xref='x', yref='y',
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
                     row=1, col=1
                 )
 
-    # LAYER 2: POINT LOAD (Distinct but Balanced)
-    # Range ความสูง: 0.50 (ต่ำสุด - สูงกว่า UDL เสมอ) ถึง 1.10 (สูงสุด - ไม่สูงเวอร์)
-    P_MIN_H = 0.50
-    P_MAX_H = 1.10
+    # LAYER 2: POINT LOAD (Lifted to maintain hierarchy)
+    # New Range: 0.70 (Min) - 1.30 (Max) -> ยังไงก็สูงกว่า UDL
+    P_MIN_H = 0.70
+    P_MAX_H = 1.30
     
     for l in load_list:
         if l['type'] == 'P':
@@ -167,23 +166,16 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             mag = l['mag']
             color = '#c0392b' if l.get('case') == 'LL' else '#2980b9'
             
-            # Scaled Height
             ratio = mag / max_load_val
             h_arrow = P_MIN_H + (ratio * (P_MAX_H - P_MIN_H))
             
-            # Draw Arrow (Strict Data Coords)
             fig.add_annotation(
-                x=x_loc, y=0,          # Head @ Beam
-                ax=x_loc, ay=h_arrow,  # Tail @ Scaled Height
-                xref='x', yref='y', axref='x', ayref='y', # Strict Data Coords
-                
-                # Style adjustment: ลด arrowwidth ลงเหลือ 2 ให้ดูคมขึ้น ไม่ดูบวม
+                x=x_loc, y=0, ax=x_loc, ay=h_arrow,
+                xref='x', yref='y', axref='x', ayref='y',
                 showarrow=True, arrowhead=2, arrowsize=1.2, arrowwidth=2.0, arrowcolor=color,
                 text=f"<b>P={mag/1000:.2f}</b>",
-                
-                xanchor='center', yanchor='bottom',
-                yshift=5, 
-                font=dict(color=color, size=11, family="Arial"), # Font ปกติ ไม่ต้อง Black ตัวหนาเกิน
+                xanchor='center', yanchor='bottom', yshift=5, 
+                font=dict(color=color, size=11, family="Arial"),
                 row=1, col=1
             )
 
@@ -204,8 +196,8 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
     fig.update_layout(height=1100, showlegend=False, template="plotly_white", hovermode="x unified", margin=dict(t=50, b=40, l=60, r=20))
     
-    # Set Range FBD: -0.5 to 1.5 (Enough for max arrow 1.1 + text)
-    fig.update_yaxes(range=[-0.4, 1.4], showgrid=False, visible=False, row=1, col=1)
+    # Scale Y for FBD headroom
+    fig.update_yaxes(range=[-0.4, 1.6], showgrid=False, visible=False, row=1, col=1)
     
     fig.update_yaxes(title_text="Shear (kN)", showgrid=True, row=2, col=1)
     fig.update_yaxes(title_text="Moment (kNm)", autorange="reversed", showgrid=True, row=3, col=1)
