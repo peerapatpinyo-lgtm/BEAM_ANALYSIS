@@ -84,19 +84,19 @@ def calculate_boq_summary(design_res, spans):
 # ==========================================
 def plot_analysis_results(res_df, spans, supports, loads, reactions):
     """
-    Standard clean plotting style with dynamic scaling for visual elements.
+    Standard clean plotting style with FIXED SCALING logic to prevent distortion.
     """
     fig = make_subplots(
         rows=4, cols=1, 
         shared_xaxes=True, 
-        vertical_spacing=0.08,
+        vertical_spacing=0.06,
         subplot_titles=(
             "<b>1. Free Body Diagram (FBD)</b>", 
             "<b>2. Shear Force Diagram (SFD)</b>", 
             "<b>3. Bending Moment Diagram (BMD)</b>",
             "<b>4. Deflection Diagram</b>"
         ),
-        row_heights=[0.25, 0.25, 0.25, 0.25]
+        row_heights=[0.3, 0.23, 0.23, 0.24] # Give FBD slightly more space
     )
 
     # ROW 1: LOAD MODEL (FBD)
@@ -106,7 +106,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     # Beam Line
     fig.add_trace(go.Scatter(
         x=[0, total_L], y=[0, 0], 
-        mode='lines', line=dict(color='black', width=4), hoverinfo='skip'
+        mode='lines', line=dict(color='black', width=5), hoverinfo='skip'
     ), row=1, col=1)
     
     # Supports
@@ -116,7 +116,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         elif row['type'] == 'Roller': sym = "circle"
         
         fig.add_trace(go.Scatter(
-            x=[row['x']], y=[-0.05], 
+            x=[row['x']], y=[-0.08], # Push slightly down
             mode='markers+text',
             marker=dict(symbol=sym, size=14, color='white', line=dict(width=2, color='black')),
             text=[row['type'][0]], textposition="bottom center",
@@ -124,48 +124,54 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         ), row=1, col=1)
 
     # Loads Processing
-    if isinstance(loads, pd.DataFrame):
-        load_iter = loads.to_dict('records')
-    elif isinstance(loads, list):
-        load_iter = loads
-    else:
-        load_iter = []
-
-    # --- 1. Find Max Load for Scaling ---
+    load_iter = loads if isinstance(loads, list) else []
+    
+    # --- 1. Find Max Load for Relative Scaling ---
     max_mag = 1.0
     for l in load_iter:
         m = abs(l['mag'])
         if m > max_mag: max_mag = m
     
-    # --- 2. Draw Loads ---
+    # --- 2. Draw Loads with Clamped Scaling ---
+    # Logic: Even small loads should be visible (min 30% height), Max loads at 100% height
+    
     for l in load_iter:
         span_idx = int(l['span_index'])
         start_x_span = cum_dist[span_idx]
         mag_raw = l['mag']
         mag_kN = mag_raw / 1000.0  # N -> kN
         
-        # Calculate visual height ratio (0.15 to 0.6)
-        ratio = abs(mag_raw) / max_mag
-        h_vis = 0.15 + (ratio * 0.45) 
+        # Clamped Ratio: Min 0.3, Max 1.0
+        raw_ratio = abs(mag_raw) / max_mag
+        vis_ratio = 0.3 + (raw_ratio * 0.7) 
+        
+        # Visual Height Constants
+        MAX_UDL_H = 0.6  # Max UDL height in plot units
+        MAX_ARROW_LEN = 50 # Pixels
+        
+        h_vis = vis_ratio * MAX_UDL_H
 
         case_type = l.get('case', 'DL')
         if case_type == 'LL':
-            color = '#c0392b' # Red
+            color = '#e74c3c' # Red
         else:
             color = '#2980b9' # Blue (DL, SW)
 
         # --- POINT LOAD ---
         if l['type'] == 'P':
             x_loc = start_x_span + float(l['d_start']) 
-            # Arrow scale logic
-            arrow_len = 40 * (0.5 + 0.5*ratio) # Pixel length
+            
+            # Arrow length pixels
+            arrow_px = 30 + (raw_ratio * 30) 
             
             fig.add_annotation(
                 x=x_loc, y=0, 
-                ax=0, ay=-arrow_len,
+                ax=0, ay=-arrow_px,
                 xref="x1", yref="y1",
                 showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor=color,
-                text=f"<b>{mag_kN:.2f} kN</b>", yshift=5, row=1, col=1
+                text=f"<b>{mag_kN:.2f} kN</b>", yshift=10, 
+                font=dict(color=color),
+                row=1, col=1
             )
             
         # --- UNIFORM LOAD ---
@@ -178,36 +184,39 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e, x_e, x_s],
                 y=[0, 0, h_vis, h_vis],
-                fill='toself', fillcolor=color, opacity=0.2,
+                fill='toself', fillcolor=color, opacity=0.15,
                 line=dict(width=0), hoverinfo='skip', showlegend=False
             ), row=1, col=1)
             
             # 2. Top Line
             fig.add_trace(go.Scatter(
                 x=[x_s, x_e], y=[h_vis, h_vis],
-                mode='lines', line=dict(color=color, width=2), hoverinfo='skip'
+                mode='lines', line=dict(color=color, width=1.5), hoverinfo='skip'
             ), row=1, col=1)
             
-            # 3. Arrows
-            n_arrows = max(2, int(dist_val * 1.5)) 
+            # 3. Arrows (Distributed)
+            n_arrows = max(2, int(dist_val * 2.0)) 
             arrow_x_points = np.linspace(x_s, x_e, n_arrows + 2)[1:-1]
+            
+            arrow_px = 20 + (raw_ratio * 20) # Slightly shorter for UDL
+            
             for ax_x in arrow_x_points:
                 fig.add_annotation(
-                    x=ax_x, y=0, ax=0, ay=-30*ratio, # Scale arrow slightly
+                    x=ax_x, y=0, ax=0, ay=-arrow_px,
                     xref="x1", yref="y1",
                     showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=1, arrowcolor=color,
                     row=1, col=1
                 )
             
             # 4. Label
-            label_text = f"<b>w={mag_kN:.2f} kN/m</b>"
+            label_text = f"<b>w={mag_kN:.2f}</b>"
             if case_type == 'SW':
-                label_text = f"<b>SW={mag_kN:.2f} kN/m</b>"
+                label_text = f"SW={mag_kN:.2f}"
                 
             fig.add_annotation(
                 x=(x_s+x_e)/2, y=h_vis,
                 text=label_text,
-                showarrow=False, yshift=10, font=dict(color=color), row=1, col=1
+                showarrow=False, yshift=10, font=dict(color=color, size=10), row=1, col=1
             )
 
     # ROW 2: SHEAR FORCE
@@ -218,14 +227,15 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fill='tozeroy', fillcolor='rgba(231, 76, 60, 0.1)'
     ), row=2, col=1)
     
-    v_max = res_df['shear'].max() / 1000
-    v_min = res_df['shear'].min() / 1000
-    for val in [v_max, v_min]:
+    # Annotate Max/Min Shear
+    v_vals = res_df['shear']/1000
+    for val in [v_vals.max(), v_vals.min()]:
         if abs(val) > 0.01:
-            idx = (res_df['shear']/1000 - val).abs().idxmin()
+            idx = (v_vals - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
-                text=f"<b>{val:.2f}</b>", showarrow=False, yshift=10 if val>0 else -10,
+                text=f"<b>{val:.2f}</b>", showarrow=False, 
+                yshift=12 if val>0 else -12,
                 font=dict(color='#e74c3c', size=11), row=2, col=1
             )
 
@@ -237,11 +247,10 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
         fill='tozeroy', fillcolor='rgba(39, 174, 96, 0.1)'
     ), row=3, col=1)
 
-    m_max = res_df['moment'].max() / 1000
-    m_min = res_df['moment'].min() / 1000
-    for val in [m_max, m_min]:
+    m_vals = res_df['moment']/1000
+    for val in [m_vals.max(), m_vals.min()]:
         if abs(val) > 0.01:
-            idx = (res_df['moment']/1000 - val).abs().idxmin()
+            idx = (m_vals - val).abs().idxmin()
             fig.add_annotation(
                 x=res_df['x'].iloc[idx], y=val,
                 text=f"<b>{val:.2f}</b>", 
@@ -260,7 +269,7 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
     max_def_val = res_df['deflection'].iloc[idx_max_def]
     fig.add_annotation(
         x=res_df['x'].iloc[idx_max_def], y=max_def_val,
-        text=f"<b>Max: {max_def_val:.3f} mm</b>",
+        text=f"<b>Max: {max_def_val:.2f} mm</b>",
         showarrow=True, arrowhead=1, 
         ay=30 if max_def_val < 0 else -30,
         font=dict(color='#8e44ad', size=11), row=4, col=1
@@ -272,17 +281,18 @@ def plot_analysis_results(res_df, spans, supports, loads, reactions):
 
     fig.update_layout(
         title="<b>Structural Analysis Results</b>",
-        height=1000, showlegend=False, template="plotly_white", hovermode="x unified",
+        height=1100, showlegend=False, template="plotly_white", hovermode="x unified",
         margin=dict(t=60, b=40, l=60, r=20)
     )
     
-    # --- FIX GRAPH DISTORTION ---
-    # Lock range for load diagram so it always has headspace
-    fig.update_yaxes(range=[-0.25, 1.0], showgrid=False, visible=False, row=1, col=1) 
+    # --- CRITICAL FIX FOR SCALING DISTORTION ---
+    # Lock the Y-range for the Load Diagram so it has enough "Headroom" for labels
+    # Range -0.6 to 1.5 ensures arrows (down) and labels (up) fit without squashing the beam
+    fig.update_yaxes(range=[-0.6, 1.5], showgrid=False, visible=False, row=1, col=1) 
     
     fig.update_yaxes(title_text="Shear (kN)", showgrid=True, row=2, col=1)
-    fig.update_yaxes(title_text="Moment (kN-m)", autorange="reversed", showgrid=True, row=3, col=1)
-    fig.update_yaxes(title_text="Deflection (mm)", showgrid=True, zeroline=True, row=4, col=1)
+    fig.update_yaxes(title_text="Moment (kNm)", autorange="reversed", showgrid=True, row=3, col=1)
+    fig.update_yaxes(title_text="Def. (mm)", showgrid=True, zeroline=True, row=4, col=1)
     fig.update_xaxes(title_text="Length (m)", row=4, col=1)
 
     return fig
@@ -386,12 +396,13 @@ def render_design_view(res_package):
     sup_df = res_package['supports']
     params = res_package['params']
     
-    # 1. เตรียม Load Data
+    # 1. เตรียม Load Data (Safe Copy เพื่อไม่ให้ SW ถูกเติมซ้ำๆ)
     raw_loads = res_package.get('loads', [])
     if isinstance(raw_loads, pd.DataFrame):
         display_loads = raw_loads.to_dict('records')
     else:
-        display_loads = list(raw_loads) if raw_loads else []
+        # ใช้ List comprehension เพื่อสร้าง Deep Copy ของ Dictionary ใน List
+        display_loads = [dict(l) for l in (raw_loads or [])]
 
     # 2. จัดการ Self-weight
     include_sw = params.get('include_sw', True)
@@ -405,6 +416,7 @@ def render_design_view(res_package):
             h_m = float(val_h) / 1000.0
             L = spans[i]
             
+            # SW in N/m (24000 N/m3 approx)
             sw_mag = 24000 * b_m * h_m 
             
             sw_load = {
@@ -456,6 +468,7 @@ def render_design_view(res_package):
         st.subheader("Analysis Diagrams")
         df_plot = pd.DataFrame({'x': x, 'moment': m, 'shear': v, 'deflection': d})
         
+        # Pass the safely constructed display_loads
         fig = plot_analysis_results(df_plot, spans, sup_df, display_loads, react)
         
         st.plotly_chart(fig, use_container_width=True)
