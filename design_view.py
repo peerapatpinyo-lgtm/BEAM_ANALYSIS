@@ -7,72 +7,119 @@ import streamlit as st
 # ==========================================
 # 1. HELPER: LOAD TABLE (WITH DETAILED CALCULATION)
 # ==========================================
-def render_load_table(params):
-    st.markdown("### 📋 Design Load Parameters & Calculation")
+# ==========================================
+# 📂 ไฟล์: design_view.py
+# 🛠️ แก้ไขฟังก์ชัน render_load_table (ฉบับแสดงรายการคำนวณละเอียด)
+# ==========================================
+
+def render_load_table(params, raw_loads_df):
+    """
+    แสดงรายการคำนวณ Load Analysis แบบละเอียด (Detailed Calculation Report)
+    - แสดงค่า b, h ที่ดึงมาจริง
+    - แสดงการคำนวณ Self-Weight (SW) ทีละขั้นตอน
+    - สรุป Load ที่ User กรอกมาทั้งหมด
+    """
+    st.markdown("### 📑 Detailed Load Analysis Report")
     
-    # 1. ดึงตัวแปร
-    dl_f = params.get('dl_factor', 1.4)
-    ll_f = params.get('ll_factor', 1.7)
-    inc_sw = params.get('include_sw', True)
+    # --- ส่วนที่ 1: ตรวจสอบ Geometry Parameters (ดึงค่าจริงมาแสดง) ---
+    st.markdown("#### 1. Geometry & Material Properties")
     
-    b_mm = params.get('b', 300)
-    h_mm = params.get('h', 500)
-    
-    # 2. คำนวณ Self-Weight (SW)
-    # สูตร: Width(m) * Depth(m) * 2400 kg/m3 * 9.81 m/s2
+    # ดึงค่าและแปลงหน่วยทันที (ป้องกันค่าเป็น None)
+    try:
+        b_mm = float(params.get('b', 300))
+        h_mm = float(params.get('h', 500))
+    except:
+        b_mm, h_mm = 300.0, 500.0
+        
     b_m = b_mm / 1000.0
     h_m = h_mm / 1000.0
-    concrete_density = 2400 # kg/m3
-    gravity = 9.81          # m/s2
     
-    sw_val_kn = (b_m * h_m * concrete_density * gravity) / 1000.0 # แปลงเป็น kN/m
+    # Constants
+    conc_density = 2400  # kg/m3
+    g = 9.81             # m/s2
     
-    # 3. แสดงตารางสรุป Factor
-    col1, col2 = st.columns([1.5, 2])
+    # แสดงค่าตัวแปรที่ใช้คำนวณ
+    cols = st.columns(4)
+    cols[0].metric("Width (b)", f"{b_mm:.0f} mm", f"{b_m:.2f} m")
+    cols[1].metric("Depth (h)", f"{h_mm:.0f} mm", f"{h_m:.2f} m")
+    cols[2].metric("Density", "2400 kg/m³")
+    cols[3].metric("Gravity", "9.81 m/s²")
     
-    with col1:
-        st.markdown("**Load Factors:**")
-        data = [
-            {"Type": "Dead Load (DL)", "Factor": f"× {dl_f:.2f}"},
-            {"Type": "Live Load (LL)", "Factor": f"× {ll_f:.2f}"}
-        ]
-        st.table(pd.DataFrame(data))
+    st.divider()
 
-    with col2:
-        st.markdown("**Beam Properties for SW:**")
-        st.write(f"- Width ($b$) = {b_mm} mm = {b_m:.2f} m")
-        st.write(f"- Depth ($h$) = {h_mm} mm = {h_m:.2f} m")
-        st.write(f"- Density ($\gamma_c$) = 2400 kg/m³")
-
-    st.markdown("---")
-    st.markdown("#### 🧮 Self-Weight Calculation Details")
+    # --- ส่วนที่ 2: รายการคำนวณ Self-Weight (SW) ---
+    st.markdown("#### 2. Self-Weight Calculation (SW)")
+    
+    inc_sw = params.get('include_sw', True)
+    
+    # สูตรคำนวณ
+    st.markdown("**Formula:**")
+    st.latex(r"w_{sw} = b \times h \times \rho_{conc} \times g")
+    
+    # คำนวณจริง
+    sw_val_kn = (b_m * h_m * conc_density * g) / 1000.0  # แปลง N -> kN
     
     if inc_sw:
-        # แสดงวิธีทำแบบละเอียด
-        st.latex(r"w_{sw} = b \cdot h \cdot \gamma_c \cdot g")
+        st.markdown("**Substitution (แทนค่า):**")
+        # แสดงบรรทัดแทนค่าตัวเลขจริง เพื่อให้ตรวจสอบได้
         st.markdown(f"""
-        **แทนค่า:**
-        $$ w_{{sw}} = {b_m:.2f} \\times {h_m:.2f} \\times 2400 \\times 9.81 / 1000 $$
+        $$
+        w_{{sw}} = {b_m:.2f} \\text{{ m}} \\times {h_m:.2f} \\text{{ m}} \\times 2400 \\text{{ kg/m}}^3 \\times 9.81 \\text{{ m/s}}^2
+        $$
         """)
-        st.success(f"✅ **calculated $w_{{sw}}$ = {sw_val_kn:.3f} kN/m** (Included in Analysis)")
-    else:
-        st.latex(r"w_{sw} = \text{Excluded by User}")
-        st.warning(f"❌ **calculated $w_{{sw}}$ = 0.000 kN/m** (Self-weight is turned OFF)")
-
-    # 4. แสดงสมการ Design Load Combination
-    st.markdown("#### ⚖️ Ultimate Design Load Equation")
-    
-    if inc_sw:
-        # กรณีรวม SW
-        eq_text = f"$$ U = {dl_f:.2f}(DL + {sw_val_kn:.3f}) + {ll_f:.2f}(LL) $$"
-        expl_text = f"*หมายเหตุ: นำค่า $w_{{sw}}$ ({sw_val_kn:.3f} kN/m) ไปรวมกับ Dead Load (DL) ที่ผู้ใช้กรอกเพิ่มในแต่ละช่วงคาน*"
-    else:
-        # กรณีไม่รวม SW
-        eq_text = f"$$ U = {dl_f:.2f}(DL) + {ll_f:.2f}(LL) $$"
-        expl_text = "*หมายเหตุ: คิดเฉพาะ Dead Load (DL) ที่ผู้ใช้กรอกเพิ่มเท่านั้น ไม่รวมน้ำหนักคาน*"
         
-    st.markdown(eq_text)
-    st.caption(expl_text)
+        st.markdown(f"""
+        $$
+        w_{{sw}} = {sw_val_kn * 1000:.2f} \\text{{ N/m}} \\Rightarrow \\mathbf{{{sw_val_kn:.3f} \\text{{ kN/m}}}}
+        $$
+        """)
+        
+        st.success(f"✅ **Self-Weight Included:** {sw_val_kn:.3f} kN/m (Will be added to Dead Load)")
+    else:
+        st.markdown("**Substitution:**")
+        st.markdown(f"$$ w_{{sw}} = {b_m:.2f} \\times {h_m:.2f} ... $$")
+        st.warning("❌ **Self-Weight is DISABLED** (User selected to exclude SW)")
+        sw_val_kn = 0.0
+
+    st.divider()
+
+    # --- ส่วนที่ 3: สรุป Load ที่ผู้ใช้กรอก (User Input Loads) ---
+    st.markdown("#### 3. Superimposed Loads (User Inputs)")
+    
+    if raw_loads_df is not None and not raw_loads_df.empty:
+        # จัดรูปแบบตารางให้สวยงาม
+        display_df = raw_loads_df.copy()
+        
+        # แปลงหน่วยแสดงผล (N -> kN) เพื่อให้อ่านง่าย
+        display_df['Magnitude (kN or kN/m)'] = display_df['mag'] / 1000.0
+        display_df['Span No.'] = display_df['span_index'] + 1
+        
+        # เลือกคอลัมน์ที่จะโชว์
+        show_cols = ['Span No.', 'type', 'case', 'Magnitude (kN or kN/m)', 'd_start', 'dist']
+        st.dataframe(
+            display_df[show_cols].style.format({'Magnitude (kN or kN/m)': '{:.3f}', 'd_start': '{:.2f}', 'dist': '{:.2f}'}),
+            use_container_width=True,
+            hide_index=True
+        )
+    else:
+        st.info("No additional user loads defined.")
+
+    st.divider()
+
+    # --- ส่วนที่ 4: Ultimate Load Combination ---
+    st.markdown("#### 4. Final Factored Load Combination")
+    
+    dl_f = params.get('dl_factor', 1.4)
+    ll_f = params.get('ll_factor', 1.7)
+    
+    st.markdown(f"**Load Factors:** $1.4 DL + 1.7 LL$ (Example)")
+    
+    st.info(f"""
+    💡 **Logic for Analysis:**
+    1. **Dead Load (Total):** $DL_{{total}} = DL_{{user}} + {sw_val_kn:.3f} \\text{{ (SW)}}$
+    2. **Factored Load:** $U = {dl_f:.2f} \\times DL_{{total}} + {ll_f:.2f} \\times LL_{{user}}$
+    """)
+    
     st.divider()
 
 # ==========================================
