@@ -5,55 +5,58 @@ def prepare_load_dataframe(user_loads_df, n_spans, spans, params, f_dl=1.4, f_ll
     """
     Processor สำหรับจัดการ Load:
     หน้าที่:
-    1. รับ Load รวม (User Input + Self-weight จาก app.py)
-    2. แปลงหน่วยให้เป็น N (Newton) ทั้งหมด
-    3. คูณ Load Factor (1.4 สำหรับ DL, 1.7 สำหรับ LL)
+    1. รับ Load รวม (User Input + Self-weight ที่ส่งมาจาก app.py)
+    2. แปลงหน่วยให้เป็น N (Newton) ทั้งหมด (ป้องกันการปนกันระหว่าง kN และ N)
+    3. คูณ Load Factor (1.4 สำหรับ DL/SW, 1.7 สำหรับ LL)
     4. จัด Format ให้ตรงกับที่ Solver ต้องการ
     """
     
-    # 1. ป้องกันกรณีไม่มี Load ส่งมาเลย
+    # กรณีไม่มีข้อมูล Load เลย ให้ส่งตารางว่างกลับไป
     if user_loads_df is None or user_loads_df.empty:
-        # ส่งตารางว่างกลับไป เพื่อไม่ให้โปรแกรม Error
         return pd.DataFrame(columns=['span_index', 'type', 'mag', 'dist', 'd_start'])
 
     processed_loads = []
 
-    # 2. วนลูปจัดการ Load ทีละรายการ
+    # วนลูปจัดการ Load ทีละรายการ
     for _, load in user_loads_df.iterrows():
         
-        # --- A. เลือก Factor ตามประเภท ---
-        case_type = load.get('case', 'DL') # ถ้าไม่ระบุ ถือเป็น DL
+        # 1. เช็คประเภท Load เพื่อระบุ Factor
+        # 'case' จะรับค่ามาจาก app.py ('DL', 'LL', 'SW')
+        case_type = load.get('case', 'DL') 
         
         if case_type in ['DL', 'SW', 'Dead', 'Superimposed Dead']:
-            factor = f_dl  # ปกติคือ 1.4
+            factor = f_dl  # Dead Load / Self-weight (ปกติ 1.4)
         elif case_type in ['LL', 'Live']:
-            factor = f_ll  # ปกติคือ 1.7
+            factor = f_ll  # Live Load (ปกติ 1.7)
         else:
-            factor = 1.0   # กรณีอื่นๆ หรือ Service Load
+            factor = 1.0   # กรณีอื่นๆ
 
-        # --- B. จัดการเรื่องหน่วย (Unit Conversion) ---
+        # 2. จัดการเรื่องหน่วย (Unit Conversion)
         raw_mag = float(load['mag'])
         
-        # Logic การเช็คหน่วย:
-        # - ถ้าค่า load > 500 สันนิษฐานว่าเป็นหน่วย N (เช่น SW ที่ app คำนวณมา = 2400)
-        # - ถ้าค่า load น้อยๆ สันนิษฐานว่าเป็น kN (เช่น User กรอก 10, 20) -> คูณ 1000
+        # [Smart Check]
+        # Self-weight จาก app.py มักมาเป็นหน่วย N/m (ค่าหลักพัน เช่น 3600)
+        # User Input มักกรอกเป็น kN/m (ค่าหลักสิบ เช่น 10, 25)
+        # เราใช้เงื่อนไขนี้แยกแยะเพื่อแปลงให้เป็น N ทั้งหมด
         if raw_mag > 500.0:
+            # ค่าเยอะ -> สันนิษฐานว่าเป็น N แล้ว (เช่น SW)
             mag_N = raw_mag
         else:
+            # ค่าน้อย -> สันนิษฐานว่าเป็น kN -> คูณ 1000 เป็น N
             mag_N = raw_mag * 1000.0
 
-        # --- C. คำนวณ Ultimate Load (คูณ Factor) ---
+        # 3. คูณ Factor (Ultimate Load)
         factored_mag_N = mag_N * factor
 
-        # --- D. เก็บข้อมูลลง List ---
+        # 4. เตรียมข้อมูลลง List
         processed_loads.append({
             'span_index': int(load['span_index']),
-            'type': load['type'],                       # 'P' (Point) หรือ 'U' (Uniform)
-            'mag': factored_mag_N,                      # ค่าที่คูณ Factor และเป็นหน่วย N แล้ว
-            'dist': float(load.get('dist', 0)),         # ความยาว Load (สำหรับ UDL)
-            'd_start': float(load.get('d_start', 0)),   # ระยะเริ่ม Load
-            'case_origin': case_type                    # เก็บไว้ตรวจสอบได้
+            'type': load['type'],                       # 'P' หรือ 'U'
+            'mag': factored_mag_N,                      # ค่า Load (N) ที่คูณ Factor แล้ว
+            'dist': float(load.get('dist', 0)),         # ความยาว Load (ถ้ามี)
+            'd_start': float(load.get('d_start', 0)),   # จุดเริ่ม Load
+            'case_origin': case_type                    # เก็บไว้ตรวจสอบ
         })
 
-    # 3. ส่งผลลัพธ์กลับเป็น DataFrame
+    # ส่งค่ากลับเป็น DataFrame ใหม่สำหรับเข้า Solver
     return pd.DataFrame(processed_loads)
